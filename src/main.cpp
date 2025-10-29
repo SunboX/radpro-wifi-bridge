@@ -1,9 +1,5 @@
 #include <Arduino.h>
-extern "C"
-{
-#include "usb/usb_host.h"
-#include "usb/usb_types_stack.h" // usb_device_desc_t
-}
+#include "UsbCdcHost.h"
 #include "esp_log.h"
 
 // =========================
@@ -30,106 +26,95 @@ extern "C"
 static bool isRunning = false;
 static unsigned long startupDelayMs = INITIAL_STARTUP_DELAY_MS;
 static unsigned long startupStartTime = 0;
+static bool rawUsbLoggingEnabled = false;
+static bool deviceIdRequestSent = false;
+static bool deviceIdAwaitingResponse = false;
+static bool deviceIdAnnouncePending = false;
+static unsigned long deviceIdReadyAtMs = 0;
+static unsigned long deviceIdLastRequestMs = 0;
 
 // Forward declarations
 static void handleStartupLogic();
 static void runMainLogic();
+static void sendDeviceIdCommand(bool announce);
 
 // =========================
-// USB Host plumbing
+// USB Host wrapper
 // =========================
-static const char *TAG = "USBHOST";
+static UsbCdcHost usb;
 
-static usb_host_client_handle_t clientH = nullptr;
-static TaskHandle_t libTaskH = nullptr;
-static TaskHandle_t clientTaskH = nullptr;
-
-static void client_event_cb(const usb_host_client_event_msg_t *event_msg, void *arg)
+// Device connection callbacks
+static void onUsbConnected()
 {
-    switch (event_msg->event)
-    {
-    case USB_HOST_CLIENT_EVENT_NEW_DEV:
-    {
-        const uint8_t addr = event_msg->new_dev.address;
-#if defined(ESP_IDF_VERSION_MAJOR) && defined(ESP_IDF_VERSION_MINOR) && \
-    ((ESP_IDF_VERSION_MAJOR > 4) || (ESP_IDF_VERSION_MAJOR == 4 && ESP_IDF_VERSION_MINOR >= 99))
-        const usb_speed_t spd = event_msg->new_dev.speed;
-        ESP_LOGI(TAG, "NEW_DEV: addr=%u speed=%s",
-                 addr, spd == USB_SPEED_LOW ? "LOW" : spd == USB_SPEED_FULL ? "FULL"
-                                                                            : "HIGH?");
-#else
-        ESP_LOGI(TAG, "NEW_DEV: addr=%u (speed n/a on this IDF)", addr);
-#endif
-
-        usb_device_handle_t devH = nullptr;
-        if (usb_host_device_open(clientH, addr, &devH) == ESP_OK)
-        {
-            const usb_device_desc_t *desc = nullptr;
-            if (usb_host_get_device_descriptor(devH, &desc) == ESP_OK && desc)
-            {
-                ESP_LOGI(TAG, "Device: VID=0x%04X PID=0x%04X bDeviceClass=0x%02X bNumCfg=%u",
-                         desc->idVendor, desc->idProduct, desc->bDeviceClass, desc->bNumConfigurations);
-                ESP_LOGI(TAG, "USB version %x.%02x, MaxPacket0=%u",
-                         desc->bcdUSB >> 8, desc->bcdUSB & 0xFF, desc->bMaxPacketSize0);
-            }
-            else
-            {
-                ESP_LOGW(TAG, "Failed to get device descriptor");
-            }
-            usb_host_device_close(clientH, devH);
-        }
-        else
-        {
-            ESP_LOGW(TAG, "usb_host_device_open failed");
-        }
-        break;
-    }
-
-    case USB_HOST_CLIENT_EVENT_DEV_GONE:
-        ESP_LOGI(TAG, "Device disconnected");
-        break;
-
-    default:
-        ESP_LOGD(TAG, "Client event: %d", (int)event_msg->event);
-        break;
-    }
+    DBG.println("[main] USB device CONNECTED");
+    deviceIdRequestSent = false;
+    deviceIdAnnouncePending = true;
+    deviceIdReadyAtMs = millis() + 200;
 }
 
-static void usb_lib_task(void *arg)
+static void onUsbDisconnected()
 {
-    ESP_LOGI(TAG, "Library task started");
-    while (true)
-    {
-        uint32_t flags = 0;
-        esp_err_t err = usb_host_lib_handle_events(portMAX_DELAY, &flags);
-        if (err != ESP_OK)
-        {
-            ESP_LOGE(TAG, "usb_host_lib_handle_events err=0x%x", err);
-        }
-        if (flags & USB_HOST_LIB_EVENT_FLAGS_NO_CLIENTS)
-        {
-            ESP_LOGW(TAG, "NO_CLIENTS -> usb_host_device_free_all()");
-            usb_host_device_free_all();
-        }
-        if (flags & USB_HOST_LIB_EVENT_FLAGS_ALL_FREE)
-        {
-            ESP_LOGI(TAG, "ALL_FREE (nothing attached)");
-        }
-    }
+    DBG.println("[main] USB device DISCONNECTED");
+    deviceIdAwaitingResponse = false;
+    deviceIdRequestSent = false;
+    deviceIdAnnouncePending = true;
+    deviceIdReadyAtMs = millis() + 200;
 }
 
-static void usb_client_task(void *arg)
+// Line-based RX callback (already line-buffered by UsbCdcHost)
+static void onUsbLine(const String &line)
 {
-    ESP_LOGI(TAG, "Client task started");
-    while (true)
+    DBG.print("[main] <- Line: ");
+    DBG.println(line);
+
+    if (line.startsWith("OK "))
     {
-        // Pump messages to client_event_cb (REQUIRED)
-        esp_err_t err = usb_host_client_handle_events(clientH, portMAX_DELAY);
-        if (err != ESP_OK)
+        int deviceIdIndex = line.lastIndexOf(';');
+        if (deviceIdIndex >= 0 && deviceIdIndex + 1 < line.length())
         {
-            ESP_LOGE(TAG, "usb_host_client_handle_events err=0x%x", err);
+            String deviceId = line.substring(deviceIdIndex + 1);
+            DBG.print("[main] Device ID: ");
+            DBG.println(deviceId);
         }
     }
+
+    deviceIdAwaitingResponse = false;
+    deviceIdRequestSent = true;
+    deviceIdAnnouncePending = false;
+}
+
+static void onUsbRaw(const uint8_t *data, size_t len)
+{
+    if (!rawUsbLoggingEnabled)
+        return;
+    DBG.print("[main] <- Raw: ");
+    for (size_t i = 0; i < len; ++i)
+    {
+        if (i)
+            DBG.print(' ');
+        char buf[4];
+        sprintf(buf, "%02X", data[i]);
+        DBG.print(buf);
+    }
+    DBG.println();
+}
+
+static void sendDeviceIdCommand(bool announce)
+{
+    if (!usb.isConnected())
+        return;
+
+    if (announce)
+        DBG.println("[main] -> Queue: GET deviceId");
+
+    usb.sendCommand("GET deviceId", true);    // CRLF
+    usb.sendCommand("GET deviceId\n", false); // LF
+    usb.sendCommand("GET deviceId\r", false); // CR
+
+    deviceIdRequestSent = true;
+    deviceIdAwaitingResponse = true;
+    deviceIdAnnouncePending = false;
+    deviceIdLastRequestMs = millis();
 }
 
 // =========================
@@ -142,42 +127,49 @@ void setup()
     DBG.begin(115200);
     delay(300);
 
-    esp_log_level_set("*", ESP_LOG_INFO);
-    esp_log_level_set(TAG, ESP_LOG_VERBOSE);
+    DBG.println("Initializing RadPro WiFi Bridge…");
 
-    Serial.println("\nESP32-S3 USB Host (enumerate VID/PID)");
-    ESP_LOGI(TAG, "Booting… free heap=%u", (unsigned)ESP.getFreeHeap());
+    // Silence noisy CDC driver errors when using vendor-specific transport
+    esp_log_level_set("cdc_acm_ops", ESP_LOG_NONE);
+    // Keep UsbCdcHost chatter silent unless debugging
+    esp_log_level_set("UsbCdcHost", ESP_LOG_NONE);
+    // Suppress USB host stack info/error prints for cleaner output
+    esp_log_level_set("USBH", ESP_LOG_NONE);
 
-    // Record the start time for non-blocking startup delay
+    // Record start time for non-blocking startup delay
     startupStartTime = millis();
 
     // Simple LED cue on boot (dim green)
     neopixelWrite(RGB_BUILTIN, 0, 8, 0);
 
-    // Host install
-    usb_host_config_t host_config = {}; // default: task runs in caller context
-    ESP_ERROR_CHECK(usb_host_install(&host_config));
-    ESP_LOGI(TAG, "USB Host installed");
+    // Register callbacks
+    usb.setDeviceCallbacks(onUsbConnected, onUsbDisconnected);
+    usb.setLineCallback(onUsbLine);
+    usb.setRawCallback(onUsbRaw);
 
-    // Start library event task
-    xTaskCreatePinnedToCore(usb_lib_task, "usb_lib", 4096, nullptr, 20, &libTaskH, APP_CPU_NUM);
+    // BOSEAN FS-600 has CH340 chip (VID 0x1A86, PID 0x7523)
+    usb.setVidPidFilter(0x1A86, 0x7523);
 
-    // Register async client
-    usb_host_client_config_t cfg = {
-        .is_synchronous = false,
-        .max_num_event_msg = 16,
-        .async = {.client_event_callback = client_event_cb, .callback_arg = nullptr}};
-    ESP_ERROR_CHECK(usb_host_client_register(&cfg, &clientH));
-    ESP_LOGI(TAG, "USB Host client registered");
+    // Optionally set target baud for CDC device
+    // usb.setBaud(115200);
 
-    // Start client event pump task
-    xTaskCreatePinnedToCore(usb_client_task, "usb_client", 4096, nullptr, 21, &clientTaskH, APP_CPU_NUM);
-
-    // User guidance on the debug UART (second USB port)
-    DBG.println("Initializing RadPro WiFi Bridge…");
-    if (ALLOW_EARLY_START)
+    // Start USB host + CDC listener + TX task
+    if (!usb.begin())
     {
-        DBG.println("Send 'start' or 'delay <ms>' on this port to begin early / change delay.");
+        DBG.println("[main] ERROR: usb.begin() failed");
+    }
+    else
+    {
+        DBG.println("[main] usb.begin() OK");
+        if (ALLOW_EARLY_START)
+        {
+            DBG.println("Send 'start', 'delay <ms>', or 'raw on/off/toggle' on this port.");
+        }
+
+        deviceIdRequestSent = false;
+        deviceIdAwaitingResponse = false;
+        deviceIdAnnouncePending = true;
+        deviceIdReadyAtMs = millis();
     }
 }
 
@@ -191,6 +183,28 @@ void loop()
     {
         runMainLogic();
     }
+
+    const unsigned long now = millis();
+
+    if (usb.isConnected())
+    {
+        if (deviceIdAwaitingResponse)
+        {
+            constexpr unsigned long DEVICE_ID_TIMEOUT_MS = 2000;
+            if (now - deviceIdLastRequestMs > DEVICE_ID_TIMEOUT_MS)
+            {
+                deviceIdAwaitingResponse = false;
+                deviceIdRequestSent = false;
+                deviceIdAnnouncePending = true;
+                deviceIdReadyAtMs = now + 200;
+            }
+        }
+        else if (!deviceIdRequestSent && (long)(now - deviceIdReadyAtMs) >= 0)
+        {
+            sendDeviceIdCommand(deviceIdAnnouncePending);
+        }
+    }
+
     // Keep loop snappy; USB host runs in its own tasks
     delay(5);
 }
@@ -223,6 +237,22 @@ static void handleStartupLogic()
                 DBG.print(startupDelayMs);
                 DBG.println(" ms");
             }
+        }
+        else if (command.equalsIgnoreCase("raw on"))
+        {
+            rawUsbLoggingEnabled = true;
+            DBG.println("USB raw logging enabled.");
+        }
+        else if (command.equalsIgnoreCase("raw off"))
+        {
+            rawUsbLoggingEnabled = false;
+            DBG.println("USB raw logging disabled.");
+        }
+        else if (command.equalsIgnoreCase("raw toggle"))
+        {
+            rawUsbLoggingEnabled = !rawUsbLoggingEnabled;
+            DBG.print("USB raw logging toggled ");
+            DBG.println(rawUsbLoggingEnabled ? "ON." : "OFF.");
         }
         else if (ALLOW_EARLY_START && command.length() > 0)
         {
@@ -277,6 +307,5 @@ static void runMainLogic()
     {
         lastLoopTime = millis();
         DBG.println("Main loop is running.");
-        // Place additional non-blocking work here
     }
 }
