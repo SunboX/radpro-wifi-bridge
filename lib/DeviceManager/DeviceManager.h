@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <functional>
 #include <utility>
+#include <vector>
 #include "UsbCdcHost.h"
 
 class DeviceManager
@@ -22,13 +23,47 @@ public:
     void setRawLogging(bool enabled);
     void toggleRawLogging();
     bool rawLoggingEnabled() const { return raw_logging_enabled_; }
+    void setVerboseLogging(bool enabled) { verbose_logging_enabled_ = enabled; }
+    bool verboseLoggingEnabled() const { return verbose_logging_enabled_; }
 
     void start();
     void stop();
     void enable(bool active);
     bool enabled() const { return enabled_; }
+    void requestStats();
+    void requestRandomData();
+    void requestDataLog(const String &args = String());
 
 private:
+    enum class CommandType
+    {
+        DeviceId,
+        DevicePower,
+        DeviceBatteryVoltage,
+        DeviceTime,
+        DeviceTimeZone,
+        DeviceSensitivity,
+        TubeTime,
+        TubePulseCount,
+        TubeRate,
+        TubeDeadTime,
+        TubeDeadTimeCompensation,
+        TubeHVFrequency,
+        TubeHVDutyCycle,
+        RandomData,
+        DataLog,
+        Generic
+    };
+
+    struct PendingCommand
+    {
+        String command;
+        CommandType type;
+        bool announce;
+        uint8_t retry;
+        unsigned long ready_ms;
+    };
+
     static DeviceManager *instance_;
 
     static void HandleConnected();
@@ -41,8 +76,13 @@ private:
     void onLine(const String &line);
     void onRaw(const uint8_t *data, size_t len);
 
-    void scheduleRequest(uint32_t delay_ms, bool announce);
-    void issueRequest(bool announce);
+    void scheduleDeviceId(uint32_t delay_ms, bool announce);
+    void enqueueCommand(const String &cmd, CommandType type, uint32_t delay_ms, bool announce);
+    bool isCommandPending(const String &cmd) const;
+    void processQueue();
+    void issueCurrentCommand();
+    void handleSuccess();
+    void handleError();
 
     UsbCdcHost &host_;
 
@@ -50,13 +90,13 @@ private:
     RawHandler raw_handler_ = nullptr;
 
     bool raw_logging_enabled_ = false;
+    bool verbose_logging_enabled_ = false;
     bool enabled_ = false;
-        bool device_id_logged_ = false;
-        bool device_details_logged_ = false;
-    bool request_issued_ = false;
+    bool device_id_logged_ = false;
+    bool device_details_logged_ = false;
     bool awaiting_response_ = false;
-    bool announce_next_ = true;
-    uint8_t retry_count_ = 0;
-    unsigned long request_time_ms_ = 0;
+    bool has_current_command_ = false;
+    PendingCommand current_command_{};
+    std::vector<PendingCommand> command_queue_;
     unsigned long last_request_ms_ = 0;
 };

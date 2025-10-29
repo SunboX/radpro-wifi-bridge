@@ -46,6 +46,10 @@ It enumerates USB devices via TinyUSB **host**, provides a simple non‑blocking
 | `delay <ms>`       | Sets a new startup delay and restarts timer                 | `delay 15000`        |
 | `raw on/off`       | Enables / disables raw USB traffic logging on the console   | `raw on`             |
 | `raw toggle`       | Toggles raw USB logging                                      | `raw toggle`         |
+| `verbose on/off`   | Enables / disables host-level queue/line logging            | `verbose on`         |
+| `verbose toggle`   | Toggles host-level queue/line logging                       | `verbose toggle`     |
+| `random`           | Fetches 16 bytes of random data from the device             | `random`             |
+| `datalog [args]`   | Requests log records (optional args: start end maxCount)    | `datalog 0 4294967295 100` |
 
 While waiting, the device prints a **countdown** once per second. After starting, it logs “Main loop is running.” every second.
 
@@ -60,9 +64,10 @@ Change the LED pin by redefining `RGB_BUILTIN` in your build flags or sketch:
 
 ### USB VCP Handling (RadPro / CH34x)
 - On every device connection (including first boot) the firmware automatically sends `GET deviceId` over USB after a short settle period.
-- The reply is printed once as `[main] Device ID: …`. Subsequent reconnects repeat the same flow.
+- The reply is printed once as `Device ID: …`. Afterward, the bridge also queries and logs the device model, firmware version, locale/time zone, and tube sensitivity.
+- While the bridge is running it periodically polls `GET tubePulseCount` and `GET tubeRate`; the replies are logged so you always see the latest live readings.
 - If the sensor reports `ERROR` or stays silent, the bridge retries with a gentle back‑off up to a handful of times; any remaining USB issues still surface via the `UsbCdcHost` warning channel.
-- You can enable verbose raw USB logging temporarily with `raw on` to inspect byte traffic during troubleshooting.
+- You can enable verbose raw USB logging temporarily with `raw on` to inspect byte traffic during troubleshooting. For deeper host-level debugging (including queue/line dumps) toggle the `verbose` CLI commands above (`device_manager.setVerboseLogging(true)` under the hood).
 
 > **Compatibility note:** So far this code has been tested only with the **Bosean FS‑600** running firmware **“Rad Pro 3.0.1”**. If you encounter problems with other adapters, please open an issue so we can track it. I’m happy to help, but I can’t afford to buy every device — get in touch if you’re able to loan or sponsor hardware for debugging.
 

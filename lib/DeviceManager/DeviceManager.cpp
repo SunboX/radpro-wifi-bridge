@@ -1,4 +1,5 @@
-#include "DeviceManager.h"
+#include <DeviceManager.h>
+#include <time.h>
 
 namespace
 {
@@ -52,9 +53,10 @@ void DeviceManager::begin(uint16_t vid, uint16_t pid)
 
     enabled_ = false;
     device_id_logged_ = false;
-    retry_count_ = 0;
-    request_issued_ = false;
+    device_details_logged_ = false;
     awaiting_response_ = false;
+    has_current_command_ = false;
+    command_queue_.clear();
 }
 
 void DeviceManager::setRawLogging(bool enabled)
@@ -84,18 +86,54 @@ void DeviceManager::enable(bool active)
 
     enabled_ = active;
 
+    command_queue_.clear();
+    awaiting_response_ = false;
+    has_current_command_ = false;
+    device_id_logged_ = false;
+    device_details_logged_ = false;
+    current_command_ = PendingCommand{};
+
     if (enabled_)
     {
-        device_id_logged_ = false;
-        device_details_logged_ = false;
-        retry_count_ = 0;
-        scheduleRequest(DEVICE_ID_INITIAL_DELAY_MS, true);
+        scheduleDeviceId(DEVICE_ID_INITIAL_DELAY_MS, true);
+        processQueue();
     }
-    else
+}
+
+void DeviceManager::requestStats()
+{
+    if (!enabled_ || !host_.isConnected() || !device_id_logged_)
+        return;
+
+    if (!isCommandPending("GET tubePulseCount") && (!awaiting_response_ || current_command_.command != "GET tubePulseCount"))
+        enqueueCommand("GET tubePulseCount", CommandType::TubePulseCount, 0, false);
+    if (!isCommandPending("GET tubeRate") && (!awaiting_response_ || current_command_.command != "GET tubeRate"))
+        enqueueCommand("GET tubeRate", CommandType::TubeRate, 0, false);
+
+    processQueue();
+}
+
+void DeviceManager::requestRandomData()
+{
+    if (!enabled_ || !host_.isConnected())
+        return;
+    if (!isCommandPending("GET randomData"))
+        enqueueCommand("GET randomData", CommandType::RandomData, 0, true);
+    processQueue();
+}
+
+void DeviceManager::requestDataLog(const String &args)
+{
+    if (!enabled_ || !host_.isConnected())
+        return;
+    String cmd = "GET datalog";
+    if (args.length())
     {
-        awaiting_response_ = false;
-        request_issued_ = false;
+        cmd += " ";
+        cmd += args;
     }
+    enqueueCommand(cmd, CommandType::DataLog, 0, true);
+    processQueue();
 }
 
 void DeviceManager::loop()
@@ -106,79 +144,97 @@ void DeviceManager::loop()
     if (!host_.isConnected())
     {
         awaiting_response_ = false;
+        has_current_command_ = false;
+        command_queue_.clear();
         return;
     }
 
-    if (device_id_logged_)
+    if (awaiting_response_)
+    {
+        if ((millis() - last_request_ms_) > DEVICE_ID_RESPONSE_TIMEOUT_MS)
+            handleError();
         return;
-
-    unsigned long now = millis();
-
-    if (!request_issued_ && static_cast<long>(now - request_time_ms_) >= 0)
-    {
-        issueRequest(announce_next_);
-        announce_next_ = false;
     }
-    else if (awaiting_response_ && (now - last_request_ms_) > DEVICE_ID_RESPONSE_TIMEOUT_MS)
-    {
-        awaiting_response_ = false;
-        if (retry_count_ < DEVICE_ID_MAX_RETRY)
-        {
-            retry_count_++;
-            request_issued_ = false;
-            request_time_ms_ = now + DEVICE_ID_RETRY_DELAY_MS;
-            announce_next_ = true;
-        }
-        else
-        {
-            request_issued_ = true;
-        }
-    }
+
+    processQueue();
 }
 
 void DeviceManager::onConnected()
 {
     device_id_logged_ = false;
     device_details_logged_ = false;
-    retry_count_ = 0;
+    command_queue_.clear();
+    awaiting_response_ = false;
+    has_current_command_ = false;
+    current_command_ = PendingCommand{};
+
     if (enabled_)
-        scheduleRequest(DEVICE_ID_INITIAL_DELAY_MS, true);
+        scheduleDeviceId(DEVICE_ID_INITIAL_DELAY_MS, true);
+
     if (line_handler_)
-        line_handler_(String("[main] USB device CONNECTED"));
+        line_handler_(String("USB device CONNECTED"));
+
+    processQueue();
 }
 
 void DeviceManager::onDisconnected()
 {
     device_id_logged_ = false;
     device_details_logged_ = false;
-    retry_count_ = 0;
+    awaiting_response_ = false;
+    has_current_command_ = false;
+    command_queue_.clear();
+
     if (enabled_)
-        scheduleRequest(DEVICE_ID_INITIAL_DELAY_MS, true);
+        scheduleDeviceId(DEVICE_ID_INITIAL_DELAY_MS, true);
+
     if (line_handler_)
-        line_handler_(String("[main] USB device DISCONNECTED"));
+        line_handler_(String("USB device DISCONNECTED"));
 }
 
 void DeviceManager::onLine(const String &line)
 {
-    if (line_handler_)
-        line_handler_(String("[main] <- Line: ") + line);
+    if (verbose_logging_enabled_ && line_handler_)
+        line_handler_(String("<- Line: ") + line);
 
-    if (line.startsWith("OK "))
+    if (!awaiting_response_ || !has_current_command_)
+        return;
+
+    String trimmed = line;
+    trimmed.trim();
+
+    if (trimmed.equalsIgnoreCase("ERROR"))
     {
-        int deviceIdIndex = line.lastIndexOf(';');
-        if (deviceIdIndex >= 0 && deviceIdIndex + 1 < line.length())
+        handleError();
+        return;
+    }
+
+    switch (current_command_.type)
+    {
+    case CommandType::DeviceId:
+    {
+        if (!trimmed.startsWith("OK "))
+            return;
+
+        String payload = trimmed.substring(3);
+        int firstSemi = payload.indexOf(';');
+        int secondSemi = (firstSemi >= 0) ? payload.indexOf(';', firstSemi + 1) : -1;
+
+        if (firstSemi > 0)
         {
-            String deviceId = line.substring(deviceIdIndex + 1);
+            String deviceId;
+            if (secondSemi > firstSemi && secondSemi > 0)
+                deviceId = payload.substring(secondSemi + 1);
+            else
+                deviceId = payload.substring(firstSemi + 1);
+            deviceId.trim();
             if (!device_id_logged_ && line_handler_)
-                line_handler_(String("[main] Device ID: ") + deviceId);
+                line_handler_(String("Device ID: ") + deviceId);
             device_id_logged_ = true;
         }
+
         if (!device_details_logged_)
         {
-            String payload = line.substring(3); // remove "OK "
-            int firstSemi = payload.indexOf(';');
-            int secondSemi = (firstSemi >= 0) ? payload.indexOf(';', firstSemi + 1) : -1;
-
             String model;
             String firmware;
             String locale;
@@ -204,37 +260,200 @@ void DeviceManager::onLine(const String &line)
                 else
                 {
                     firmware = firmwareLocale;
-                    firmware.trim();
                 }
             }
 
             if (line_handler_)
             {
                 if (model.length())
-                    line_handler_(String("[main] Device Model: ") + model);
+                    line_handler_(String("Device Model: ") + model);
                 if (firmware.length())
-                    line_handler_(String("[main] Firmware: ") + firmware);
+                    line_handler_(String("Firmware: ") + firmware);
                 if (locale.length())
-                    line_handler_(String("[main] Locale: ") + locale);
+                    line_handler_(String("Locale: ") + locale);
             }
+
             device_details_logged_ = true;
         }
-        awaiting_response_ = false;
-        request_issued_ = true;
-        retry_count_ = 0;
-        return;
-    }
 
-    if (line.equalsIgnoreCase("ERROR"))
+        enqueueCommand("GET devicePower", CommandType::DevicePower, 0, true);
+        enqueueCommand("GET deviceBatteryVoltage", CommandType::DeviceBatteryVoltage, 0, true);
+        enqueueCommand("GET deviceTime", CommandType::DeviceTime, 0, true);
+        enqueueCommand("GET deviceTimeZone", CommandType::DeviceTimeZone, 0, true);
+        enqueueCommand("GET tubeTime", CommandType::TubeTime, 0, true);
+        enqueueCommand("GET tubeSensitivity", CommandType::DeviceSensitivity, 0, true);
+        enqueueCommand("GET tubeDeadTime", CommandType::TubeDeadTime, 0, true);
+        enqueueCommand("GET tubeDeadTimeCompensation", CommandType::TubeDeadTimeCompensation, 0, true);
+        enqueueCommand("GET tubeHVFrequency", CommandType::TubeHVFrequency, 0, true);
+        enqueueCommand("GET tubeHVDutyCycle", CommandType::TubeHVDutyCycle, 0, true);
+
+        handleSuccess();
+        break;
+    }
+    case CommandType::DevicePower:
     {
-        awaiting_response_ = false;
-        if (retry_count_ < DEVICE_ID_MAX_RETRY)
+        if (trimmed.startsWith("OK ") && line_handler_)
         {
-            retry_count_++;
-            request_issued_ = false;
-            request_time_ms_ = millis() + DEVICE_ID_RETRY_DELAY_MS;
-            announce_next_ = true;
+            String value = trimmed.substring(3);
+            value.trim();
+            line_handler_(String("Device Power: ") + (value == "1" ? "ON" : "OFF"));
         }
+        handleSuccess();
+        break;
+    }
+    case CommandType::DeviceBatteryVoltage:
+    {
+        if (trimmed.startsWith("OK ") && line_handler_)
+        {
+            String value = trimmed.substring(3);
+            value.trim();
+            line_handler_(String("Battery Voltage: ") + value + " V");
+        }
+        handleSuccess();
+        break;
+    }
+    case CommandType::DeviceTime:
+    {
+        if (trimmed.startsWith("OK ") && line_handler_)
+        {
+            String value = trimmed.substring(3);
+            value.trim();
+            time_t ts = static_cast<time_t>(value.toInt());
+            struct tm tm_info;
+            gmtime_r(&ts, &tm_info);
+            char buf[32];
+            strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S UTC", &tm_info);
+            line_handler_(String("Device Time: ") + buf + " (" + value + ")");
+        }
+        handleSuccess();
+        break;
+    }
+    case CommandType::DeviceTimeZone:
+    {
+        if (trimmed.startsWith("OK "))
+        {
+            String zone = trimmed.substring(3);
+            zone.trim();
+            if (line_handler_)
+                line_handler_(String("Device Time Zone: ") + zone);
+        }
+        handleSuccess();
+        break;
+    }
+    case CommandType::DeviceSensitivity:
+    {
+        if (trimmed.startsWith("OK "))
+        {
+            String sens = trimmed.substring(3);
+            sens.trim();
+            if (line_handler_)
+                line_handler_(String("Tube Sensitivity: ") + sens + " cpm/µSv/h");
+        }
+        handleSuccess();
+        break;
+    }
+    case CommandType::TubeTime:
+    {
+        if (trimmed.startsWith("OK "))
+        {
+            String value = trimmed.substring(3);
+            value.trim();
+            if (line_handler_)
+                line_handler_(String("Tube Lifetime: ") + value + " s");
+        }
+        handleSuccess();
+        break;
+    }
+    case CommandType::TubePulseCount:
+    {
+        String value = trimmed.startsWith("OK ") ? trimmed.substring(3) : trimmed;
+        value.trim();
+        if (line_handler_)
+            line_handler_(String("Tube Pulse Count: ") + value);
+        handleSuccess();
+        break;
+    }
+    case CommandType::TubeRate:
+    {
+        String value = trimmed.startsWith("OK ") ? trimmed.substring(3) : trimmed;
+        value.trim();
+        if (line_handler_)
+            line_handler_(String("Tube Rate: ") + value + " cpm");
+        handleSuccess();
+        break;
+    }
+    case CommandType::TubeDeadTime:
+    {
+        if (trimmed.startsWith("OK ") && line_handler_)
+        {
+            String value = trimmed.substring(3);
+            value.trim();
+            line_handler_(String("Tube Dead Time: ") + value + " s");
+        }
+        handleSuccess();
+        break;
+    }
+    case CommandType::TubeDeadTimeCompensation:
+    {
+        if (trimmed.startsWith("OK ") && line_handler_)
+        {
+            String value = trimmed.substring(3);
+            value.trim();
+            line_handler_(String("Dead Time Compensation: ") + value + " s");
+        }
+        handleSuccess();
+        break;
+    }
+    case CommandType::TubeHVFrequency:
+    {
+        if (trimmed.startsWith("OK ") && line_handler_)
+        {
+            String value = trimmed.substring(3);
+            value.trim();
+            line_handler_(String("HV Frequency: ") + value + " Hz");
+        }
+        handleSuccess();
+        break;
+    }
+    case CommandType::TubeHVDutyCycle:
+    {
+        if (trimmed.startsWith("OK ") && line_handler_)
+        {
+            String value = trimmed.substring(3);
+            value.trim();
+            line_handler_(String("HV Duty Cycle: ") + value);
+        }
+        handleSuccess();
+        break;
+    }
+    case CommandType::RandomData:
+    {
+        if (trimmed.startsWith("OK ") && line_handler_)
+        {
+            String value = trimmed.substring(3);
+            value.trim();
+            line_handler_(String("Random Data: ") + value);
+        }
+        handleSuccess();
+        break;
+    }
+    case CommandType::DataLog:
+    {
+        if (trimmed.startsWith("OK ") && line_handler_)
+        {
+            String value = trimmed.substring(3);
+            line_handler_(String("Data Log: ") + value);
+        }
+        handleSuccess();
+        break;
+    }
+    case CommandType::Generic:
+    {
+        if (line_handler_)
+            line_handler_(String("") + current_command_.command + " -> " + trimmed);
+        handleSuccess();
+        break;
+    }
     }
 }
 
@@ -245,29 +464,112 @@ void DeviceManager::onRaw(const uint8_t *data, size_t len)
     raw_handler_(data, len);
 }
 
-void DeviceManager::scheduleRequest(uint32_t delay_ms, bool announce)
+void DeviceManager::scheduleDeviceId(uint32_t delay_ms, bool announce)
 {
-    if (device_id_logged_ || !enabled_)
-        return;
-    request_issued_ = false;
-    awaiting_response_ = false;
-    request_time_ms_ = millis() + delay_ms;
-    announce_next_ = announce;
+    enqueueCommand("GET deviceId", CommandType::DeviceId, delay_ms, announce);
 }
 
-void DeviceManager::issueRequest(bool announce)
+void DeviceManager::enqueueCommand(const String &cmd, CommandType type, uint32_t delay_ms, bool announce)
 {
-    if (!host_.isConnected())
+    PendingCommand entry{cmd, type, announce, 0, millis() + delay_ms};
+    command_queue_.push_back(entry);
+}
+
+bool DeviceManager::isCommandPending(const String &cmd) const
+{
+    if (has_current_command_ && current_command_.command == cmd)
+        return true;
+    for (const auto &entry : command_queue_)
+    {
+        if (entry.command == cmd)
+            return true;
+    }
+    return false;
+}
+
+void DeviceManager::processQueue()
+{
+    if (awaiting_response_ || has_current_command_)
         return;
 
-    if (announce && line_handler_)
-        line_handler_("[main] -> Queue: GET deviceId");
+    if (command_queue_.empty())
+        return;
 
-    host_.sendCommand("GET deviceId", true);
-    host_.sendCommand("GET deviceId\n", false);
-    host_.sendCommand("GET deviceId\r", false);
+    unsigned long now = millis();
+    for (auto it = command_queue_.begin(); it != command_queue_.end(); ++it)
+    {
+        if (static_cast<long>(now - it->ready_ms) >= 0)
+        {
+            current_command_ = *it;
+            command_queue_.erase(it);
+            has_current_command_ = true;
+            issueCurrentCommand();
+            break;
+        }
+    }
+}
 
-    request_issued_ = true;
+void DeviceManager::issueCurrentCommand()
+{
+    if (!has_current_command_ || !host_.isConnected())
+        return;
+
+    if (current_command_.announce && verbose_logging_enabled_ && line_handler_)
+        line_handler_(String("-> Queue: ") + current_command_.command);
+
+    if (current_command_.type == CommandType::DeviceId)
+    {
+        host_.sendCommand(current_command_.command, true);
+        host_.sendCommand(current_command_.command + "\n", false);
+        host_.sendCommand(current_command_.command + "\r", false);
+    }
+    else
+    {
+        host_.sendCommand(current_command_.command, true);
+    }
+
     awaiting_response_ = true;
     last_request_ms_ = millis();
+}
+
+void DeviceManager::handleSuccess()
+{
+    awaiting_response_ = false;
+    has_current_command_ = false;
+    current_command_ = PendingCommand{};
+    processQueue();
+}
+
+void DeviceManager::handleError()
+{
+    awaiting_response_ = false;
+
+    if (!has_current_command_)
+        return;
+
+    if (current_command_.type == CommandType::DeviceId && current_command_.retry < DEVICE_ID_MAX_RETRY)
+    {
+        PendingCommand retry = current_command_;
+        retry.retry++;
+        retry.ready_ms = millis() + DEVICE_ID_RETRY_DELAY_MS;
+        command_queue_.insert(command_queue_.begin(), retry);
+    }
+    else if ((current_command_.type == CommandType::TubePulseCount || current_command_.type == CommandType::TubeRate) &&
+             current_command_.retry < 1)
+    {
+        PendingCommand retry = current_command_;
+        retry.retry++;
+        retry.ready_ms = millis() + DEVICE_ID_RETRY_DELAY_MS;
+        command_queue_.push_back(retry);
+    }
+    else if (line_handler_ &&
+             current_command_.type != CommandType::TubePulseCount &&
+             current_command_.type != CommandType::TubeRate)
+    {
+        line_handler_(String("Command failed: ") + current_command_.command);
+    }
+
+    has_current_command_ = false;
+    current_command_ = PendingCommand{};
+    processQueue();
 }
