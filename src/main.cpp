@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include "UsbCdcHost.h"
 #include "esp_log.h"
-#include "DeviceManager.h"
+#include <DeviceManager.h>
 
 // =========================
 // Board / LED definitions
@@ -45,7 +45,7 @@ static void logLine(const String &msg)
 
 static void logRaw(const uint8_t *data, size_t len)
 {
-    DBG.print("[main] <- Raw: ");
+    DBG.print("<- Raw: ");
     for (size_t i = 0; i < len; ++i)
     {
         if (i)
@@ -92,11 +92,11 @@ void setup()
     // Start USB host + CDC listener + TX task
     if (!usb.begin())
     {
-        DBG.println("[main] ERROR: usb.begin() failed");
+        DBG.println("ERROR: usb.begin() failed");
     }
     else
     {
-        DBG.println("[main] usb.begin() OK");
+        DBG.println("usb.begin() OK");
         if (ALLOW_EARLY_START)
         {
             DBG.println("Send 'start', 'delay <ms>', or 'raw on/off/toggle' on this port.");
@@ -166,6 +166,33 @@ static void handleStartupLogic()
             DBG.print("USB raw logging toggled ");
             DBG.println(device_manager.rawLoggingEnabled() ? "ON." : "OFF.");
         }
+        else if (command.equalsIgnoreCase("verbose on"))
+        {
+            device_manager.setVerboseLogging(true);
+            DBG.println("Verbose host logging enabled.");
+        }
+        else if (command.equalsIgnoreCase("verbose off"))
+        {
+            device_manager.setVerboseLogging(false);
+            DBG.println("Verbose host logging disabled.");
+        }
+        else if (command.equalsIgnoreCase("verbose toggle"))
+        {
+            bool newState = !device_manager.verboseLoggingEnabled();
+            device_manager.setVerboseLogging(newState);
+            DBG.print("Verbose host logging toggled ");
+            DBG.println(newState ? "ON." : "OFF.");
+        }
+        else if (command.equalsIgnoreCase("random"))
+        {
+            device_manager.requestRandomData();
+        }
+        else if (command.startsWith("datalog"))
+        {
+            String args = command.length() > 7 ? command.substring(7) : String();
+            args.trim();
+            device_manager.requestDataLog(args);
+        }
         else if (ALLOW_EARLY_START && command.length() > 0)
         {
             isRunning = true;
@@ -219,6 +246,6 @@ static void runMainLogic()
     if (millis() - lastLoopTime >= 1000)
     {
         lastLoopTime = millis();
-        DBG.println("Main loop is running.");
+        device_manager.requestStats();
     }
 }
