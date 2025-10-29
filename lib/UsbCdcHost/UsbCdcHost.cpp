@@ -8,38 +8,38 @@ using namespace esp_usb; // so VCP and CH34x are found
 #if __has_include("usb/vcp_ch34x.hpp")
 namespace
 {
-struct Ch34xVcpDriver : CdcAcmDevice
-{
-    struct PidList
+    struct Ch34xVcpDriver : CdcAcmDevice
     {
-        const uint16_t values[3];
-        constexpr const uint16_t *begin() const { return values; }
-        constexpr const uint16_t *end() const { return values + 3; }
+        struct PidList
+        {
+            const uint16_t values[3];
+            constexpr const uint16_t *begin() const { return values; }
+            constexpr const uint16_t *end() const { return values + 3; }
+        };
+
+        static constexpr uint16_t vid = NANJING_QINHENG_MICROE_VID;
+        static const PidList pids;
+
+        Ch34xVcpDriver(uint16_t pid, const cdc_acm_host_device_config_t *dev_cfg, uint8_t interface_idx = 0)
+        {
+            const esp_err_t err = ch34x_vcp_open(pid, interface_idx, dev_cfg, &this->cdc_hdl);
+            if (err != ESP_OK)
+            {
+                throw err;
+            }
+        }
     };
 
-    static constexpr uint16_t vid = NANJING_QINHENG_MICROE_VID;
-    static const PidList pids;
-
-    Ch34xVcpDriver(uint16_t pid, const cdc_acm_host_device_config_t *dev_cfg, uint8_t interface_idx = 0)
-    {
-        const esp_err_t err = ch34x_vcp_open(pid, interface_idx, dev_cfg, &this->cdc_hdl);
-        if (err != ESP_OK)
-        {
-            throw err;
-        }
-    }
-};
-
-const Ch34xVcpDriver::PidList Ch34xVcpDriver::pids = {{CH340_PID, CH340_PID_1, CH341_PID}};
+    const Ch34xVcpDriver::PidList Ch34xVcpDriver::pids = {{CH340_PID, CH340_PID_1, CH341_PID}};
 } // namespace
 #endif
 
 namespace
 {
-constexpr uint32_t kConnectionTimeoutMs = 1000;
-constexpr size_t kOutBufferSize = 512;
-constexpr size_t kInBufferSize = 512;
-constexpr uint8_t kDefaultInterfaceIndex = 0;
+    constexpr uint32_t kConnectionTimeoutMs = 1000;
+    constexpr size_t kOutBufferSize = 512;
+    constexpr size_t kInBufferSize = 512;
+    constexpr uint8_t kDefaultInterfaceIndex = 0;
 }
 
 UsbCdcHost::UsbCdcHost() {}
@@ -181,7 +181,6 @@ void UsbCdcHost::stop()
         usb_host_client_deregister(dbg_client_);
         dbg_client_ = nullptr;
     }
-
 }
 
 bool UsbCdcHost::enqueueRaw(const uint8_t *data, size_t len, uint32_t timeout_ms)
@@ -393,7 +392,7 @@ void UsbCdcHost::cdcTask()
         }
         else
         {
-            
+
             // Already open; keep the task responsive but light
             vTaskDelay(pdMS_TO_TICKS(25));
         }
