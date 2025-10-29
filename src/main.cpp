@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "UsbCdcHost.h"
 #include "esp_log.h"
+#include "DeviceManager.h"
 
 // =========================
 // Board / LED definitions
@@ -26,67 +27,24 @@
 static bool isRunning = false;
 static unsigned long startupDelayMs = INITIAL_STARTUP_DELAY_MS;
 static unsigned long startupStartTime = 0;
-static bool rawUsbLoggingEnabled = false;
-static bool deviceIdRequestSent = false;
-static bool deviceIdAwaitingResponse = false;
-static bool deviceIdAnnouncePending = false;
-static unsigned long deviceIdReadyAtMs = 0;
-static unsigned long deviceIdLastRequestMs = 0;
-
 // Forward declarations
 static void handleStartupLogic();
 static void runMainLogic();
-static void sendDeviceIdCommand(bool announce);
+static void logLine(const String &msg);
+static void logRaw(const uint8_t *data, size_t len);
 
 // =========================
 // USB Host wrapper
 // =========================
 static UsbCdcHost usb;
-
-// Device connection callbacks
-static void onUsbConnected()
+static DeviceManager device_manager(usb);
+static void logLine(const String &msg)
 {
-    DBG.println("[main] USB device CONNECTED");
-    deviceIdRequestSent = false;
-    deviceIdAnnouncePending = true;
-    deviceIdReadyAtMs = millis() + 200;
+    DBG.println(msg);
 }
 
-static void onUsbDisconnected()
+static void logRaw(const uint8_t *data, size_t len)
 {
-    DBG.println("[main] USB device DISCONNECTED");
-    deviceIdAwaitingResponse = false;
-    deviceIdRequestSent = false;
-    deviceIdAnnouncePending = true;
-    deviceIdReadyAtMs = millis() + 200;
-}
-
-// Line-based RX callback (already line-buffered by UsbCdcHost)
-static void onUsbLine(const String &line)
-{
-    DBG.print("[main] <- Line: ");
-    DBG.println(line);
-
-    if (line.startsWith("OK "))
-    {
-        int deviceIdIndex = line.lastIndexOf(';');
-        if (deviceIdIndex >= 0 && deviceIdIndex + 1 < line.length())
-        {
-            String deviceId = line.substring(deviceIdIndex + 1);
-            DBG.print("[main] Device ID: ");
-            DBG.println(deviceId);
-        }
-    }
-
-    deviceIdAwaitingResponse = false;
-    deviceIdRequestSent = true;
-    deviceIdAnnouncePending = false;
-}
-
-static void onUsbRaw(const uint8_t *data, size_t len)
-{
-    if (!rawUsbLoggingEnabled)
-        return;
     DBG.print("[main] <- Raw: ");
     for (size_t i = 0; i < len; ++i)
     {
@@ -97,24 +55,6 @@ static void onUsbRaw(const uint8_t *data, size_t len)
         DBG.print(buf);
     }
     DBG.println();
-}
-
-static void sendDeviceIdCommand(bool announce)
-{
-    if (!usb.isConnected())
-        return;
-
-    if (announce)
-        DBG.println("[main] -> Queue: GET deviceId");
-
-    usb.sendCommand("GET deviceId", true);    // CRLF
-    usb.sendCommand("GET deviceId\n", false); // LF
-    usb.sendCommand("GET deviceId\r", false); // CR
-
-    deviceIdRequestSent = true;
-    deviceIdAwaitingResponse = true;
-    deviceIdAnnouncePending = false;
-    deviceIdLastRequestMs = millis();
 }
 
 // =========================
@@ -131,8 +71,8 @@ void setup()
 
     // Silence noisy CDC driver errors when using vendor-specific transport
     esp_log_level_set("cdc_acm_ops", ESP_LOG_NONE);
-    // Keep UsbCdcHost chatter silent unless debugging
-    esp_log_level_set("UsbCdcHost", ESP_LOG_NONE);
+    // Keep UsbCdcHost chatter to warnings (use INFO for detailed debugging)
+    esp_log_level_set("UsbCdcHost", ESP_LOG_WARN);
     // Suppress USB host stack info/error prints for cleaner output
     esp_log_level_set("USBH", ESP_LOG_NONE);
 
@@ -142,13 +82,9 @@ void setup()
     // Simple LED cue on boot (dim green)
     neopixelWrite(RGB_BUILTIN, 0, 8, 0);
 
-    // Register callbacks
-    usb.setDeviceCallbacks(onUsbConnected, onUsbDisconnected);
-    usb.setLineCallback(onUsbLine);
-    usb.setRawCallback(onUsbRaw);
-
-    // BOSEAN FS-600 has CH340 chip (VID 0x1A86, PID 0x7523)
-    usb.setVidPidFilter(0x1A86, 0x7523);
+    device_manager.setLineHandler(logLine);
+    device_manager.setRawHandler(logRaw);
+    device_manager.begin(0x1A86, 0x7523);
 
     // Optionally set target baud for CDC device
     // usb.setBaud(115200);
@@ -165,11 +101,6 @@ void setup()
         {
             DBG.println("Send 'start', 'delay <ms>', or 'raw on/off/toggle' on this port.");
         }
-
-        deviceIdRequestSent = false;
-        deviceIdAwaitingResponse = false;
-        deviceIdAnnouncePending = true;
-        deviceIdReadyAtMs = millis();
     }
 }
 
@@ -184,26 +115,7 @@ void loop()
         runMainLogic();
     }
 
-    const unsigned long now = millis();
-
-    if (usb.isConnected())
-    {
-        if (deviceIdAwaitingResponse)
-        {
-            constexpr unsigned long DEVICE_ID_TIMEOUT_MS = 2000;
-            if (now - deviceIdLastRequestMs > DEVICE_ID_TIMEOUT_MS)
-            {
-                deviceIdAwaitingResponse = false;
-                deviceIdRequestSent = false;
-                deviceIdAnnouncePending = true;
-                deviceIdReadyAtMs = now + 200;
-            }
-        }
-        else if (!deviceIdRequestSent && (long)(now - deviceIdReadyAtMs) >= 0)
-        {
-            sendDeviceIdCommand(deviceIdAnnouncePending);
-        }
-    }
+    device_manager.loop();
 
     // Keep loop snappy; USB host runs in its own tasks
     delay(5);
@@ -240,19 +152,19 @@ static void handleStartupLogic()
         }
         else if (command.equalsIgnoreCase("raw on"))
         {
-            rawUsbLoggingEnabled = true;
+            device_manager.setRawLogging(true);
             DBG.println("USB raw logging enabled.");
         }
         else if (command.equalsIgnoreCase("raw off"))
         {
-            rawUsbLoggingEnabled = false;
+            device_manager.setRawLogging(false);
             DBG.println("USB raw logging disabled.");
         }
         else if (command.equalsIgnoreCase("raw toggle"))
         {
-            rawUsbLoggingEnabled = !rawUsbLoggingEnabled;
+            device_manager.toggleRawLogging();
             DBG.print("USB raw logging toggled ");
-            DBG.println(rawUsbLoggingEnabled ? "ON." : "OFF.");
+            DBG.println(device_manager.rawLoggingEnabled() ? "ON." : "OFF.");
         }
         else if (ALLOW_EARLY_START && command.length() > 0)
         {
@@ -265,6 +177,7 @@ static void handleStartupLogic()
     if (isRunning)
     {
         DBG.println("Starting RadPro WiFi Bridge…");
+        device_manager.start();
         // brief green pulse
         static uint8_t ticks = 0;
         if (ticks < 6)

@@ -40,10 +40,12 @@ It enumerates USB devices via TinyUSB **host**, provides a simple non‑blocking
 ## Runtime Behavior
 
 ### Startup & Commands (via `Serial0`)
-| Command           | Description                                 | Example              |
-|-------------------|---------------------------------------------|----------------------|
-| `start`           | Starts the main loop immediately             | `start`              |
-| `delay <ms>`      | Sets a new startup delay and restarts timer | `delay 15000`        |
+| Command            | Description                                                | Example              |
+|--------------------|------------------------------------------------------------|----------------------|
+| `start`            | Starts the main loop immediately                            | `start`              |
+| `delay <ms>`       | Sets a new startup delay and restarts timer                 | `delay 15000`        |
+| `raw on/off`       | Enables / disables raw USB traffic logging on the console   | `raw on`             |
+| `raw toggle`       | Toggles raw USB logging                                      | `raw toggle`         |
 
 While waiting, the device prints a **countdown** once per second. After starting, it logs “Main loop is running.” every second.
 
@@ -55,6 +57,14 @@ Change the LED pin by redefining `RGB_BUILTIN` in your build flags or sketch:
 ```cpp
 #define RGB_BUILTIN 48  // default ESP32‑S3 DevKitC‑1 WS2812 pin
 ```
+
+### USB VCP Handling (RadPro / CH34x)
+- On every device connection (including first boot) the firmware automatically sends `GET deviceId` over USB after a short settle period.
+- The reply is printed once as `[main] Device ID: …`. Subsequent reconnects repeat the same flow.
+- If the sensor reports `ERROR` or stays silent, the bridge retries with a gentle back‑off up to a handful of times; any remaining USB issues still surface via the `UsbCdcHost` warning channel.
+- You can enable verbose raw USB logging temporarily with `raw on` to inspect byte traffic during troubleshooting.
+
+> **Compatibility note:** So far this code has been tested only with the **Bosean FS‑600** running firmware **“Rad Pro 3.0.1”**. If you encounter problems with other adapters, please open an issue so we can track it. I’m happy to help, but I can’t afford to buy every device — get in touch if you’re able to loan or sponsor hardware for debugging.
 
 ---
 
