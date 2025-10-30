@@ -3,6 +3,8 @@
 Wi-Fi/USB bridge firmware for **Bosean RadPro (FS-600) class** Geiger counters.  
 The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides status over the debug UART, keeps a heartbeat on the on-board WS2812, and mirrors telemetry to MQTT. Configuration is handled through a captive portal that stays available as a normal web UI once the device is on the network.
 
+**Compatibility note:** So far this code has been tested only with the **Bosean FS‑600** running firmware **“Rad Pro 3.0.1”**. If you encounter problems with other adapters, please open an issue so we can track it. I’m happy to help, but I can’t afford to buy every device — get in touch if you’re able to loan or sponsor hardware for debugging.
+
 ---
 
 ## Highlights
@@ -51,8 +53,8 @@ Raw USB logging is invaluable when reverse-engineering RadPro responses; disable
 `WiFiPortalService` keeps the setup UI reachable at each stage:
 
 - **Captive portal:** if auto-connect fails (or no credentials exist) an AP named `<deviceName> Setup` opens until valid settings are entered.
-- **Station portal:** once connected, the same form is hosted at `http://<device-ip>/` via WiFiManager’s web portal. A `Restart Device` button (served at `/restart`) lets you reboot the ESP remotely.
-- **Editable fields:** device name, MQTT host/port/client/user/password, base topic, full topic pattern, and RadPro polling interval. Values are trimmed; `readIntervalMs` is clamped to a minimum of 500 ms.
+- **Station portal:** once connected, the same UI is hosted at `http://<device-ip>/`. The built-in **Configure WiFi** page handles SSID/password and the device name (with a “Main menu” button to return), while a separate **Configure MQTT** page exposes the broker host/port, credentials, base topics, and polling interval. A `Restart Device` button (served at `/restart`) lets you reboot the ESP remotely from the main menu.
+- **Editable fields:** Wi-Fi SSID/password plus device name on the Wi-Fi page; MQTT host/port/client/user/password, base topic, full topic pattern, and RadPro polling interval on the MQTT page. Values are trimmed; `readIntervalMs` is clamped to a minimum of 500 ms.
 - **Persistence:** saving the form flushes settings to NVS and reboots the station interface so new credentials take effect immediately.
 - **Status logging:** after `Starting RadPro WiFi Bridge…` the service announces SSID, IP, gateway, mask, RSSI, and disconnect reasons.
 
@@ -71,8 +73,6 @@ The `MqttPublisher` bridges every RadPro response to MQTT when a broker is confi
 As soon as the bridge learns the RadPro device ID it emits Home Assistant MQTT Discovery payloads under `homeassistant/<component>/…/config`, creating sensors such as tube rate, pulse count, battery voltage/percentage, and power state automatically. Entities update in place whenever you rename the device in the portal.
 
 > **Home Assistant / Mosquitto tip:** the default add-on configuration disables anonymous clients. Either enable anonymous mode (`anonymous: true`) or create a dedicated MQTT user and enter those credentials in the portal. A `MQTT connect failed: 5` log means the broker rejected the connection as unauthorised.
-
-**Compatibility note:** So far this code has been tested only with the **Bosean FS‑600** running firmware **“Rad Pro 3.0.1”**. If you encounter problems with other adapters, please open an issue so we can track it. I’m happy to help, but I can’t afford to buy every device — get in touch if you’re able to loan or sponsor hardware for debugging.
 
 ---
 

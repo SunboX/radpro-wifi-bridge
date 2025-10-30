@@ -27,6 +27,9 @@ private:
     void logConnectionDetails(const IPAddress &ip, const IPAddress &gateway, const IPAddress &mask);
     void logStatus();
     void attemptReconnect();
+    void sendMqttForm(const String &message = String());
+    void handleMqttPost();
+    static String htmlEscape(const String &value);
 
     AppConfig &config_;
     AppConfigStore &store_;
