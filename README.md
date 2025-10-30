@@ -60,6 +60,16 @@ Raw USB logging is useful for troubleshooting atypical firmware responses. Disab
 
 Configuration is managed by `WiFiPortalService`, which continuously maintains the web portal while the main loop runs.
 
+### MQTT Publishing
+
+- Configure the broker host/port, client ID, credentials, base topic, and full topic template in the portal.
+- By default payloads are published under `stat/radpro/<deviceId>/<leaf>`, where `<leaf>` is one of:
+  - `deviceId`, `devicePower`, `deviceBatteryVoltage`, `deviceTime`, `deviceTimeZone`
+  - `tubeSensitivity`, `tubeLifetime`, `tubePulseCount`, `tubeRate`
+  - `tubeDeadTime`, `tubeDeadTimeCompensation`, `tubeHvFrequency`, `tubeHvDutyCycle`
+- Responses are published at the same cadence as `readIntervalMs` (minimum 500 ms). Ad‑hoc commands such as `randomData`/`dataLog` are forwarded without the retain flag.
+- Topics honour the `%deviceid%`, `%prefix%`, and `%topic%` placeholders so you can mirror Tasmota‑style hierarchies if desired.
+
 ---
 
 ## Device Data Flow
