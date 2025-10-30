@@ -3,6 +3,8 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <array>
+#include <functional>
 #include "AppConfig/AppConfig.h"
 #include "DeviceManager.h"
 
@@ -15,15 +17,40 @@ public:
     void updateConfig();
     void loop();
     void onCommandResult(DeviceManager::CommandType type, const String &value);
+    void setPublishCallback(std::function<void(bool)> cb) { publishCallback_ = std::move(cb); }
 
 private:
     bool ensureConnected();
     void refreshTopics();
+    void publishDiscovery();
+    bool publishDiscoveryEntity(DeviceManager::CommandType type,
+                                const char *component,
+                                const char *objectId,
+                                const char *name,
+                                const char *unit,
+                                const char *deviceClass,
+                                const char *stateClass,
+                                const char *payloadOn,
+                                const char *payloadOff);
     String buildTopic(const String &leaf) const;
     String commandLeaf(DeviceManager::CommandType type) const;
     String makeSlug(const String &raw) const;
     String sanitizedDeviceId() const;
-    void publish(const String &leaf, const String &payload, bool retain = true);
+    bool publish(const String &leaf, const String &payload, bool retain = true);
+    bool publishCommand(DeviceManager::CommandType type, const String &payload, bool retain = true);
+    String escapeJson(const String &value) const;
+    String deviceNameForDiscovery() const;
+    String deviceModelForDiscovery() const;
+    void markAllPending();
+    void republishRetained();
+    struct RetainedState
+    {
+        DeviceManager::CommandType type;
+        String payload;
+        bool hasValue = false;
+        bool pending = false;
+    };
+    RetainedState *retainedEntry(DeviceManager::CommandType type);
 
     AppConfig &config_;
     Print &log_;
@@ -46,4 +73,15 @@ private:
     String fallbackId_;
     String topicBase_;
     String fullTopicPattern_;
+    std::function<void(bool)> publishCallback_;
+    String currentDeviceName_;
+    String deviceModel_;
+    String deviceFirmware_;
+    String deviceLocale_;
+    bool discoveryPublished_ = false;
+    unsigned long lastDiscoveryAttempt_ = 0;
+    unsigned long lastRepublishAttempt_ = 0;
+    size_t discoveryIndex_ = 0;
+    static const std::array<DeviceManager::CommandType, 15> kRetainedTypes_;
+    std::array<RetainedState, kRetainedTypes_.size()> retainedStates_;
 };

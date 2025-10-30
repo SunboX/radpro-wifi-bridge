@@ -34,6 +34,10 @@ void WiFiPortalService::begin()
     manager_.setConnectRetries(1);
     manager_.setSaveConfigCallback([this]()
                                    { store_.requestSave(); });
+    manager_.setSaveParamsCallback([this]() {
+        applyFromParameters(false, true);
+        store_.requestSave();
+    });
     wifiEventId_ = WiFi.onEvent([this](WiFiEvent_t event, WiFiEventInfo_t info)
                                 { handleWiFiEvent(event, info); });
     attachParameters();
@@ -96,6 +100,26 @@ void WiFiPortalService::maintain()
     }
 
     logStatusIfNeeded();
+
+    if (pendingReconnect_)
+    {
+        wl_status_t status = WiFi.status();
+        if (status == WL_CONNECTED)
+        {
+            pendingReconnect_ = false;
+            hasLoggedIp_ = false;
+            logStatusIfNeeded();
+            log_.println("Wi-Fi reconnect complete.");
+        }
+        else
+        {
+            unsigned long now = millis();
+            if (lastReconnectAttemptMs_ == 0 || now - lastReconnectAttemptMs_ >= 5000)
+            {
+                attemptReconnect();
+            }
+        }
+    }
 }
 
 void WiFiPortalService::process()
@@ -110,7 +134,18 @@ void WiFiPortalService::syncIfRequested()
 {
     if (store_.consumeSaveRequest())
     {
-        applyFromParameters(true, true);
+        bool changed = applyFromParameters(true, true);
+        log_.println(changed ? "Configuration updated." : "Configuration saved (no changes).");
+
+        if (manager_.getConfigPortalActive())
+        {
+            manager_.stopConfigPortal();
+        }
+
+        pendingReconnect_ = true;
+        lastReconnectAttemptMs_ = 0;
+        hasLoggedIp_ = false;
+        log_.println("Wi-Fi reconnect scheduled.");
     }
 }
 
@@ -166,25 +201,69 @@ void WiFiPortalService::attachParameters()
     manager_.addParameter(&paramMqttFullTopic_);
     manager_.addParameter(&paramReadInterval_);
 
+    manager_.setCustomMenuHTML("<div style='padding:12px;'><a class='btn btn-xs btn-warning' href='/restart'>Restart Device</a></div>");
+
+    manager_.setWebServerCallback([this]() {
+        if (!manager_.server)
+            return;
+
+        manager_.server->on("/restart", HTTP_GET, [this]() {
+            manager_.server->send(200, "text/plain", "Restarting...\n");
+            log_.println("Restart requested from Wi-Fi portal.");
+            delay(200);
+            ESP.restart();
+        });
+    });
+
     paramsAttached_ = true;
 }
 
 bool WiFiPortalService::applyFromParameters(bool persist, bool forceSave)
 {
-    bool changed = false;
-    changed |= UpdateStringIfChanged(config_.deviceName, paramDeviceName_.getValue());
-    if (!config_.deviceName.length())
-    {
-        config_.deviceName = "RadPro WiFi Bridge";
-        changed = true;
-    }
+    auto readTrimmed = [](const char *value) -> String {
+        String result = value ? String(value) : String();
+        result.trim();
+        return result;
+    };
 
-    changed |= UpdateStringIfChanged(config_.mqttHost, paramMqttHost_.getValue());
-    changed |= UpdateStringIfChanged(config_.mqttClient, paramMqttClient_.getValue());
-    changed |= UpdateStringIfChanged(config_.mqttUser, paramMqttUser_.getValue());
-    changed |= UpdateStringIfChanged(config_.mqttPassword, paramMqttPass_.getValue());
-    changed |= UpdateStringIfChanged(config_.mqttTopic, paramMqttTopic_.getValue());
-    changed |= UpdateStringIfChanged(config_.mqttFullTopic, paramMqttFullTopic_.getValue());
+    bool changed = false;
+
+    String newDeviceName = readTrimmed(paramDeviceName_.getValue());
+    if (!newDeviceName.length())
+        newDeviceName = "RadPro WiFi Bridge";
+    if (config_.deviceName != newDeviceName)
+        changed = true;
+    config_.deviceName = newDeviceName;
+
+    String newMqttHost = readTrimmed(paramMqttHost_.getValue());
+    if (config_.mqttHost != newMqttHost)
+        changed = true;
+    config_.mqttHost = newMqttHost;
+
+    String newMqttClient = readTrimmed(paramMqttClient_.getValue());
+    if (config_.mqttClient != newMqttClient)
+        changed = true;
+    config_.mqttClient = newMqttClient;
+
+    String newMqttUser = readTrimmed(paramMqttUser_.getValue());
+    if (config_.mqttUser != newMqttUser)
+        changed = true;
+    config_.mqttUser = newMqttUser;
+
+    String newMqttPassword = readTrimmed(paramMqttPass_.getValue());
+    if (config_.mqttPassword != newMqttPassword)
+        changed = true;
+    config_.mqttPassword = newMqttPassword;
+
+    String newMqttTopic = readTrimmed(paramMqttTopic_.getValue());
+    if (config_.mqttTopic != newMqttTopic)
+        changed = true;
+    config_.mqttTopic = newMqttTopic;
+
+    String newMqttFullTopic = readTrimmed(paramMqttFullTopic_.getValue());
+    if (config_.mqttFullTopic != newMqttFullTopic)
+        changed = true;
+    config_.mqttFullTopic = newMqttFullTopic;
 
     uint32_t newInterval = strtoul(paramReadInterval_.getValue(), nullptr, 10);
     if (newInterval < kMinReadIntervalMs)
@@ -211,7 +290,9 @@ bool WiFiPortalService::applyFromParameters(bool persist, bool forceSave)
     {
         if (store_.save(config_))
         {
-            log_.println("Configuration saved.");
+            log_.print("Configuration saved to NVS (mqttHost='");
+            log_.print(config_.mqttHost);
+            log_.println("').");
         }
         else
         {
@@ -240,6 +321,10 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
         char ssid[33] = {0};
         size_t len = std::min<size_t>(info.wifi_sta_connected.ssid_len, sizeof(ssid) - 1);
         memcpy(ssid, info.wifi_sta_connected.ssid, len);
+        lastKnownSsid_ = String(ssid);
+        String passCandidate = WiFi.psk();
+        if (passCandidate.length())
+            lastKnownPass_ = passCandidate;
         if (lastStatus_ != WL_CONNECTED)
         {
             log_.print("Wi-Fi connected to AP: ");
@@ -258,6 +343,8 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
         lastStatus_ = WL_DISCONNECTED;
         hasLoggedIp_ = false;
         lastIp_ = IPAddress();
+        pendingReconnect_ = true;
+        lastReconnectAttemptMs_ = 0;
         break;
     default:
         break;
@@ -339,5 +426,45 @@ void WiFiPortalService::logStatus()
     else
     {
         log_.println("Wi-Fi not connected.");
+    }
+}
+
+void WiFiPortalService::attemptReconnect()
+{
+    lastReconnectAttemptMs_ = millis();
+    log_.println("Wi-Fi reconnect pending; attempting to rejoin.");
+
+    WiFi.mode(WIFI_STA);
+
+    if (WiFi.reconnect())
+    {
+        log_.println("Wi-Fi reconnect requested via reconnect().");
+        return;
+    }
+
+    String ssid = lastKnownSsid_.length() ? lastKnownSsid_ : WiFi.SSID();
+    String pass = lastKnownPass_.length() ? lastKnownPass_ : WiFi.psk();
+
+    if (ssid.length())
+    {
+        if (pass.length())
+        {
+            log_.print("Wi-Fi.begin(");
+            log_.print(ssid);
+            log_.println(") with passphrase.");
+            WiFi.begin(ssid.c_str(), pass.c_str());
+        }
+        else
+        {
+            log_.print("Wi-Fi.begin(");
+            log_.print(ssid);
+            log_.println(") without passphrase.");
+            WiFi.begin(ssid.c_str());
+        }
+    }
+    else
+    {
+        log_.println("Wi-Fi.begin() with stored credentials.");
+        WiFi.begin();
     }
 }

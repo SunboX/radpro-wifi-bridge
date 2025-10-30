@@ -25,6 +25,7 @@ private:
     void logStatusIfNeeded();
     void logConnectionDetails(const IPAddress &ip, const IPAddress &gateway, const IPAddress &mask);
     void logStatus();
+    void attemptReconnect();
 
     AppConfig &config_;
     AppConfigStore &store_;
@@ -46,4 +47,8 @@ private:
     IPAddress lastIp_;
     bool hasLoggedIp_;
     bool loggingEnabled_ = false;
+    bool pendingReconnect_ = false;
+    unsigned long lastReconnectAttemptMs_ = 0;
+    String lastKnownSsid_;
+    String lastKnownPass_;
 };

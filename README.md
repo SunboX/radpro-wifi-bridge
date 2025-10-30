@@ -1,124 +1,131 @@
-# RadPro WiFi Bridge (ESP32‑S3)
+# RadPro WiFi Bridge (ESP32-S3)
 
-Wi‑Fi / USB bridge firmware for **Bosean RadPro (FS‑600)‑class** Geiger counters.  
-The ESP32‑S3 enumerates the detector as a vendor‑specific CDC device, exposes status over serial, keeps a live heartbeat on the on‑board WS2812 LED, and mirrors data to the network. Configuration happens through a captive portal or a small web UI served directly by the board.
+Wi-Fi/USB bridge firmware for **Bosean RadPro (FS-600) class** Geiger counters.  
+The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides status over the debug UART, keeps a heartbeat on the on-board WS2812, and mirrors telemetry to MQTT. Configuration is handled through a captive portal that stays available as a normal web UI once the device is on the network.
 
 ---
 
 ## Highlights
 
-- **TinyUSB host stack** with a CH34x VCP shim so the RadPro enumerates reliably.
-- **DeviceManager queue** that boots the tube, captures `deviceId`/model/firmware, and keeps polling live readings (`GET tubePulseCount`, `GET tubeRate`, …).
-- **Wi‑Fi configuration portal** (WiFiManager based):
-  - On first boot (or when credentials fail) an AP is launched for setup.
-  - After connecting to WLAN the same form is available at `http://<device-ip>/`.
-  - Saved settings (device name, MQTT parameters, polling interval) are stored in NVS.
-- **Runtime Wi‑Fi logging**: SSID/IP/gateway and RSSI are printed on connect, disconnect reasons are noted.
-- **MQTT publishing**: every RadPro `GET` response is retained on the configured topic tree at the `readIntervalMs` cadence.
-- **Non‑blocking startup state machine**: default 5 s delay with serial overrides.
-- **Serial control** on the CP210x debug port (`Serial0` @ 115200) with optional raw USB tracing.
-- **RGB LED heartbeat** (WS2812 on GPIO 48) showing boot and runtime status.
+- **TinyUSB host stack** with a CH34x VCP shim so the RadPro enumerates reliably on the ESP32-S3 OTG port.
+- **DeviceManager command queue** that boots the tube, logs identity/metadata, and keeps issuing telemetry `GET` commands.
+- **Wi-Fi configuration portal** (WiFiManager based) that launches an AP when credentials fail, serves the same form at `http://<device-ip>/`, and persists settings to NVS. A one-click “Restart Device” action is exposed in the UI.
+- **Runtime Wi-Fi diagnostics & startup control**: countdown-driven boot with serial overrides, plus SSID/IP/RSSI logging after the main firmware starts.
+- **MQTT publisher** with templated topics. Every successful RadPro response is forwarded at the configured `readIntervalMs`; publish success/failure drives LED pulses and console messages.
+- **Home Assistant discovery** payloads so MQTT entities appear automatically once the bridge is online.
+- **RGB LED state machine** (WS2812 on GPIO 48) that communicates boot, Wi-Fi, USB, and error states without needing the serial console.
 
 ---
 
 ## Quick Start
 
-1. Install [PlatformIO](https://platformio.org/) and open the project.
-2. The default environment targets **ESP32‑S3 DevKitC‑1 (N16R8)** with TinyUSB host enabled (see `platformio.ini`).
-3. Connect the board:
-   - **CP210x USB (UART)** for logs / commands (`Serial0` 115200 baud).
-   - Keep the **native USB‑OTG** port free for the RadPro sensor.
-4. Flash: `platformio run --target upload`.
-5. Open a serial monitor on the CP210x port to watch the countdown or enter commands.
+1. Install [PlatformIO](https://platformio.org/) and open this project.
+2. The default environment targets **ESP32-S3 DevKitC-1 (N16R8)** with TinyUSB host support (`platformio.ini`).
+3. Connect the board with **two** USB cables:
+   - CP210x (UART) port → logs & commands (`Serial0`, 115200 baud).
+   - Native USB-OTG port → leave free for the RadPro sensor.
+4. Flash with `platformio run --target upload` (or `--target upload --target monitor` to auto-open the serial monitor).
+5. Watch the countdown on the UART. Enter `start` to skip the delay or adjust it with `delay <ms>`.
 
-> macOS: `ls /dev/tty.*` then e.g. `screen /dev/tty.usbserial-* 115200` (to exit `screen`, press `Ctrl+A`, then `K`, then `Y`).
-
-When no Wi‑Fi credentials are stored the firmware opens a captive portal (`RadPro WiFi Bridge Setup`). Once credentials are provided it reconnects as a station and logs the assigned IP.
+On first boot— or whenever stored credentials fail— the firmware hosts a captive portal named `<device name> Setup`. After Wi-Fi joins successfully the same configuration UI is served at `http://<device-ip>/`.
 
 ---
 
 ## Serial Console Commands (`Serial0`)
 
-| Command        | Description                                              |
-|----------------|----------------------------------------------------------|
-| `start`        | Skip the remaining boot delay and start immediately.     |
-| `delay <ms>`   | Set a new startup delay (milliseconds) and restart timer.|
-| `raw on/off`   | Enable or disable raw USB framing logs.                  |
-| `raw toggle`   | Toggle raw USB logging.                                  |
+| Command      | Description                                                   |
+|--------------|---------------------------------------------------------------|
+| `start`      | Skip the remaining startup delay and begin immediately.       |
+| `delay <ms>` | Set a new startup delay (milliseconds) and restart the timer. |
+| `raw on/off` | Enable or disable raw USB frame logging.                      |
+| `raw toggle` | Toggle raw USB logging.                                       |
 
-While waiting for the boot delay the console prints `Starting in …` once per second. After the bridge starts, only device data and Wi‑Fi status are logged (the old “Main loop is running.” message was removed to keep the console clean).
+While waiting for the boot delay the console prints `Starting in …` once per second. After the bridge starts, only device data, Wi-Fi status changes, and MQTT diagnostics are logged— the old “Main loop is running.” chatter is gone.
 
-Raw USB logging is useful for troubleshooting atypical firmware responses. Disable it for normal operation to preserve bandwidth.
-
----
-
-## Wi‑Fi Configuration
-
-- **Captive portal:** launched automatically if auto‑connect fails or no credentials exist. Device parameters (name, MQTT host/user/pass/topic, RadPro polling interval) are editable here.
-- **Station portal:** once connected, browse to `http://<device-ip>/` to reopen the same form. Settings are saved in NVS.
-- **Status logging:** on every connect the firmware prints SSID, IP, gateway, mask, and RSSI. Disconnect reasons (e.g., `AUTH_FAIL`) are emitted once per event.
-
-Configuration is managed by `WiFiPortalService`, which continuously maintains the web portal while the main loop runs.
-
-### MQTT Publishing
-
-- Configure the broker host/port, client ID, credentials, base topic, and full topic template in the portal.
-- By default payloads are published under `stat/radpro/<deviceId>/<leaf>`, where `<leaf>` is one of:
-  - `deviceId`, `devicePower`, `deviceBatteryVoltage`, `deviceTime`, `deviceTimeZone`
-  - `tubeSensitivity`, `tubeLifetime`, `tubePulseCount`, `tubeRate`
-  - `tubeDeadTime`, `tubeDeadTimeCompensation`, `tubeHvFrequency`, `tubeHvDutyCycle`
-- Responses are published at the same cadence as `readIntervalMs` (minimum 500 ms). Ad‑hoc commands such as `randomData`/`dataLog` are forwarded without the retain flag.
-- Topics honour the `%deviceid%`, `%prefix%`, and `%topic%` placeholders so you can mirror Tasmota‑style hierarchies if desired.
+Raw USB logging is invaluable when reverse-engineering RadPro responses; disable it once finished to minimise serial traffic.
 
 ---
 
-## Device Data Flow
+## Wi-Fi Configuration Portal
 
-1. **USB connection** → the RadPro enumerates (using CH34x VCP driver if needed).
-2. **Initial handshake**:
-   - `GET deviceId` → logs ID, model, firmware, locale/time zone.
-   - Additional `GET` commands gather tube sensitivity, dead time, HV parameters, etc.
-3. **Continuous polling**: `GET tubePulseCount` and `GET tubeRate` are queued at the configured interval (defaults to 1000 ms, clamped to 500 ms minimum).
-4. **Raw logging** (optional) prints hex payloads for each USB frame.
+`WiFiPortalService` keeps the setup UI reachable at each stage:
 
-Command retries and back‑off are handled automatically inside `DeviceManager`.
+- **Captive portal:** if auto-connect fails (or no credentials exist) an AP named `<deviceName> Setup` opens until valid settings are entered.
+- **Station portal:** once connected, the same form is hosted at `http://<device-ip>/` via WiFiManager’s web portal. A `Restart Device` button (served at `/restart`) lets you reboot the ESP remotely.
+- **Editable fields:** device name, MQTT host/port/client/user/password, base topic, full topic pattern, and RadPro polling interval. Values are trimmed; `readIntervalMs` is clamped to a minimum of 500 ms.
+- **Persistence:** saving the form flushes settings to NVS and reboots the station interface so new credentials take effect immediately.
+- **Status logging:** after `Starting RadPro WiFi Bridge…` the service announces SSID, IP, gateway, mask, RSSI, and disconnect reasons.
 
 ---
 
-## LED Indicators
+## MQTT Publishing
 
-- **Boot:** dim green pulse during startup.
-- **Running:** heartbeat pulses every 250 ms (adjust in `runMainLogic()`).
+The `MqttPublisher` bridges every RadPro response to MQTT when a broker is configured:
 
-You can change the LED pin by redefining `RGB_BUILTIN` (default is `48` on the ESP32‑S3 DevKitC‑1):
+- **Configuration fields:** host, port (default 1883), client ID suffix, username/password, topic template, and full topic template (all editable from the portal).
+- **Topic templating:** `%deviceid%` (lowercase slug of the reported device ID) and `%DeviceId%` are replaced in the base topic. `%prefix%` and `%topic%` are substituted inside the full topic template. Defaults yield `stat/radpro/<deviceid>/<leaf>`.
+- **Published leaves:** `deviceId`, `devicePower`, `deviceBatteryVoltage`, `deviceBatteryPercent`, `deviceTime`, `deviceTimeZone`, `tubeSensitivity`, `tubeLifetime`, `tubePulseCount`, `tubeRate`, `tubeDoseRate`, `tubeDeadTime`, `tubeDeadTimeCompensation`, `tubeHvFrequency`, `tubeHvDutyCycle`, plus `randomData` and `dataLog` when requested.
+- **Retain policy:** all telemetry is retained except `randomData` and `dataLog`. `devicePower` is normalised to `ON`/`OFF`.
+- **Connectivity behaviour:** publishing is skipped (with a console note) while Wi-Fi or MQTT is down. Successful publishes trigger a bright green LED pulse; failures trigger a red pulse and an explicit log message.
 
-```cpp
-#define RGB_BUILTIN 48
-```
+As soon as the bridge learns the RadPro device ID it emits Home Assistant MQTT Discovery payloads under `homeassistant/<component>/…/config`, creating sensors such as tube rate, pulse count, battery voltage/percentage, and power state automatically. Entities update in place whenever you rename the device in the portal.
+
+> **Home Assistant / Mosquitto tip:** the default add-on configuration disables anonymous clients. Either enable anonymous mode (`anonymous: true`) or create a dedicated MQTT user and enter those credentials in the portal. A `MQTT connect failed: 5` log means the broker rejected the connection as unauthorised.
+
+---
+
+## LED Feedback
+
+Base modes communicate long-running state (default brightness is gentle to avoid glare):
+
+| Mode             | Pattern / Colour                                  | Meaning |
+|------------------|---------------------------------------------------|---------|
+| `Booting`        | Magenta blink (~0.4 s period)                     | Firmware initialising before the countdown runs. |
+| `WaitingForStart`| Yellow blink (~0.6 s period)                      | Startup delay active; awaiting timeout or `start` command. |
+| `WifiConnecting` | Blue blink (~0.6 s period)                        | Attempting to join the configured WLAN. |
+| `WifiConnected`  | Cyan steady                                       | Wi-Fi joined; USB device not yet ready. |
+| `DeviceReady`    | Bright green steady                               | RadPro enumerated and telemetry queue active. |
+| `Error`          | Amber blink (~0.5 s period)                       | Last device command or MQTT publish failed— check the console. |
+
+Event pulses temporarily override the base colour:
+
+- **MQTT success:** bright green flash (~150 ms).
+- **MQTT failure / command error:** bright red flash (~250 ms) and a console log (`MQTT publish failed.` or `Device command failed: <id>`).
+
+---
+
+## Device Telemetry Flow
+
+1. **USB enumeration** uses TinyUSB with a CH34x fallback so the RadPro reliably appears as a CDC device.
+2. **Handshake:** `GET deviceId` logs the raw ID, model, firmware, and locale. Additional metadata (`devicePower`, `deviceBatteryVoltage`, `deviceTime`, `tube` parameters) is fetched immediately afterwards.
+3. **Continuous polling:** `GET tubePulseCount` and `GET tubeRate` are queued at the configured interval (`readIntervalMs`, clamped to ≥ 500 ms).
+4. **MQTT forwarding:** each successful response is offered to the MQTT publisher; failures propagate to the LED and console.
+5. **Optional diagnostics:** enable raw USB logging for byte-level traces or request `randomData` / `dataLog` from higher-level code to stream ad-hoc payloads.
+
+Retries, back-off, and duplicate suppression are handled inside `DeviceManager`.
 
 ---
 
 ## Project Structure
 
-| Path                                   | Purpose                                                             |
-|----------------------------------------|---------------------------------------------------------------------|
-| `src/main.cpp`                         | Arduino entry point: USB host startup, Wi‑Fi portal orchestration, startup delay logic, LED heartbeat. |
-| `lib/DeviceManager`                    | RadPro command queue, response parsing, automatic telemetry polling.|
-| `lib/UsbCdcHost`                       | TinyUSB wrapper + CH34x helper to drive the vendor CDC interface.   |
-| `lib/AppSupport/AppConfig`             | NVS-backed configuration storage (device name, MQTT settings, read interval). |
-| `lib/AppSupport/ConfigPortal`          | WiFiManager-based captive portal and station web portal service.    |
-| `platformio.ini`                       | PlatformIO configuration targeting ESP32‑S3 DevKitC‑1 with TinyUSB host. |
+| Path                                   | Purpose |
+|----------------------------------------|---------|
+| `src/main.cpp`                         | Arduino entry point: startup state machine, Wi-Fi orchestration, LED updates, telemetry loop. |
+| `lib/UsbCdcHost`                       | TinyUSB host wrapper plus CH34x helper for the vendor CDC transport. |
+| `lib/DeviceManager`                    | RadPro command queue, response parsing, publish callbacks, retry/back-off logic. |
+| `lib/AppSupport/AppConfig`             | NVS-backed configuration storage and parameter helpers. |
+| `lib/AppSupport/ConfigPortal`          | WiFiManager integration, captive/station portal, restart endpoint, Wi-Fi logging. |
+| `lib/AppSupport/Mqtt`                  | PubSubClient-based MQTT publisher with topic templating and slug generation. |
+| `lib/AppSupport/Led`                   | WS2812 status controller and LED pulse handling. |
+| `platformio.ini`                       | PlatformIO configuration for ESP32-S3 DevKitC-1 with TinyUSB host. |
 
 ---
 
 ## Roadmap
 
-- Publish CPM / pulse counts to:
-  - **openSenseMap**
-  - **Home Assistant** (MQTT discovery)
-  - Generic **MQTT** / custom backends
-- Configurable outbound reporting cadence & thresholds.
-- OTA update support.
+- Push CPM / pulse counts to cloud services such as **openSenseMap**.
+- Add configurable reporting thresholds / batching beyond the global interval.
+- Integrate OTA firmware updates.
 
 ---
 

@@ -20,11 +20,16 @@ public:
     enum class CommandType
     {
         DeviceId,
+        DeviceModel,
+        DeviceFirmware,
+        DeviceLocale,
         DevicePower,
         DeviceBatteryVoltage,
+        DeviceBatteryPercent,
         DeviceTime,
         DeviceTimeZone,
         DeviceSensitivity,
+        TubeDoseRate,
         TubeTime,
         TubePulseCount,
         TubeRate,
@@ -37,7 +42,7 @@ public:
         Generic
     };
 
-    using CommandResultHandler = std::function<void(CommandType, const String &)>;
+    using CommandResultHandler = std::function<void(CommandType, const String &, bool)>;
 
     void setLineHandler(LineHandler handler) { line_handler_ = std::move(handler); }
     void setRawHandler(RawHandler handler) { raw_handler_ = std::move(handler); }
@@ -87,7 +92,7 @@ private:
     void issueCurrentCommand();
     void handleSuccess();
     void handleError();
-    void emitResult(CommandType type, const String &value);
+    void emitResult(CommandType type, const String &value, bool success);
 
     UsbCdcHost &host_;
 
@@ -105,4 +110,5 @@ private:
     PendingCommand current_command_{};
     std::vector<PendingCommand> command_queue_;
     unsigned long last_request_ms_ = 0;
+    float device_sensitivity_cpm_per_uSv_ = 0.0f;
 };
