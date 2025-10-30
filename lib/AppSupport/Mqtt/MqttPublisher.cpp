@@ -1,5 +1,22 @@
 #include "MqttPublisher.h"
 
+const std::array<DeviceManager::CommandType, 15> MqttPublisher::kRetainedTypes_ = {
+    DeviceManager::CommandType::DeviceId,
+    DeviceManager::CommandType::DevicePower,
+    DeviceManager::CommandType::DeviceBatteryVoltage,
+    DeviceManager::CommandType::DeviceBatteryPercent,
+    DeviceManager::CommandType::DeviceTime,
+    DeviceManager::CommandType::DeviceTimeZone,
+    DeviceManager::CommandType::DeviceSensitivity,
+    DeviceManager::CommandType::TubeTime,
+    DeviceManager::CommandType::TubePulseCount,
+    DeviceManager::CommandType::TubeRate,
+    DeviceManager::CommandType::TubeDoseRate,
+    DeviceManager::CommandType::TubeDeadTime,
+    DeviceManager::CommandType::TubeDeadTimeCompensation,
+    DeviceManager::CommandType::TubeHVFrequency,
+    DeviceManager::CommandType::TubeHVDutyCycle};
+
 #include <ctype.h>
 
 MqttPublisher::MqttPublisher(AppConfig &config, Print &log)
@@ -11,11 +28,17 @@ MqttPublisher::MqttPublisher(AppConfig &config, Print &log)
     char buf[17];
     snprintf(buf, sizeof(buf), "%012llx", static_cast<unsigned long long>(mac));
     fallbackId_ = String("esp32s3-") + buf;
+
+    for (size_t i = 0; i < retainedStates_.size(); ++i)
+    {
+        retainedStates_[i].type = kRetainedTypes_[i];
+    }
 }
 
 void MqttPublisher::begin()
 {
-    mqtt_client_.setBufferSize(512);
+    // Discovery payloads can get fairly large; use a bigger MQTT buffer.
+    mqtt_client_.setBufferSize(1024);
     updateConfig();
 }
 
@@ -24,6 +47,12 @@ void MqttPublisher::updateConfig()
     String host = config_.mqttHost;
     host.trim();
     uint16_t port = config_.mqttPort ? config_.mqttPort : 1883;
+
+    if (currentDeviceName_ != config_.deviceName)
+    {
+        currentDeviceName_ = config_.deviceName;
+        discoveryPublished_ = false;
+    }
 
     if (host == currentHost_ && port == currentPort_ &&
         config_.mqttUser == currentUser_ &&
@@ -44,6 +73,22 @@ void MqttPublisher::updateConfig()
     fullTopicTemplate_ = config_.mqttFullTopic;
 
     topicDirty_ = true;
+    discoveryPublished_ = false;
+    lastDiscoveryAttempt_ = 0;
+    markAllPending();
+    discoveryIndex_ = 0;
+
+    if (currentHost_.length())
+    {
+        log_.print("MQTT config updated: host=");
+        log_.print(currentHost_);
+        log_.print(" port=");
+        log_.println(currentPort_);
+    }
+    else
+    {
+        log_.println("MQTT config updated: host empty, MQTT disabled.");
+    }
 
     if (mqtt_client_.connected())
     {
@@ -75,14 +120,35 @@ void MqttPublisher::loop()
     if (mqtt_client_.connected())
     {
         mqtt_client_.loop();
+        publishDiscovery();
+        republishRetained();
     }
 }
 
 void MqttPublisher::onCommandResult(DeviceManager::CommandType type, const String &value)
 {
-    String leaf = commandLeaf(type);
-    if (!leaf.length())
+    switch (type)
+    {
+    case DeviceManager::CommandType::DeviceModel:
+        if (value != deviceModel_)
+        {
+            deviceModel_ = value;
+            discoveryPublished_ = false;
+        }
         return;
+    case DeviceManager::CommandType::DeviceFirmware:
+        if (value != deviceFirmware_)
+        {
+            deviceFirmware_ = value;
+            discoveryPublished_ = false;
+        }
+        return;
+    case DeviceManager::CommandType::DeviceLocale:
+        deviceLocale_ = value;
+        return;
+    default:
+        break;
+    }
 
     if (type == DeviceManager::CommandType::DeviceId)
     {
@@ -91,22 +157,30 @@ void MqttPublisher::onCommandResult(DeviceManager::CommandType type, const Strin
         deviceId_ = value;
         deviceSlug_ = makeSlug(value);
         topicDirty_ = true;
-        publish(leaf, value, true);
+        discoveryPublished_ = false;
+        markAllPending();
+        discoveryIndex_ = 0;
+        publishCommand(type, value, true);
         return;
     }
 
     if (type == DeviceManager::CommandType::DevicePower)
     {
         String payload = (value == "1" ? "ON" : (value == "0" ? "OFF" : value));
-        publish(leaf, payload, true);
+        publishCommand(type, payload, true);
+        return;
+    }
+
+    if (type == DeviceManager::CommandType::DeviceBatteryPercent)
+    {
+        publishCommand(type, value, true);
         return;
     }
 
     bool retain = true;
     if (type == DeviceManager::CommandType::RandomData || type == DeviceManager::CommandType::DataLog)
         retain = false;
-
-    publish(leaf, value, retain);
+    publishCommand(type, value, retain);
 }
 
 bool MqttPublisher::ensureConnected()
@@ -150,6 +224,11 @@ bool MqttPublisher::ensureConnected()
     if (connected)
     {
         log_.println("MQTT connected.");
+        discoveryPublished_ = false;
+        lastDiscoveryAttempt_ = 0;
+        markAllPending();
+        republishRetained();
+        discoveryIndex_ = 0;
     }
     else
     {
@@ -181,6 +260,28 @@ void MqttPublisher::refreshTopics()
     topicDirty_ = false;
 }
 
+bool MqttPublisher::publishCommand(DeviceManager::CommandType type, const String &payload, bool retain)
+{
+    String leaf = commandLeaf(type);
+    if (!leaf.length())
+        return false;
+
+    RetainedState *entry = retain ? retainedEntry(type) : nullptr;
+    if (entry)
+    {
+        entry->payload = payload;
+        entry->hasValue = true;
+        entry->pending = true;
+    }
+
+    bool ok = publish(leaf, payload, retain);
+    if (entry && ok)
+        entry->pending = false;
+    else if (entry && !ok)
+        lastRepublishAttempt_ = 0;
+    return ok;
+}
+
 String MqttPublisher::buildTopic(const String &leaf) const
 {
     String pattern = fullTopicPattern_.length() ? fullTopicPattern_ : String("%prefix%/%topic%/");
@@ -203,10 +304,16 @@ String MqttPublisher::commandLeaf(DeviceManager::CommandType type) const
     {
     case DeviceManager::CommandType::DeviceId:
         return "deviceId";
+    case DeviceManager::CommandType::DeviceModel:
+    case DeviceManager::CommandType::DeviceFirmware:
+    case DeviceManager::CommandType::DeviceLocale:
+        return String();
     case DeviceManager::CommandType::DevicePower:
         return "devicePower";
     case DeviceManager::CommandType::DeviceBatteryVoltage:
         return "deviceBatteryVoltage";
+    case DeviceManager::CommandType::DeviceBatteryPercent:
+        return "deviceBatteryPercent";
     case DeviceManager::CommandType::DeviceTime:
         return "deviceTime";
     case DeviceManager::CommandType::DeviceTimeZone:
@@ -219,6 +326,8 @@ String MqttPublisher::commandLeaf(DeviceManager::CommandType type) const
         return "tubePulseCount";
     case DeviceManager::CommandType::TubeRate:
         return "tubeRate";
+    case DeviceManager::CommandType::TubeDoseRate:
+        return "tubeDoseRate";
     case DeviceManager::CommandType::TubeDeadTime:
         return "tubeDeadTime";
     case DeviceManager::CommandType::TubeDeadTimeCompensation:
@@ -271,16 +380,35 @@ String MqttPublisher::sanitizedDeviceId() const
     return fallbackId_;
 }
 
-void MqttPublisher::publish(const String &leaf, const String &payload, bool retain)
+bool MqttPublisher::publish(const String &leaf, const String &payload, bool retain)
 {
     if (!leaf.length())
-        return;
+    {
+        if (publishCallback_)
+            publishCallback_(false);
+        return false;
+    }
 
     if (!configValid_)
-        return;
+    {
+        if (publishCallback_)
+            publishCallback_(false);
+        return false;
+    }
 
     if (topicDirty_)
         refreshTopics();
+
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        unsigned long now = millis();
+        if (now - lastPublishWarning_ > 5000)
+        {
+            log_.println("MQTT publish skipped: Wi-Fi disconnected.");
+            lastPublishWarning_ = now;
+        }
+        return false;
+    }
 
     if (!ensureConnected())
     {
@@ -290,9 +418,332 @@ void MqttPublisher::publish(const String &leaf, const String &payload, bool reta
             log_.println("MQTT publish skipped: not connected.");
             lastPublishWarning_ = now;
         }
-        return;
+        if (publishCallback_)
+            publishCallback_(false);
+        return false;
     }
 
     String topic = buildTopic(leaf);
-    mqtt_client_.publish(topic.c_str(), payload.c_str(), retain);
+    bool ok = mqtt_client_.publish(topic.c_str(), payload.c_str(), retain);
+    if (publishCallback_)
+        publishCallback_(ok);
+    return ok;
+}
+
+void MqttPublisher::publishDiscovery()
+{
+    if (discoveryPublished_ || !configValid_ || !mqtt_client_.connected())
+        return;
+
+    if (!deviceId_.length())
+        return;
+
+    if (topicDirty_)
+        refreshTopics();
+
+    if (!ensureConnected())
+        return;
+
+    struct DiscoveryEntry
+    {
+        DeviceManager::CommandType type;
+        const char *component;
+        const char *objectId;
+        const char *name;
+        const char *unit;
+        const char *deviceClass;
+        const char *stateClass;
+        const char *payloadOn;
+        const char *payloadOff;
+    };
+
+    static const DiscoveryEntry kEntities[] = {
+        {DeviceManager::CommandType::DevicePower, "binary_sensor", "power", "Power", nullptr, "power", nullptr, "ON", "OFF"},
+        {DeviceManager::CommandType::DeviceBatteryVoltage, "sensor", "battery_voltage", "Battery Voltage", "V", "voltage", "measurement", nullptr, nullptr},
+        {DeviceManager::CommandType::DeviceBatteryPercent, "sensor", "battery", "Battery", "%", "battery", "measurement", nullptr, nullptr},
+        {DeviceManager::CommandType::TubeRate, "sensor", "tube_rate", "Tube Rate", "cpm", nullptr, "measurement", nullptr, nullptr},
+        {DeviceManager::CommandType::TubeDoseRate, "sensor", "tube_dose_rate", "Dose Rate", "µSv/h", nullptr, "measurement", nullptr, nullptr},
+        {DeviceManager::CommandType::TubePulseCount, "sensor", "tube_pulse_count", "Tube Pulse Count", nullptr, nullptr, "total_increasing", nullptr, nullptr},
+        {DeviceManager::CommandType::DeviceSensitivity, "sensor", "tube_sensitivity", "Tube Sensitivity", "cpm/µSv/h", nullptr, nullptr, nullptr, nullptr},
+        {DeviceManager::CommandType::TubeDeadTime, "sensor", "tube_dead_time", "Tube Dead Time", "s", nullptr, nullptr, nullptr, nullptr},
+        {DeviceManager::CommandType::TubeHVFrequency, "sensor", "tube_hv_frequency", "Tube HV Frequency", "Hz", "frequency", "measurement", nullptr, nullptr},
+        {DeviceManager::CommandType::TubeHVDutyCycle, "sensor", "tube_hv_duty_cycle", "Tube HV Duty Cycle", nullptr, nullptr, nullptr, nullptr, nullptr}};
+
+    size_t entityCount = sizeof(kEntities) / sizeof(kEntities[0]);
+    if (discoveryIndex_ >= entityCount)
+    {
+        discoveryPublished_ = true;
+        return;
+    }
+
+    unsigned long now = millis();
+    if (lastDiscoveryAttempt_ != 0 && now - lastDiscoveryAttempt_ < 1000)
+        return;
+    lastDiscoveryAttempt_ = now;
+
+    const auto &entry = kEntities[discoveryIndex_];
+    if (publishDiscoveryEntity(entry.type,
+                               entry.component,
+                               entry.objectId,
+                               entry.name,
+                               entry.unit,
+                               entry.deviceClass,
+                               entry.stateClass,
+                               entry.payloadOn,
+                               entry.payloadOff))
+    {
+        discoveryIndex_++;
+        if (discoveryIndex_ >= entityCount)
+            discoveryPublished_ = true;
+    }
+}
+
+bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
+                                           const char *component,
+                                           const char *objectId,
+                                           const char *name,
+                                           const char *unit,
+                                           const char *deviceClass,
+                                           const char *stateClass,
+                                           const char *payloadOn,
+                                           const char *payloadOff)
+{
+    String leaf = commandLeaf(type);
+    if (!leaf.length())
+        return true;
+
+    String stateTopic = buildTopic(leaf);
+    if (!stateTopic.length())
+        return false;
+
+    String deviceIdSlug = sanitizedDeviceId();
+    String discoveryTopic = String("homeassistant/") + component + "/" + deviceIdSlug + "/" + objectId + "/config";
+    String objectUid = deviceIdSlug + "_" + objectId;
+
+    String deviceName = deviceNameForDiscovery();
+    String fullName;
+    if (name && *name)
+        fullName = name;
+    else
+        fullName = deviceName;
+
+    String payload;
+    payload.reserve(256);
+    payload = "{";
+
+    auto appendField = [&](const char *field, const String &val) {
+        if (!val.length())
+            return;
+        if (payload.length() > 1)
+            payload += ',';
+        payload += '"';
+        payload += field;
+        payload += "\":\"";
+        payload += escapeJson(val);
+        payload += '"';
+    };
+
+    appendField("name", fullName);
+    appendField("state_topic", stateTopic);
+    appendField("unique_id", objectUid);
+    String deviceNameSlug = makeSlug(deviceName);
+    String objectIdField;
+    if (deviceNameSlug.length())
+    {
+        objectIdField = deviceNameSlug;
+        objectIdField += "_";
+        objectIdField += objectId;
+    }
+    else
+    {
+        objectIdField = objectUid;
+    }
+    appendField("object_id", objectIdField);
+    if (unit && *unit)
+        appendField("unit_of_measurement", String(unit));
+    if (deviceClass && *deviceClass)
+        appendField("device_class", String(deviceClass));
+    if (stateClass && *stateClass)
+        appendField("state_class", String(stateClass));
+    if (payloadOn && *payloadOn)
+    {
+        appendField("payload_on", String(payloadOn));
+        if (payloadOff && *payloadOff)
+            appendField("payload_off", String(payloadOff));
+    }
+
+    String deviceJson = "{";
+    bool firstDeviceField = true;
+    auto appendDeviceField = [&](const char *field, const String &val) {
+        if (!val.length())
+            return;
+        if (!firstDeviceField)
+            deviceJson += ',';
+        deviceJson += '"';
+        deviceJson += field;
+        deviceJson += "\":\"";
+        deviceJson += escapeJson(val);
+        deviceJson += '"';
+        firstDeviceField = false;
+    };
+
+    String identifier = String("radpro-") + deviceIdSlug;
+    deviceJson += "\"identifiers\":[\"" + escapeJson(identifier) + "\"]";
+    firstDeviceField = false;
+    appendDeviceField("manufacturer", String("Bosean"));
+    appendDeviceField("model", deviceModelForDiscovery());
+    appendDeviceField("name", deviceNameForDiscovery());
+    if (deviceFirmware_.length())
+        appendDeviceField("sw_version", deviceFirmware_);
+    deviceJson += "}";
+
+    if (payload.length() > 1)
+        payload += ',';
+    payload += "\"device\":";
+    payload += deviceJson;
+    payload += "}";
+
+    size_t neededLen = discoveryTopic.length() + payload.length() + 16;
+    if (neededLen > mqtt_client_.getBufferSize())
+    {
+        log_.print("MQTT discovery payload too large for ");
+        log_.println(discoveryTopic);
+        log_.print("Required bytes: ");
+        log_.println(neededLen);
+        log_.print("Buffer size: ");
+        log_.println(mqtt_client_.getBufferSize());
+        return false;
+    }
+
+    bool ok = mqtt_client_.publish(discoveryTopic.c_str(), payload.c_str(), true);
+    if (!ok)
+    {
+        log_.print("MQTT discovery publish failed for ");
+        log_.println(discoveryTopic);
+    }
+    return ok;
+}
+
+String MqttPublisher::escapeJson(const String &value) const
+{
+    String out;
+    out.reserve(value.length() + 4);
+    for (size_t i = 0; i < value.length(); ++i)
+    {
+        char c = value[i];
+        switch (c)
+        {
+        case '\\':
+        case '"':
+            out += '\\';
+            out += c;
+            break;
+        case '\b':
+            out += "\\b";
+            break;
+        case '\f':
+            out += "\\f";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            if (static_cast<unsigned char>(c) < 0x20)
+            {
+                char buf[7];
+                snprintf(buf, sizeof(buf), "\\u%04x", c);
+                out += buf;
+            }
+            else
+            {
+                out += c;
+            }
+            break;
+        }
+    }
+    return out;
+}
+
+String MqttPublisher::deviceNameForDiscovery() const
+{
+    if (config_.deviceName.length())
+        return config_.deviceName;
+    if (deviceModel_.length())
+        return deviceModel_;
+    if (deviceId_.length())
+        return deviceId_;
+    return String("RadPro WiFi Bridge");
+}
+
+String MqttPublisher::deviceModelForDiscovery() const
+{
+    if (deviceModel_.length())
+        return deviceModel_;
+    return String("RadPro FS-600");
+}
+MqttPublisher::RetainedState *MqttPublisher::retainedEntry(DeviceManager::CommandType type)
+{
+    for (auto &state : retainedStates_)
+    {
+        if (state.type == type)
+            return &state;
+    }
+    return nullptr;
+}
+
+void MqttPublisher::markAllPending()
+{
+    for (auto &state : retainedStates_)
+    {
+        if (state.hasValue)
+            state.pending = true;
+    }
+    lastRepublishAttempt_ = 0;
+}
+
+void MqttPublisher::republishRetained()
+{
+    if (!mqtt_client_.connected())
+        return;
+
+    if (topicDirty_)
+        refreshTopics();
+
+    unsigned long now = millis();
+    if (lastRepublishAttempt_ != 0 && now - lastRepublishAttempt_ < 1000)
+        return;
+    lastRepublishAttempt_ = now;
+
+    for (auto &state : retainedStates_)
+    {
+        if (!state.hasValue || !state.pending)
+            continue;
+
+        String leaf = commandLeaf(state.type);
+        if (!leaf.length())
+        {
+            state.pending = false;
+            continue;
+        }
+
+        String topic = buildTopic(leaf);
+        bool ok = mqtt_client_.publish(topic.c_str(), state.payload.c_str(), true);
+        if (ok)
+        {
+            state.pending = false;
+        }
+        else
+        {
+            if (publishCallback_)
+                publishCallback_(false);
+            lastRepublishAttempt_ = now; // retry later
+            break;
+        }
+    }
 }

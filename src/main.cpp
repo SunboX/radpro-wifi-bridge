@@ -8,6 +8,7 @@
 #include "DeviceManager.h"
 #include "AppConfig/AppConfig.h"
 #include "ConfigPortal/WiFiPortalService.h"
+#include "Led/LedController.h"
 #include "Mqtt/MqttPublisher.h"
 
 // =========================
@@ -39,6 +40,7 @@ static void handleStartupLogic();
 static void runMainLogic();
 static void logLine(const String &msg);
 static void logRaw(const uint8_t *data, size_t len);
+static void updateLedStatus();
 
 // =========================
 // USB Host wrapper
@@ -68,6 +70,10 @@ static AppConfig appConfig;
 static AppConfigStore configStore;
 static WiFiPortalService portalService(appConfig, configStore, DBG);
 static MqttPublisher mqttPublisher(appConfig, DBG);
+static LedController ledController;
+static bool deviceReady = false;
+static bool deviceError = false;
+static bool mqttError = false;
 
 // =========================
 // Arduino setup / loop
@@ -81,6 +87,10 @@ void setup()
 
     DBG.println("Initializing RadPro WiFi Bridge…");
 
+    ledController.begin();
+    ledController.setMode(LedMode::Booting);
+    ledController.update();
+
     // Silence noisy CDC driver errors when using vendor-specific transport
     esp_log_level_set("cdc_acm_ops", ESP_LOG_NONE);
     // Keep UsbCdcHost chatter to warnings (use INFO for detailed debugging)
@@ -91,12 +101,24 @@ void setup()
     // Record start time for non-blocking startup delay
     startupStartTime = millis();
 
-    // Simple LED cue on boot (dim green)
-    neopixelWrite(RGB_BUILTIN, 0, 8, 0);
-
     device_manager.setLineHandler(logLine);
     device_manager.setRawHandler(logRaw);
-    device_manager.setCommandResultHandler([](DeviceManager::CommandType type, const String &value) {
+    device_manager.setCommandResultHandler([](DeviceManager::CommandType type, const String &value, bool success) {
+        if (!success)
+        {
+            deviceError = true;
+            if (type == DeviceManager::CommandType::DeviceId)
+                deviceReady = false;
+            DBG.print("Device command failed: ");
+            DBG.println(static_cast<int>(type));
+            ledController.triggerPulse(LedPulse::MqttFailure, 250);
+            return;
+        }
+
+        deviceError = false;
+        if (type == DeviceManager::CommandType::DeviceId)
+            deviceReady = value.length() > 0;
+
         mqttPublisher.onCommandResult(type, value);
     });
     device_manager.begin(0x1A86, 0x7523);
@@ -125,6 +147,19 @@ void setup()
 
     portalService.begin();
     mqttPublisher.begin();
+    mqttPublisher.setPublishCallback([](bool success) {
+        if (success)
+        {
+            mqttError = false;
+            ledController.triggerPulse(LedPulse::MqttSuccess, 150);
+        }
+        else
+        {
+            mqttError = true;
+            DBG.println("MQTT publish failed.");
+            ledController.triggerPulse(LedPulse::MqttFailure, 250);
+        }
+    });
 
     WiFi.mode(WIFI_STA);
     WiFi.setHostname(appConfig.deviceName.c_str());
@@ -136,6 +171,8 @@ void setup()
     }
     mqttPublisher.updateConfig();
     portalService.maintain();
+    updateLedStatus();
+    ledController.update();
 }
 
 void loop()
@@ -155,6 +192,10 @@ void loop()
     portalService.process();
     mqttPublisher.updateConfig();
     mqttPublisher.loop();
+    if (!usb.isConnected())
+        deviceReady = false;
+    updateLedStatus();
+    ledController.update();
 
     // Keep loop snappy; USB host runs in its own tasks
     delay(5);
@@ -165,6 +206,9 @@ void loop()
 // =========================
 static void handleStartupLogic()
 {
+    if (!isRunning)
+        ledController.setMode(LedMode::WaitingForStart);
+
     // 1) Timer elapsed?
     if (millis() - startupStartTime >= startupDelayMs)
     {
@@ -218,14 +262,7 @@ static void handleStartupLogic()
         DBG.println("Starting RadPro WiFi Bridge…");
         device_manager.start();
         portalService.enableStatusLogging();
-        
-        // brief green pulse
-        static uint8_t ticks = 0;
-        if (ticks < 6)
-        { // ~30ms total at 5ms loop delay
-            neopixelWrite(RGB_BUILTIN, 0, 32, 0);
-            ticks++;
-        }
+        ledController.triggerPulse(LedPulse::MqttSuccess, 200);
         return;
     }
 
@@ -246,16 +283,7 @@ static void handleStartupLogic()
 // =========================
 static void runMainLogic()
 {
-    // Task 1: RGB LED heartbeat every 250 ms (dim green)
-    static unsigned long lastLedTime = 0;
-    if (millis() - lastLedTime >= 250)
-    {
-        lastLedTime = millis();
-        const uint8_t r = 0, g = 10, b = 0;
-        neopixelWrite(RGB_BUILTIN, r, g, b);
-    }
-
-    // Task 2: Poll rad-pro statistics according to configured interval
+    // Poll rad-pro statistics according to configured interval
     static unsigned long lastStatsRequest = 0;
     unsigned long now = millis();
     uint32_t interval = appConfig.readIntervalMs;
@@ -266,4 +294,33 @@ static void runMainLogic()
         lastStatsRequest = now;
         device_manager.requestStats();
     }
+}
+
+static void updateLedStatus()
+{
+    if (!isRunning)
+    {
+        ledController.setMode(LedMode::WaitingForStart);
+        return;
+    }
+
+    if (deviceError || mqttError)
+    {
+        ledController.setMode(LedMode::Error);
+        return;
+    }
+
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        ledController.setMode(LedMode::WifiConnecting);
+        return;
+    }
+
+    if (!deviceReady)
+    {
+        ledController.setMode(LedMode::WifiConnected);
+        return;
+    }
+
+    ledController.setMode(LedMode::DeviceReady);
 }

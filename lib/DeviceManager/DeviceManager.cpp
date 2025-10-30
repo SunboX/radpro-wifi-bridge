@@ -110,6 +110,8 @@ void DeviceManager::requestStats()
         enqueueCommand("GET tubePulseCount", CommandType::TubePulseCount, 0, false);
     if (!isCommandPending("GET tubeRate") && (!awaiting_response_ || current_command_.command != "GET tubeRate"))
         enqueueCommand("GET tubeRate", CommandType::TubeRate, 0, false);
+    if (!isCommandPending("GET deviceBatteryVoltage") && (!awaiting_response_ || current_command_.command != "GET deviceBatteryVoltage"))
+        enqueueCommand("GET deviceBatteryVoltage", CommandType::DeviceBatteryVoltage, 0, false);
 
     processQueue();
 }
@@ -215,6 +217,13 @@ void DeviceManager::onLine(const String &line)
 
     switch (current_command_.type)
     {
+    case CommandType::DeviceModel:
+    case CommandType::DeviceFirmware:
+    case CommandType::DeviceLocale:
+    case CommandType::DeviceBatteryPercent:
+    case CommandType::TubeDoseRate:
+        handleSuccess();
+        break;
     case CommandType::DeviceId:
     {
         if (!trimmed.startsWith("OK "))
@@ -236,7 +245,7 @@ void DeviceManager::onLine(const String &line)
                 line_handler_(String("Device ID: ") + deviceId);
             device_id_logged_ = true;
             if (deviceId.length())
-                emitResult(CommandType::DeviceId, deviceId);
+                emitResult(CommandType::DeviceId, deviceId, true);
         }
 
         if (!device_details_logged_)
@@ -279,6 +288,13 @@ void DeviceManager::onLine(const String &line)
                     line_handler_(String("Locale: ") + locale);
             }
 
+            if (model.length())
+                emitResult(CommandType::DeviceModel, model, true);
+            if (firmware.length())
+                emitResult(CommandType::DeviceFirmware, firmware, true);
+            if (locale.length())
+                emitResult(CommandType::DeviceLocale, locale, true);
+
             device_details_logged_ = true;
         }
 
@@ -304,7 +320,7 @@ void DeviceManager::onLine(const String &line)
             value.trim();
             if (line_handler_)
                 line_handler_(String("Device Power: ") + (value == "1" ? "ON" : "OFF"));
-            emitResult(CommandType::DevicePower, value);
+            emitResult(CommandType::DevicePower, value, true);
         }
         handleSuccess();
         break;
@@ -317,7 +333,18 @@ void DeviceManager::onLine(const String &line)
             value.trim();
             if (line_handler_)
                 line_handler_(String("Battery Voltage: ") + value + " V");
-            emitResult(CommandType::DeviceBatteryVoltage, value);
+            emitResult(CommandType::DeviceBatteryVoltage, value, true);
+
+            float voltage = value.toFloat();
+            float percent = (voltage - 3.0f) * (100.0f / (4.2f - 3.0f));
+            if (percent < 0.0f)
+                percent = 0.0f;
+            if (percent > 100.0f)
+                percent = 100.0f;
+            uint8_t percentInt = static_cast<uint8_t>(percent + 0.5f);
+            if (line_handler_)
+                line_handler_(String("Battery Percent: ") + percentInt + " %");
+            emitResult(CommandType::DeviceBatteryPercent, String(percentInt), true);
         }
         handleSuccess();
         break;
@@ -337,7 +364,7 @@ void DeviceManager::onLine(const String &line)
                 strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S UTC", &tm_info);
                 line_handler_(String("Device Time: ") + buf + " (" + value + ")");
             }
-            emitResult(CommandType::DeviceTime, value);
+            emitResult(CommandType::DeviceTime, value, true);
         }
         handleSuccess();
         break;
@@ -350,7 +377,7 @@ void DeviceManager::onLine(const String &line)
             zone.trim();
             if (line_handler_)
                 line_handler_(String("Device Time Zone: ") + zone);
-            emitResult(CommandType::DeviceTimeZone, zone);
+            emitResult(CommandType::DeviceTimeZone, zone, true);
         }
         handleSuccess();
         break;
@@ -363,7 +390,8 @@ void DeviceManager::onLine(const String &line)
             sens.trim();
             if (line_handler_)
                 line_handler_(String("Tube Sensitivity: ") + sens + " cpm/µSv/h");
-            emitResult(CommandType::DeviceSensitivity, sens);
+            emitResult(CommandType::DeviceSensitivity, sens, true);
+            device_sensitivity_cpm_per_uSv_ = sens.toFloat();
         }
         handleSuccess();
         break;
@@ -376,7 +404,7 @@ void DeviceManager::onLine(const String &line)
             value.trim();
             if (line_handler_)
                 line_handler_(String("Tube Lifetime: ") + value + " s");
-            emitResult(CommandType::TubeTime, value);
+            emitResult(CommandType::TubeTime, value, true);
         }
         handleSuccess();
         break;
@@ -387,7 +415,7 @@ void DeviceManager::onLine(const String &line)
         value.trim();
         if (line_handler_)
             line_handler_(String("Tube Pulse Count: ") + value);
-        emitResult(CommandType::TubePulseCount, value);
+        emitResult(CommandType::TubePulseCount, value, true);
         handleSuccess();
         break;
     }
@@ -397,7 +425,20 @@ void DeviceManager::onLine(const String &line)
         value.trim();
         if (line_handler_)
             line_handler_(String("Tube Rate: ") + value + " cpm");
-        emitResult(CommandType::TubeRate, value);
+        emitResult(CommandType::TubeRate, value, true);
+
+        float rate = value.toFloat();
+        if (rate >= 0.0f)
+        {
+            float sensitivity = device_sensitivity_cpm_per_uSv_;
+            if (sensitivity > 0.0f)
+            {
+                float dose = rate / sensitivity;
+                if (line_handler_)
+                    line_handler_(String("Dose Rate: ") + String(dose, 5) + " µSv/h");
+                emitResult(CommandType::TubeDoseRate, String(dose, 5), true);
+            }
+        }
         handleSuccess();
         break;
     }
@@ -409,7 +450,7 @@ void DeviceManager::onLine(const String &line)
             value.trim();
             if (line_handler_)
                 line_handler_(String("Tube Dead Time: ") + value + " s");
-            emitResult(CommandType::TubeDeadTime, value);
+            emitResult(CommandType::TubeDeadTime, value, true);
         }
         handleSuccess();
         break;
@@ -422,7 +463,7 @@ void DeviceManager::onLine(const String &line)
             value.trim();
             if (line_handler_)
                 line_handler_(String("Dead Time Compensation: ") + value + " s");
-            emitResult(CommandType::TubeDeadTimeCompensation, value);
+            emitResult(CommandType::TubeDeadTimeCompensation, value, true);
         }
         handleSuccess();
         break;
@@ -435,7 +476,7 @@ void DeviceManager::onLine(const String &line)
             value.trim();
             if (line_handler_)
                 line_handler_(String("HV Frequency: ") + value + " Hz");
-            emitResult(CommandType::TubeHVFrequency, value);
+            emitResult(CommandType::TubeHVFrequency, value, true);
         }
         handleSuccess();
         break;
@@ -448,7 +489,7 @@ void DeviceManager::onLine(const String &line)
             value.trim();
             if (line_handler_)
                 line_handler_(String("HV Duty Cycle: ") + value);
-            emitResult(CommandType::TubeHVDutyCycle, value);
+            emitResult(CommandType::TubeHVDutyCycle, value, true);
         }
         handleSuccess();
         break;
@@ -461,7 +502,7 @@ void DeviceManager::onLine(const String &line)
             value.trim();
             if (line_handler_)
                 line_handler_(String("Random Data: ") + value);
-            emitResult(CommandType::RandomData, value);
+            emitResult(CommandType::RandomData, value, true);
         }
         handleSuccess();
         break;
@@ -473,7 +514,7 @@ void DeviceManager::onLine(const String &line)
             String value = trimmed.substring(3);
             if (line_handler_)
                 line_handler_(String("Data Log: ") + value);
-            emitResult(CommandType::DataLog, value);
+            emitResult(CommandType::DataLog, value, true);
         }
         handleSuccess();
         break;
@@ -600,15 +641,17 @@ void DeviceManager::handleError()
         line_handler_(String("Command failed: ") + current_command_.command);
     }
 
+    emitResult(current_command_.type, String(), false);
+
     has_current_command_ = false;
     current_command_ = PendingCommand{};
     processQueue();
 }
 
-void DeviceManager::emitResult(CommandType type, const String &value)
+void DeviceManager::emitResult(CommandType type, const String &value, bool success)
 {
     if (command_result_handler_)
     {
-        command_result_handler_(type, value);
+        command_result_handler_(type, value, success);
     }
 }
