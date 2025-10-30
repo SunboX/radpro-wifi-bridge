@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "UsbCdcHost.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include <cstring>
 #include <WiFi.h>
 #include "freertos/FreeRTOS.h"
@@ -47,9 +48,27 @@ static void updateLedStatus();
 // =========================
 static UsbCdcHost usb;
 static DeviceManager device_manager(usb);
+
+static LedController ledController;
 static void logLine(const String &msg)
 {
     DBG.println(msg);
+    if (msg == "USB device CONNECTED")
+    {
+        ledController.clearFault(FaultCode::UsbDeviceGone);
+    }
+    else if (msg == "USB device DISCONNECTED")
+    {
+        ledController.activateFault(FaultCode::UsbDeviceGone);
+    }
+    else if (msg.startsWith("Device ID:"))
+    {
+        ledController.clearFault(FaultCode::DeviceIdTimeout);
+    }
+    else if (msg.startsWith("Tube Sensitivity:"))
+    {
+        ledController.clearFault(FaultCode::MissingSensitivity);
+    }
 }
 
 static void logRaw(const uint8_t *data, size_t len)
@@ -68,9 +87,8 @@ static void logRaw(const uint8_t *data, size_t len)
 
 static AppConfig appConfig;
 static AppConfigStore configStore;
-static WiFiPortalService portalService(appConfig, configStore, DBG);
-static MqttPublisher mqttPublisher(appConfig, DBG);
-static LedController ledController;
+static WiFiPortalService portalService(appConfig, configStore, DBG, ledController);
+static MqttPublisher mqttPublisher(appConfig, DBG, ledController);
 static bool deviceReady = false;
 static bool deviceError = false;
 static bool mqttError = false;
@@ -86,6 +104,16 @@ void setup()
     delay(300);
 
     DBG.println("Initializing RadPro WiFi Bridge…");
+
+    esp_reset_reason_t resetReason = esp_reset_reason();
+    if (resetReason == ESP_RST_BROWNOUT)
+    {
+        ledController.activateFault(FaultCode::PowerBrownout);
+    }
+    else if (resetReason == ESP_RST_TASK_WDT || resetReason == ESP_RST_WDT)
+    {
+        ledController.activateFault(FaultCode::WatchdogReset);
+    }
 
     ledController.begin();
     ledController.setMode(LedMode::Booting);
@@ -103,7 +131,7 @@ void setup()
 
     device_manager.setLineHandler(logLine);
     device_manager.setRawHandler(logRaw);
-    device_manager.setCommandResultHandler([](DeviceManager::CommandType type, const String &value, bool success) {
+    device_manager.setCommandResultHandler([&](DeviceManager::CommandType type, const String &value, bool success) {
         if (!success)
         {
             deviceError = true;
@@ -112,12 +140,39 @@ void setup()
             DBG.print("Device command failed: ");
             DBG.println(static_cast<int>(type));
             ledController.triggerPulse(LedPulse::MqttFailure, 250);
+            if (type == DeviceManager::CommandType::DeviceId)
+                ledController.activateFault(FaultCode::DeviceIdTimeout);
+            else
+                ledController.activateFault(FaultCode::CommandTimeout);
             return;
         }
 
         deviceError = false;
         if (type == DeviceManager::CommandType::DeviceId)
+        {
             deviceReady = value.length() > 0;
+            if (deviceReady)
+                ledController.clearFault(FaultCode::DeviceIdTimeout);
+        }
+
+        if (type == DeviceManager::CommandType::DeviceSensitivity)
+        {
+            float sens = value.toFloat();
+            if (sens > 0.0f)
+                ledController.clearFault(FaultCode::MissingSensitivity);
+            else
+                ledController.activateFault(FaultCode::MissingSensitivity);
+        }
+
+        if (type == DeviceManager::CommandType::TubeDoseRate)
+        {
+            if (!device_manager.hasSensitivity())
+                ledController.activateFault(FaultCode::MissingSensitivity);
+            else
+                ledController.clearFault(FaultCode::MissingSensitivity);
+        }
+
+        ledController.clearFault(FaultCode::CommandTimeout);
 
         mqttPublisher.onCommandResult(type, value);
     });
@@ -130,10 +185,12 @@ void setup()
     if (!usb.begin())
     {
         DBG.println("ERROR: usb.begin() failed");
+        ledController.activateFault(FaultCode::UsbInterfaceFailure);
     }
     else
     {
         DBG.println("usb.begin() OK");
+        ledController.clearFault(FaultCode::UsbInterfaceFailure);
         if (ALLOW_EARLY_START)
         {
             DBG.println("Send 'start', 'delay <ms>', or 'raw on/off/toggle' on this port.");
@@ -143,21 +200,28 @@ void setup()
     if (!configStore.load(appConfig))
     {
         DBG.println("Preferences read failed; keeping defaults.");
+        ledController.activateFault(FaultCode::NvsLoadFailure);
+    }
+    else
+    {
+        ledController.clearFault(FaultCode::NvsLoadFailure);
     }
 
     portalService.begin();
     mqttPublisher.begin();
-    mqttPublisher.setPublishCallback([](bool success) {
+    mqttPublisher.setPublishCallback([&](bool success) {
         if (success)
         {
             mqttError = false;
             ledController.triggerPulse(LedPulse::MqttSuccess, 150);
+            ledController.clearFault(FaultCode::MqttConnectionReset);
         }
         else
         {
             mqttError = true;
             DBG.println("MQTT publish failed.");
             ledController.triggerPulse(LedPulse::MqttFailure, 250);
+            ledController.activateFault(FaultCode::MqttConnectionReset);
         }
     });
 

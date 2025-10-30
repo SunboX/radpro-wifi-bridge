@@ -3,11 +3,12 @@
 #include <WiFi.h>
 #include <WiFiManager.h>
 #include "AppConfig/AppConfig.h"
+#include "Led/LedController.h"
 
 class WiFiPortalService
 {
 public:
-    WiFiPortalService(AppConfig &config, AppConfigStore &store, Print &logPort);
+    WiFiPortalService(AppConfig &config, AppConfigStore &store, Print &logPort, LedController &led);
 
     void begin();
     bool connect(bool forcePortal);
@@ -31,6 +32,7 @@ private:
     AppConfigStore &store_;
     WiFiManager manager_;
     Print &log_;
+    LedController &led_;
 
     WiFiManagerParameter paramDeviceName_;
     WiFiManagerParameter paramMqttHost_;
@@ -49,6 +51,7 @@ private:
     bool loggingEnabled_ = false;
     bool pendingReconnect_ = false;
     unsigned long lastReconnectAttemptMs_ = 0;
+    unsigned long waitingForIpSinceMs_ = 0;
     String lastKnownSsid_;
     String lastKnownPass_;
 };

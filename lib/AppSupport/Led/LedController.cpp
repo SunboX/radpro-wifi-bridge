@@ -22,6 +22,49 @@ void LedController::triggerPulse(LedPulse pulse, uint32_t durationMs)
     pulseEndMs_ = millis() + durationMs;
 }
 
+void LedController::activateFault(FaultCode code)
+{
+    size_t idx = static_cast<size_t>(code);
+    if (idx == 0 || idx >= faultActive_.size())
+        return;
+    bool hadFault = hasFault();
+    faultActive_[idx] = true;
+    if (!hadFault || currentFault() == code)
+        resetFaultPattern();
+}
+
+void LedController::clearFault(FaultCode code)
+{
+    size_t idx = static_cast<size_t>(code);
+    if (idx == 0 || idx >= faultActive_.size())
+        return;
+    bool wasCurrent = (currentFault() == code);
+    faultActive_[idx] = false;
+    if (wasCurrent)
+        resetFaultPattern();
+}
+
+void LedController::clearAllFaults()
+{
+    faultActive_.fill(false);
+    resetFaultPattern();
+}
+
+bool LedController::hasFault() const
+{
+    return currentFault() != FaultCode::None;
+}
+
+FaultCode LedController::currentFault() const
+{
+    for (size_t i = 1; i < faultActive_.size(); ++i)
+    {
+        if (faultActive_[i])
+            return static_cast<FaultCode>(i);
+    }
+    return FaultCode::None;
+}
+
 LedController::Color LedController::colorForMode(LedMode mode, uint32_t now) const
 {
     switch (mode)
@@ -66,6 +109,13 @@ void LedController::applyColor(const Color &color)
 void LedController::update()
 {
     uint32_t now = millis();
+    FaultCode fault = currentFault();
+    if (fault != FaultCode::None)
+    {
+        updateFaultPattern(now, fault);
+        return;
+    }
+
     Color color = colorForMode(mode_, now);
 
     if (pulse_ != LedPulse::None)
@@ -81,4 +131,55 @@ void LedController::update()
     }
 
     applyColor(color);
+}
+
+void LedController::resetFaultPattern()
+{
+    faultStep_ = 0;
+    faultNextMs_ = 0;
+}
+
+void LedController::updateFaultPattern(uint32_t now, FaultCode code)
+{
+    uint8_t issueIndex = static_cast<uint8_t>(code);
+    if (issueIndex == 0)
+        return;
+
+    uint8_t orangeCount = issueIndex;
+    uint8_t totalPairs = static_cast<uint8_t>(1 + orangeCount);
+    uint8_t totalSteps = static_cast<uint8_t>(totalPairs * 2 + 1);
+
+    if (faultNextMs_ == 0 || now >= faultNextMs_)
+    {
+        if (faultStep_ >= totalSteps)
+            faultStep_ = 0;
+
+        uint8_t pairIndex = faultStep_ / 2;
+        bool onStep = (faultStep_ % 2 == 0) && (faultStep_ < totalPairs * 2);
+
+        if (onStep)
+        {
+            Color color;
+            if (pairIndex == 0)
+            {
+                color = {static_cast<uint8_t>(brightness_ * 3), 0, 0};
+            }
+            else
+            {
+                color = {static_cast<uint8_t>(brightness_ * 3), static_cast<uint8_t>(brightness_ * 2), 0};
+            }
+            applyColor(color);
+            faultNextMs_ = now + 180;
+        }
+        else
+        {
+            applyColor({0, 0, 0});
+            if (faultStep_ == totalSteps - 1)
+                faultNextMs_ = now + 500;
+            else
+                faultNextMs_ = now + 140;
+        }
+
+        ++faultStep_;
+    }
 }

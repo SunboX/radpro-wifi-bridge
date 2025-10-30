@@ -7,11 +7,12 @@
 #include <functional>
 #include "AppConfig/AppConfig.h"
 #include "DeviceManager.h"
+#include "Led/LedController.h"
 
 class MqttPublisher
 {
 public:
-    MqttPublisher(AppConfig &config, Print &log);
+    MqttPublisher(AppConfig &config, Print &log, LedController &led);
 
     void begin();
     void updateConfig();
@@ -84,4 +85,5 @@ private:
     size_t discoveryIndex_ = 0;
     static const std::array<DeviceManager::CommandType, 15> kRetainedTypes_;
     std::array<RetainedState, kRetainedTypes_.size()> retainedStates_;
+    LedController &led_;
 };

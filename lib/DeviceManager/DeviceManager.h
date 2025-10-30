@@ -61,6 +61,7 @@ public:
     void requestStats();
     void requestRandomData();
     void requestDataLog(const String &args = String());
+    bool hasSensitivity() const { return device_sensitivity_cpm_per_uSv_ > 0.0f; }
 
 private:
 

@@ -187,6 +187,7 @@ void DeviceManager::onDisconnected()
     awaiting_response_ = false;
     has_current_command_ = false;
     command_queue_.clear();
+    device_sensitivity_cpm_per_uSv_ = 0.0f;
 
     if (enabled_)
         scheduleDeviceId(DEVICE_ID_INITIAL_DELAY_MS, true);
