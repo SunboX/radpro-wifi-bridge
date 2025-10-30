@@ -15,6 +15,7 @@ public:
     void process();
     void syncIfRequested();
     void dumpStatus();
+    void enableStatusLogging();
 
 private:
     void refreshParameters();
@@ -44,4 +45,5 @@ private:
     WiFiEventId_t wifiEventId_;
     IPAddress lastIp_;
     bool hasLoggedIp_;
+    bool loggingEnabled_ = false;
 };

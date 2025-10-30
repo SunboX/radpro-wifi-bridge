@@ -21,7 +21,8 @@ WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, P
       lastStatus_(WL_NO_SHIELD),
       wifiEventId_(0),
       lastIp_(),
-      hasLoggedIp_(false)
+      hasLoggedIp_(false),
+      loggingEnabled_(false)
 {
 }
 
@@ -115,6 +116,16 @@ void WiFiPortalService::syncIfRequested()
 
 void WiFiPortalService::dumpStatus()
 {
+    logStatus();
+}
+
+void WiFiPortalService::enableStatusLogging()
+{
+    if (loggingEnabled_)
+        return;
+
+    loggingEnabled_ = true;
+    hasLoggedIp_ = false;
     logStatus();
 }
 
@@ -259,16 +270,19 @@ void WiFiPortalService::logStatusIfNeeded()
     if (current != lastStatus_)
     {
         lastStatus_ = current;
-        if (current != WL_CONNECTED)
+        if (current == WL_CONNECTED)
         {
             hasLoggedIp_ = false;
-            lastIp_ = IPAddress();
+            if (loggingEnabled_)
+                logStatus();
         }
         else
         {
+            lastIp_ = IPAddress();
             hasLoggedIp_ = false;
+            if (loggingEnabled_)
+                log_.println("Wi-Fi not connected.");
         }
-        logStatus();
     }
     else if (current == WL_CONNECTED && !hasLoggedIp_)
     {
@@ -284,7 +298,16 @@ void WiFiPortalService::logConnectionDetails(const IPAddress &ip, const IPAddres
 {
     if (ip == IPAddress(0, 0, 0, 0))
         return;
-    if (hasLoggedIp_ && ip == lastIp_)
+    bool alreadyLogged = hasLoggedIp_ && (ip == lastIp_);
+    lastIp_ = ip;
+
+    if (!loggingEnabled_)
+    {
+        hasLoggedIp_ = false;
+        return;
+    }
+
+    if (alreadyLogged)
         return;
 
     log_.print("Wi-Fi connected: ");
@@ -300,12 +323,14 @@ void WiFiPortalService::logConnectionDetails(const IPAddress &ip, const IPAddres
     log_.print(WiFi.RSSI());
     log_.println(" dBm");
 
-    lastIp_ = ip;
     hasLoggedIp_ = true;
 }
 
 void WiFiPortalService::logStatus()
 {
+    if (!loggingEnabled_)
+        return;
+
     wl_status_t status = WiFi.status();
     if (status == WL_CONNECTED)
     {
