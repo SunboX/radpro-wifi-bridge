@@ -35,16 +35,9 @@ On first boot— or whenever stored credentials fail— the firmware hosts a cap
 
 ## Web Installer (ESP Web Tools)
 
-A ready-to-publish GitHub Pages site lives under the `docs/` folder. After pushing to GitHub you can enable **Settings → Pages → Build and deployment → Deploy from branch → `main` / `docs`** to host an online flasher powered by [ESP Web Tools](https://esphome.github.io/esp-web-tools/).
+Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/
 
-- The public installer will be available at `https://SunboX.github.io/radpro-wifi-bridge/` once Pages is enabled.
-- The landing page (`docs/index.html`) pulls firmware from `docs/firmware/latest/` according to `docs/manifest.json`. A PlatformIO post-build hook (`tools/copy_firmware.py`) automatically refreshes that directory after each successful build, copying:
-  - `.pio/build/esp32-s3-devkitc-1/bootloader.bin` → `docs/firmware/latest/bootloader.bin`
-  - `.pio/build/esp32-s3-devkitc-1/partitions.bin` → `docs/firmware/latest/partitions.bin`
-  - `.pio/build/esp32-s3-devkitc-1/firmware.bin` → `docs/firmware/latest/radpro-wifi-bridge.bin`
-- Bump the `version` field in `docs/manifest.json` whenever you ship a new firmware so browsers refresh their cache.
-
-Once those files are committed, users can flash the bridge firmware directly from the browser without installing the toolchain.
+Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required.
 
 ---
 

@@ -97,28 +97,6 @@
             </p>
         </section>
 
-        <section>
-            <h2>Releasing a new firmware build</h2>
-            <p>
-                When publishing an updated firmware bundle, follow these steps:
-            </p>
-            <ol>
-                <li>Build the project with PlatformIO (for example <code>platformio run -e esp32-s3-devkitc-1</code>).</li>
-                <li>Copy the following artefacts from <code>.pio/build/esp32-s3-devkitc-1/</code> into <code>docs/firmware/latest/</code>, renaming as needed:
-                    <ul>
-                        <li><code>bootloader.bin</code> &rarr; <code>bootloader.bin</code></li>
-                        <li><code>partitions.bin</code> &rarr; <code>partitions.bin</code></li>
-                        <li><code>firmware.bin</code> &rarr; <code>radpro-wifi-bridge.bin</code></li>
-                    </ul>
-                </li>
-                <li>Update the version string inside <code>manifest.json</code> (and adjust filenames if you version them per release).</li>
-                <li>Commit the changes and push to <code>main</code>. Enable GitHub Pages (Settings &rarr; Pages) with the <em>GitHub Actions</em> or <em>main / docs</em> source so this page is hosted at <code>https://&lt;user&gt;.github.io/radpro-wifi-bridge/</code>.</li>
-            </ol>
-            <p>
-                Once the files are published, anyone can flash the bridge firmware without installing local tooling.
-            </p>
-        </section>
-
         <footer>
             <p>
                 Powered by <a href="https://esphome.github.io/esp-web-tools/">ESP Web Tools</a>. Source available on <a href="https://github.com/esphome/esp-web-tools">GitHub</a>.
