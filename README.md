@@ -20,7 +20,7 @@ The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides s
 ## Quick Start
 
 1. Install [PlatformIO](https://platformio.org/) and open this project.
-2. The default environment targets **ESP32-S3 DevKitC-1 (N16R8)** with TinyUSB host support (`platformio.ini`).
+2. The default environment targets **ESP32-S3 DevKitC-1 (N16R8)** with TinyUSB host support (`platformio.ini`) and a custom `partitions.csv` that provides a 6 MB application slot (make sure that file is present when building).
 3. Connect the board with **two** USB cables:
    - CP210x (UART) port → logs & commands (`Serial0`, 115200 baud).
    - Native USB-OTG port → leave free for the RadPro sensor.
@@ -72,6 +72,8 @@ As soon as the bridge learns the RadPro device ID it emits Home Assistant MQTT D
 
 > **Home Assistant / Mosquitto tip:** the default add-on configuration disables anonymous clients. Either enable anonymous mode (`anonymous: true`) or create a dedicated MQTT user and enter those credentials in the portal. A `MQTT connect failed: 5` log means the broker rejected the connection as unauthorised.
 
+**Compatibility note:** So far this code has been tested only with the **Bosean FS‑600** running firmware **“Rad Pro 3.0.1”**. If you encounter problems with other adapters, please open an issue so we can track it. I’m happy to help, but I can’t afford to buy every device — get in touch if you’re able to loan or sponsor hardware for debugging.
+
 ---
 
 ## LED Feedback
@@ -91,6 +93,39 @@ Event pulses temporarily override the base colour:
 
 - **MQTT success:** bright green flash (~150 ms).
 - **MQTT failure / command error:** bright red flash (~250 ms) and a console log (`MQTT publish failed.` or `Device command failed: <id>`).
+
+### Fault Blink Codes
+
+Certain faults latch a repeating red/orange sequence so you can diagnose issues without watching the serial log. The pattern always starts with **one red blink**, followed by the number of **orange blinks** listed below; the sequence then pauses briefly and repeats.
+
+| Code | Issue | LED pattern |
+|------|-------|-------------|
+| 1 | NVS load failed (preferences missing) | red ×1 → orange ×1 |
+| 2 | NVS write failed (configuration not saved) | red ×1 → orange ×2 |
+| 3 | Wi‑Fi authentication / association error | red ×1 → orange ×3 |
+| 4 | Wi‑Fi connected but no IP (DHCP/gateway) | red ×1 → orange ×4 |
+| 5 | Captive/config portal still required | red ×1 → orange ×5 |
+| 6 | MQTT broker unreachable / DNS failure | red ×1 → orange ×6 |
+| 7 | MQTT authentication failure | red ×1 → orange ×7 |
+| 8 | MQTT connection reset while publishing | red ×1 → orange ×8 |
+| 9 | MQTT discovery payload exceeded buffer | red ×1 → orange ×9 |
+| 10 | USB device disconnected / CDC error | red ×1 → orange ×10 |
+| 11 | USB interface descriptor parse failure | red ×1 → orange ×11 |
+| 12 | TinyUSB handshake unsupported | red ×1 → orange ×12 |
+| 13 | `GET deviceId` timed out | red ×1 → orange ×13 |
+| 14 | Command queue timeout / retries exhausted | red ×1 → orange ×14 |
+| 15 | Tube sensitivity missing (dose rate unavailable) | red ×1 → orange ×15 |
+| 16 | Wi‑Fi reconnect after config save still failing | red ×1 → orange ×16 |
+| 17 | Captive portal resource exhaustion | red ×1 → orange ×17 |
+| 18 | LED controller stuck in Wi‑Fi mode | red ×1 → orange ×18 |
+| 19 | Application image larger than partition | red ×1 → orange ×19 |
+| 20 | Upload attempted on wrong serial port | red ×1 → orange ×20 |
+| 21 | Home Assistant using stale discovery state | red ×1 → orange ×21 |
+| 22 | Home Assistant broker without retained discovery | red ×1 → orange ×22 |
+| 23 | Last reset caused by brownout | red ×1 → orange ×23 |
+| 24 | Last reset caused by watchdog | red ×1 → orange ×24 |
+
+The lowest-numbered active fault is displayed. Resolving the root cause (for example, restoring Wi‑Fi credentials or saving NVS successfully) clears that code and reveals any higher-numbered faults that remain. Some codes are reserved for diagnostic scenarios outside normal runtime, but the blink language stays consistent if you raise them manually.
 
 ---
 

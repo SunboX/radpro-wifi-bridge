@@ -19,10 +19,11 @@ const std::array<DeviceManager::CommandType, 15> MqttPublisher::kRetainedTypes_ 
 
 #include <ctype.h>
 
-MqttPublisher::MqttPublisher(AppConfig &config, Print &log)
+MqttPublisher::MqttPublisher(AppConfig &config, Print &log, LedController &led)
     : config_(config),
       log_(log),
-      mqtt_client_(wifi_client_)
+      mqtt_client_(wifi_client_),
+      led_(led)
 {
     uint64_t mac = ESP.getEfuseMac();
     char buf[17];
@@ -189,7 +190,12 @@ bool MqttPublisher::ensureConnected()
         return false;
 
     if (mqtt_client_.connected())
+    {
+        led_.clearFault(FaultCode::MqttUnreachable);
+        led_.clearFault(FaultCode::MqttAuthFailure);
+        led_.clearFault(FaultCode::MqttConnectionReset);
         return true;
+    }
 
     if (WiFi.status() != WL_CONNECTED)
         return false;
@@ -221,6 +227,8 @@ bool MqttPublisher::ensureConnected()
         connected = mqtt_client_.connect(clientId.c_str());
     }
 
+    int state = mqtt_client_.state();
+
     if (connected)
     {
         log_.println("MQTT connected.");
@@ -229,11 +237,26 @@ bool MqttPublisher::ensureConnected()
         markAllPending();
         republishRetained();
         discoveryIndex_ = 0;
+        led_.clearFault(FaultCode::MqttUnreachable);
+        led_.clearFault(FaultCode::MqttAuthFailure);
+        led_.clearFault(FaultCode::MqttConnectionReset);
     }
     else
     {
         log_.print("MQTT connect failed: ");
-        log_.println(mqtt_client_.state());
+        log_.println(state);
+        if (state == 5)
+        {
+            led_.activateFault(FaultCode::MqttAuthFailure);
+        }
+        else if (state == -2 || state == -4)
+        {
+            led_.activateFault(FaultCode::MqttUnreachable);
+        }
+        else if (state == -3 || state == -1)
+        {
+            led_.activateFault(FaultCode::MqttConnectionReset);
+        }
     }
 
     return connected;
@@ -407,6 +430,7 @@ bool MqttPublisher::publish(const String &leaf, const String &payload, bool reta
             log_.println("MQTT publish skipped: Wi-Fi disconnected.");
             lastPublishWarning_ = now;
         }
+        led_.activateFault(FaultCode::MqttConnectionReset);
         return false;
     }
 
@@ -425,6 +449,10 @@ bool MqttPublisher::publish(const String &leaf, const String &payload, bool reta
 
     String topic = buildTopic(leaf);
     bool ok = mqtt_client_.publish(topic.c_str(), payload.c_str(), retain);
+    if (!ok)
+        led_.activateFault(FaultCode::MqttConnectionReset);
+    else
+        led_.clearFault(FaultCode::MqttConnectionReset);
     if (publishCallback_)
         publishCallback_(ok);
     return ok;
@@ -612,6 +640,7 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
         log_.println(neededLen);
         log_.print("Buffer size: ");
         log_.println(mqtt_client_.getBufferSize());
+        led_.activateFault(FaultCode::MqttDiscoveryTooLarge);
         return false;
     }
 
@@ -620,6 +649,11 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
     {
         log_.print("MQTT discovery publish failed for ");
         log_.println(discoveryTopic);
+        led_.activateFault(FaultCode::MqttConnectionReset);
+    }
+    else
+    {
+        led_.clearFault(FaultCode::MqttDiscoveryTooLarge);
     }
     return ok;
 }

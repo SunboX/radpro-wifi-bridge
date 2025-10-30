@@ -1,13 +1,16 @@
 #include "ConfigPortal/WiFiPortalService.h"
 
+#include <Arduino.h>
 #include <algorithm>
 #include <cstring>
+#include <esp_wifi_types.h>
 
-WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, Print &logPort)
+WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, Print &logPort, LedController &led)
     : config_(config),
       store_(store),
       manager_(),
       log_(logPort),
+      led_(led),
       paramDeviceName_("deviceName", "Device Name", "", kDeviceNameParamLen),
       paramMqttHost_("mqttHost", "MQTT Host", "", kMqttHostParamLen),
       paramMqttPort_("mqttPort", "MQTT Port", "", kMqttPortParamLen),
@@ -22,7 +25,10 @@ WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, P
       wifiEventId_(0),
       lastIp_(),
       hasLoggedIp_(false),
-      loggingEnabled_(false)
+      loggingEnabled_(false),
+      pendingReconnect_(false),
+      lastReconnectAttemptMs_(0),
+      waitingForIpSinceMs_(0)
 {
 }
 
@@ -65,7 +71,10 @@ bool WiFiPortalService::connect(bool forcePortal)
     }
 
     if (!connected)
+    {
+        led_.activateFault(FaultCode::WifiPortalStuck);
         return false;
+    }
 
     applyFromParameters(true);
     logStatusIfNeeded();
@@ -79,6 +88,10 @@ bool WiFiPortalService::connect(bool forcePortal)
             logConnectionDetails(ip, gw, mask);
             lastIp_ = ip;
             hasLoggedIp_ = true;
+            led_.clearFault(FaultCode::WifiPortalStuck);
+            led_.clearFault(FaultCode::WifiDhcpFailure);
+            led_.clearFault(FaultCode::PortalReconnectFailed);
+            led_.clearFault(FaultCode::WifiAuthFailure);
         }
     }
     return true;
@@ -101,6 +114,18 @@ void WiFiPortalService::maintain()
 
     logStatusIfNeeded();
 
+    if (waitingForIpSinceMs_ > 0 && WiFi.status() == WL_CONNECTED)
+    {
+        if (WiFi.localIP() == IPAddress(0, 0, 0, 0))
+        {
+            unsigned long now = millis();
+            if (now - waitingForIpSinceMs_ > 7000)
+            {
+                led_.activateFault(FaultCode::WifiDhcpFailure);
+            }
+        }
+    }
+
     if (pendingReconnect_)
     {
         wl_status_t status = WiFi.status();
@@ -110,6 +135,7 @@ void WiFiPortalService::maintain()
             hasLoggedIp_ = false;
             logStatusIfNeeded();
             log_.println("Wi-Fi reconnect complete.");
+            led_.clearFault(FaultCode::PortalReconnectFailed);
         }
         else
         {
@@ -117,6 +143,8 @@ void WiFiPortalService::maintain()
             if (lastReconnectAttemptMs_ == 0 || now - lastReconnectAttemptMs_ >= 5000)
             {
                 attemptReconnect();
+                if (WiFi.status() != WL_CONNECTED)
+                    led_.activateFault(FaultCode::PortalReconnectFailed);
             }
         }
     }
@@ -146,6 +174,7 @@ void WiFiPortalService::syncIfRequested()
         lastReconnectAttemptMs_ = 0;
         hasLoggedIp_ = false;
         log_.println("Wi-Fi reconnect scheduled.");
+        led_.activateFault(FaultCode::PortalReconnectFailed);
     }
 }
 
@@ -293,10 +322,12 @@ bool WiFiPortalService::applyFromParameters(bool persist, bool forceSave)
             log_.print("Configuration saved to NVS (mqttHost='");
             log_.print(config_.mqttHost);
             log_.println("').");
+            led_.clearFault(FaultCode::NvsWriteFailure);
         }
         else
         {
             log_.println("Preferences write failed; configuration not saved.");
+            led_.activateFault(FaultCode::NvsWriteFailure);
         }
     }
 
@@ -314,6 +345,11 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
         IPAddress netmask(info.got_ip.ip_info.netmask.addr);
         logConnectionDetails(ip, gateway, netmask);
         lastStatus_ = WL_CONNECTED;
+        waitingForIpSinceMs_ = 0;
+        led_.clearFault(FaultCode::WifiDhcpFailure);
+        led_.clearFault(FaultCode::WifiPortalStuck);
+        led_.clearFault(FaultCode::PortalReconnectFailed);
+        led_.clearFault(FaultCode::WifiAuthFailure);
         break;
     }
     case ARDUINO_EVENT_WIFI_STA_CONNECTED:
@@ -331,6 +367,8 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
             log_.println(ssid);
         }
         lastStatus_ = WL_CONNECTED;
+        waitingForIpSinceMs_ = millis();
+        led_.clearFault(FaultCode::WifiAuthFailure);
         break;
     }
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
@@ -345,6 +383,22 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
         lastIp_ = IPAddress();
         pendingReconnect_ = true;
         lastReconnectAttemptMs_ = 0;
+        waitingForIpSinceMs_ = 0;
+        switch (info.wifi_sta_disconnected.reason)
+        {
+        case WIFI_REASON_AUTH_EXPIRE:
+        case WIFI_REASON_AUTH_FAIL:
+        case WIFI_REASON_HANDSHAKE_TIMEOUT:
+        case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+        case WIFI_REASON_ASSOC_EXPIRE:
+        case WIFI_REASON_ASSOC_LEAVE:
+        case WIFI_REASON_CONNECTION_FAIL:
+            led_.activateFault(FaultCode::WifiAuthFailure);
+            break;
+        default:
+            led_.activateFault(FaultCode::WifiDhcpFailure);
+            break;
+        }
         break;
     default:
         break;
