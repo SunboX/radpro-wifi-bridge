@@ -33,6 +33,21 @@ On first boot— or whenever stored credentials fail— the firmware hosts a cap
 
 ---
 
+## Web Installer (ESP Web Tools)
+
+A ready-to-publish GitHub Pages site lives under the `docs/` folder. After pushing to GitHub you can enable **Settings → Pages → Build and deployment → Deploy from branch → `main` / `docs`** to host an online flasher powered by [ESP Web Tools](https://esphome.github.io/esp-web-tools/).
+
+- The public installer will be available at `https://<github-username>.github.io/radpro-wifi-bridge/` once Pages is enabled.
+- The landing page (`docs/index.html`) pulls firmware from `docs/firmware/latest/` according to `docs/manifest.json`. A PlatformIO post-build hook (`tools/copy_firmware.py`) automatically refreshes that directory after each successful build, copying:
+  - `.pio/build/esp32-s3-devkitc-1/bootloader.bin` → `docs/firmware/latest/bootloader.bin`
+  - `.pio/build/esp32-s3-devkitc-1/partitions.bin` → `docs/firmware/latest/partitions.bin`
+  - `.pio/build/esp32-s3-devkitc-1/firmware.bin` → `docs/firmware/latest/radpro-wifi-bridge.bin`
+- Bump the `version` field in `docs/manifest.json` whenever you ship a new firmware so browsers refresh their cache.
+
+Once those files are committed, users can flash the bridge firmware directly from the browser without installing the toolchain.
+
+---
+
 ## Serial Console Commands (`Serial0`)
 
 | Command      | Description                                                   |
@@ -66,7 +81,8 @@ The `MqttPublisher` bridges every RadPro response to MQTT when a broker is confi
 
 - **Configuration fields:** host, port (default 1883), client ID suffix, username/password, topic template, and full topic template (all editable from the portal).
 - **Topic templating:** `%deviceid%` (lowercase slug of the reported device ID) and `%DeviceId%` are replaced in the base topic. `%prefix%` and `%topic%` are substituted inside the full topic template. Defaults yield `stat/radpro/<deviceid>/<leaf>`.
-- **Published leaves:** `deviceId`, `devicePower`, `deviceBatteryVoltage`, `deviceBatteryPercent`, `deviceTime`, `deviceTimeZone`, `tubeSensitivity`, `tubeLifetime`, `tubePulseCount`, `tubeRate`, `tubeDoseRate`, `tubeDeadTime`, `tubeDeadTimeCompensation`, `tubeHvFrequency`, `tubeHvDutyCycle`, plus `randomData` and `dataLog` when requested.
+- **Published leaves:** `bridgeVersion`, `deviceId`, `devicePower`, `deviceBatteryVoltage`, `deviceBatteryPercent`, `deviceTime`, `deviceTimeZone`, `tubeSensitivity`, `tubeLifetime`, `tubePulseCount`, `tubeRate`, `tubeDoseRate`, `tubeDeadTime`, `tubeDeadTimeCompensation`, `tubeHvFrequency`, `tubeHvDutyCycle`, plus `randomData` and `dataLog` when requested.
+- **Bridge metadata:** the `bridgeVersion` topic is retained and surfaced as a diagnostic sensor so Home Assistant shows which RadPro WiFi Bridge firmware is running.
 - **Retain policy:** all telemetry is retained except `randomData` and `dataLog`. `devicePower` is normalised to `ON`/`OFF`.
 - **Connectivity behaviour:** publishing is skipped (with a console note) while Wi-Fi or MQTT is down. Successful publishes trigger a bright green LED pulse; failures trigger a red pulse and an explicit log message.
 

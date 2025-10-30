@@ -53,6 +53,7 @@ void MqttPublisher::updateConfig()
     {
         currentDeviceName_ = config_.deviceName;
         discoveryPublished_ = false;
+        versionDiscoveryDone_ = false;
     }
 
     if (host == currentHost_ && port == currentPort_ &&
@@ -75,6 +76,8 @@ void MqttPublisher::updateConfig()
 
     topicDirty_ = true;
     discoveryPublished_ = false;
+    versionDiscoveryDone_ = false;
+    bridgeVersionDirty_ = true;
     lastDiscoveryAttempt_ = 0;
     markAllPending();
     discoveryIndex_ = 0;
@@ -235,6 +238,8 @@ bool MqttPublisher::ensureConnected()
         discoveryPublished_ = false;
         lastDiscoveryAttempt_ = 0;
         markAllPending();
+        versionDiscoveryDone_ = false;
+        bridgeVersionDirty_ = true;
         republishRetained();
         discoveryIndex_ = 0;
         led_.clearFault(FaultCode::MqttUnreachable);
@@ -466,6 +471,13 @@ void MqttPublisher::publishDiscovery()
     if (!deviceId_.length())
         return;
 
+    if (!versionDiscoveryDone_)
+    {
+        if (!publishVersionDiscovery())
+            return;
+        versionDiscoveryDone_ = true;
+    }
+
     if (topicDirty_)
         refreshTopics();
 
@@ -534,9 +546,11 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
                                            const char *deviceClass,
                                            const char *stateClass,
                                            const char *payloadOn,
-                                           const char *payloadOff)
+                                           const char *payloadOff,
+                                           const char *entityCategory,
+                                           const char *leafOverride)
 {
-    String leaf = commandLeaf(type);
+    String leaf = (leafOverride && *leafOverride) ? String(leafOverride) : commandLeaf(type);
     if (!leaf.length())
         return true;
 
@@ -599,6 +613,8 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
         if (payloadOff && *payloadOff)
             appendField("payload_off", String(payloadOff));
     }
+    if (entityCategory && *entityCategory)
+        appendField("entity_category", String(entityCategory));
 
     String deviceJson = "{";
     bool firstDeviceField = true;
@@ -655,6 +671,41 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
     {
         led_.clearFault(FaultCode::MqttDiscoveryTooLarge);
     }
+    return ok;
+}
+
+bool MqttPublisher::publishVersionDiscovery()
+{
+    if (!bridgeVersion_.length())
+        return true;
+
+    return publishDiscoveryEntity(DeviceManager::CommandType::DeviceId,
+                                  "sensor",
+                                  "bridge_version",
+                                  "Bridge Firmware Version",
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  "diagnostic",
+                                  "bridgeVersion");
+}
+
+bool MqttPublisher::publishBridgeVersion()
+{
+    if (!bridgeVersionDirty_)
+        return true;
+
+    if (!bridgeVersion_.length())
+    {
+        bridgeVersionDirty_ = false;
+        return true;
+    }
+
+    bool ok = publish("bridgeVersion", bridgeVersion_, true);
+    if (ok)
+        bridgeVersionDirty_ = false;
     return ok;
 }
 
@@ -739,6 +790,7 @@ void MqttPublisher::markAllPending()
             state.pending = true;
     }
     lastRepublishAttempt_ = 0;
+    bridgeVersionDirty_ = true;
 }
 
 void MqttPublisher::republishRetained()
@@ -780,4 +832,24 @@ void MqttPublisher::republishRetained()
             break;
         }
     }
+
+    if (bridgeVersionDirty_)
+        publishBridgeVersion();
+}
+
+void MqttPublisher::setBridgeVersion(const String &version)
+{
+    String trimmed = version;
+    trimmed.trim();
+    if (bridgeVersion_ == trimmed)
+        return;
+
+    bridgeVersion_ = trimmed;
+    bridgeVersionDirty_ = true;
+    versionDiscoveryDone_ = false;
+    discoveryPublished_ = false;
+    lastDiscoveryAttempt_ = 0;
+
+    if (mqtt_client_.connected())
+        publishBridgeVersion();
 }
