@@ -1,96 +1,113 @@
 # RadPro WiFi Bridge (ESP32‑S3)
 
-A tiny Wi‑Fi/USB bridge for Rad Pro–class devices built on **ESP32‑S3 (Arduino)**.  
-It enumerates USB devices via TinyUSB **host**, provides a simple non‑blocking startup flow you can control over serial, and exposes a visual heartbeat on the on‑board **WS2812 RGB LED**.
-
-> **Planned reporting targets:** This firmware will be able to publish measurements to well‑known platforms like **openSenseMap**, **Home Assistant** (via MQTT), and other common stacks (e.g., MQTT brokers / InfluxDB / Grafana via your backend).
+Wi‑Fi / USB bridge firmware for **Bosean RadPro (FS‑600)‑class** Geiger counters.  
+The ESP32‑S3 enumerates the detector as a vendor‑specific CDC device, exposes status over serial, keeps a live heartbeat on the on‑board WS2812 LED, and mirrors data to the network. Configuration happens through a captive portal or a small web UI served directly by the board.
 
 ---
 
-## Features
+## Highlights
 
-- **USB Host (TinyUSB):** Enumerates attached USB devices and logs VID/PID, class, and basics.
-- **Dual Serial I/O:**  
-  - `Serial` → native USB‑CDC (TinyUSB).  
-  - `Serial0` (**recommended for debug**) → the board’s CP210x / “second USB port”.
-- **Non‑blocking startup state machine:** Default delay is **5 s**. You can:
-  - start immediately with `start`
-  - change the delay with `delay <ms>`
-- **On‑board RGB LED heartbeat (WS2812):**
-  - Boot cue: dim green.
-  - Main loop: dim‑green pulse every 250 ms.
-  - Uses `neopixelWrite(RGB_BUILTIN, r, g, b)`; default `RGB_BUILTIN = 48`.
+- **TinyUSB host stack** with a CH34x VCP shim so the RadPro enumerates reliably.
+- **DeviceManager queue** that boots the tube, captures `deviceId`/model/firmware, and keeps polling live readings (`GET tubePulseCount`, `GET tubeRate`, …).
+- **Wi‑Fi configuration portal** (WiFiManager based):
+  - On first boot (or when credentials fail) an AP is launched for setup.
+  - After connecting to WLAN the same form is available at `http://<device-ip>/`.
+  - Saved settings (device name, MQTT parameters, polling interval) are stored in NVS.
+- **Runtime Wi‑Fi logging**: SSID/IP/gateway and RSSI are printed on connect, disconnect reasons are noted.
+- **Non‑blocking startup state machine**: default 5 s delay with serial overrides.
+- **Serial control** on the CP210x debug port (`Serial0` @ 115200) with optional raw USB tracing.
+- **RGB LED heartbeat** (WS2812 on GPIO 48) showing boot and runtime status.
 
 ---
 
 ## Quick Start
 
-1. Open the project in **PlatformIO** (VS Code).
-2. Ensure the environment targets **ESP32‑S3 DevKitC‑1 (N16R8)** and that TinyUSB host is enabled (see `platformio.ini` in this repo).
-3. Connect **both** USB ports if possible:
-   - Use the **CP210x / second USB port** for logs and runtime commands (`Serial0` @ **115200**).
-   - The **native USB‑OTG** is used by TinyUSB host and should be left free for devices.
-4. Build & upload.
-5. Open a serial monitor on the CP210x port and watch the countdown or send commands.
+1. Install [PlatformIO](https://platformio.org/) and open the project.
+2. The default environment targets **ESP32‑S3 DevKitC‑1 (N16R8)** with TinyUSB host enabled (see `platformio.ini`).
+3. Connect the board:
+   - **CP210x USB (UART)** for logs / commands (`Serial0` 115200 baud).
+   - Keep the **native USB‑OTG** port free for the RadPro sensor.
+4. Flash: `platformio run --target upload`.
+5. Open a serial monitor on the CP210x port to watch the countdown or enter commands.
 
-> macOS tip: `ls /dev/tty.*` then e.g. `screen /dev/tty.usbserial-* 115200` (to exit `screen`, press `Ctrl+A`, then `K`, then `Y`).
+> macOS: `ls /dev/tty.*` then e.g. `screen /dev/tty.usbserial-* 115200` (to exit `screen`, press `Ctrl+A`, then `K`, then `Y`).
+
+When no Wi‑Fi credentials are stored the firmware opens a captive portal (`RadPro WiFi Bridge Setup`). Once credentials are provided it reconnects as a station and logs the assigned IP.
 
 ---
 
-## Runtime Behavior
+## Serial Console Commands (`Serial0`)
 
-### Startup & Commands (via `Serial0`)
-| Command            | Description                                                | Example              |
-|--------------------|------------------------------------------------------------|----------------------|
-| `start`            | Starts the main loop immediately                            | `start`              |
-| `delay <ms>`       | Sets a new startup delay and restarts timer                 | `delay 15000`        |
-| `raw on/off`       | Enables / disables raw USB traffic logging on the console   | `raw on`             |
-| `raw toggle`       | Toggles raw USB logging                                      | `raw toggle`         |
-| `verbose on/off`   | Enables / disables host-level queue/line logging            | `verbose on`         |
-| `verbose toggle`   | Toggles host-level queue/line logging                       | `verbose toggle`     |
-| `random`           | Fetches 16 bytes of random data from the device             | `random`             |
-| `datalog [args]`   | Requests log records (optional args: start end maxCount)    | `datalog 0 4294967295 100` |
+| Command        | Description                                              |
+|----------------|----------------------------------------------------------|
+| `start`        | Skip the remaining boot delay and start immediately.     |
+| `delay <ms>`   | Set a new startup delay (milliseconds) and restart timer.|
+| `raw on/off`   | Enable or disable raw USB framing logs.                  |
+| `raw toggle`   | Toggle raw USB logging.                                  |
 
-While waiting, the device prints a **countdown** once per second. After starting, it logs “Main loop is running.” every second.
+While waiting for the boot delay the console prints `Starting in …` once per second. After the bridge starts, only device data and Wi‑Fi status are logged (the old “Main loop is running.” message was removed to keep the console clean).
 
-### LED Behavior
-- **Boot:** brief green pulse
-- **Running:** dim green heartbeat every **250 ms**
+Raw USB logging is useful for troubleshooting atypical firmware responses. Disable it for normal operation to preserve bandwidth.
 
-Change the LED pin by redefining `RGB_BUILTIN` in your build flags or sketch:
+---
+
+## Wi‑Fi Configuration
+
+- **Captive portal:** launched automatically if auto‑connect fails or no credentials exist. Device parameters (name, MQTT host/user/pass/topic, RadPro polling interval) are editable here.
+- **Station portal:** once connected, browse to `http://<device-ip>/` to reopen the same form. Settings are saved in NVS.
+- **Status logging:** on every connect the firmware prints SSID, IP, gateway, mask, and RSSI. Disconnect reasons (e.g., `AUTH_FAIL`) are emitted once per event.
+
+Configuration is managed by `WiFiPortalService`, which continuously maintains the web portal while the main loop runs.
+
+---
+
+## Device Data Flow
+
+1. **USB connection** → the RadPro enumerates (using CH34x VCP driver if needed).
+2. **Initial handshake**:
+   - `GET deviceId` → logs ID, model, firmware, locale/time zone.
+   - Additional `GET` commands gather tube sensitivity, dead time, HV parameters, etc.
+3. **Continuous polling**: `GET tubePulseCount` and `GET tubeRate` are queued at the configured interval (defaults to 1000 ms, clamped to 500 ms minimum).
+4. **Raw logging** (optional) prints hex payloads for each USB frame.
+
+Command retries and back‑off are handled automatically inside `DeviceManager`.
+
+---
+
+## LED Indicators
+
+- **Boot:** dim green pulse during startup.
+- **Running:** heartbeat pulses every 250 ms (adjust in `runMainLogic()`).
+
+You can change the LED pin by redefining `RGB_BUILTIN` (default is `48` on the ESP32‑S3 DevKitC‑1):
+
 ```cpp
-#define RGB_BUILTIN 48  // default ESP32‑S3 DevKitC‑1 WS2812 pin
+#define RGB_BUILTIN 48
 ```
 
-### USB VCP Handling (RadPro / CH34x)
-- On every device connection (including first boot) the firmware automatically sends `GET deviceId` over USB after a short settle period.
-- The reply is printed once as `Device ID: …`. Afterward, the bridge also queries and logs the device model, firmware version, locale/time zone, and tube sensitivity.
-- While the bridge is running it periodically polls `GET tubePulseCount` and `GET tubeRate`; the replies are logged so you always see the latest live readings.
-- If the sensor reports `ERROR` or stays silent, the bridge retries with a gentle back‑off up to a handful of times; any remaining USB issues still surface via the `UsbCdcHost` warning channel.
-- You can enable verbose raw USB logging temporarily with `raw on` to inspect byte traffic during troubleshooting. For deeper host-level debugging (including queue/line dumps) toggle the `verbose` CLI commands above (`device_manager.setVerboseLogging(true)` under the hood).
-
-> **Compatibility note:** So far this code has been tested only with the **Bosean FS‑600** running firmware **“Rad Pro 3.0.1”**. If you encounter problems with other adapters, please open an issue so we can track it. I’m happy to help, but I can’t afford to buy every device — get in touch if you’re able to loan or sponsor hardware for debugging.
-
 ---
 
-## File Overview
+## Project Structure
 
-- `src/main.cpp` – Arduino sketch with:
-  - USB host setup (library task + client task)
-  - Startup state machine (non‑blocking)
-  - RGB LED heartbeat (WS2812 via `neopixelWrite`)
-- `platformio.ini` – ESP32‑S3 DevKitC‑1 (N16R8) config with TinyUSB **host** enabled and UART debug on `Serial0`.
+| Path                                   | Purpose                                                             |
+|----------------------------------------|---------------------------------------------------------------------|
+| `src/main.cpp`                         | Arduino entry point: USB host startup, Wi‑Fi portal orchestration, startup delay logic, LED heartbeat. |
+| `lib/DeviceManager`                    | RadPro command queue, response parsing, automatic telemetry polling.|
+| `lib/UsbCdcHost`                       | TinyUSB wrapper + CH34x helper to drive the vendor CDC interface.   |
+| `lib/AppSupport/AppConfig`             | NVS-backed configuration storage (device name, MQTT settings, read interval). |
+| `lib/AppSupport/ConfigPortal`          | WiFiManager-based captive portal and station web portal service.    |
+| `platformio.ini`                       | PlatformIO configuration targeting ESP32‑S3 DevKitC‑1 with TinyUSB host. |
 
 ---
 
 ## Roadmap
 
-- Publish live CPM / pulse counts to:
+- Publish CPM / pulse counts to:
   - **openSenseMap**
-  - **Home Assistant** (via MQTT / discovery)
-  - Generic **MQTT** (for custom pipelines like InfluxDB/Grafana)
-- Configurable reporting intervals & filters
-- OTA updates
+  - **Home Assistant** (MQTT discovery)
+  - Generic **MQTT** / custom backends
+- Configurable outbound reporting cadence & thresholds.
+- OTA update support.
 
 ---
 
