@@ -128,8 +128,6 @@ void setup()
         DBG.println("Auto-connect or portal timed out; starting configuration portal.");
         portalService.connect(true);
     }
-
-    portalService.dumpStatus();
     portalService.maintain();
 }
 
@@ -210,6 +208,8 @@ static void handleStartupLogic()
     {
         DBG.println("Starting RadPro WiFi Bridge…");
         device_manager.start();
+        portalService.enableStatusLogging();
+        
         // brief green pulse
         static uint8_t ticks = 0;
         if (ticks < 6)
