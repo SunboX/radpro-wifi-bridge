@@ -14,6 +14,7 @@ The ESP32‑S3 enumerates the detector as a vendor‑specific CDC device, expose
   - After connecting to WLAN the same form is available at `http://<device-ip>/`.
   - Saved settings (device name, MQTT parameters, polling interval) are stored in NVS.
 - **Runtime Wi‑Fi logging**: SSID/IP/gateway and RSSI are printed on connect, disconnect reasons are noted.
+- **MQTT publishing**: every RadPro `GET` response is retained on the configured topic tree at the `readIntervalMs` cadence.
 - **Non‑blocking startup state machine**: default 5 s delay with serial overrides.
 - **Serial control** on the CP210x debug port (`Serial0` @ 115200) with optional raw USB tracing.
 - **RGB LED heartbeat** (WS2812 on GPIO 48) showing boot and runtime status.

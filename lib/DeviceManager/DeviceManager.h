@@ -17,24 +17,6 @@ public:
     void begin(uint16_t vid, uint16_t pid);
     void loop();
 
-    void setLineHandler(LineHandler handler) { line_handler_ = std::move(handler); }
-    void setRawHandler(RawHandler handler) { raw_handler_ = std::move(handler); }
-
-    void setRawLogging(bool enabled);
-    void toggleRawLogging();
-    bool rawLoggingEnabled() const { return raw_logging_enabled_; }
-    void setVerboseLogging(bool enabled) { verbose_logging_enabled_ = enabled; }
-    bool verboseLoggingEnabled() const { return verbose_logging_enabled_; }
-
-    void start();
-    void stop();
-    void enable(bool active);
-    bool enabled() const { return enabled_; }
-    void requestStats();
-    void requestRandomData();
-    void requestDataLog(const String &args = String());
-
-private:
     enum class CommandType
     {
         DeviceId,
@@ -54,6 +36,28 @@ private:
         DataLog,
         Generic
     };
+
+    using CommandResultHandler = std::function<void(CommandType, const String &)>;
+
+    void setLineHandler(LineHandler handler) { line_handler_ = std::move(handler); }
+    void setRawHandler(RawHandler handler) { raw_handler_ = std::move(handler); }
+    void setCommandResultHandler(CommandResultHandler handler) { command_result_handler_ = std::move(handler); }
+
+    void setRawLogging(bool enabled);
+    void toggleRawLogging();
+    bool rawLoggingEnabled() const { return raw_logging_enabled_; }
+    void setVerboseLogging(bool enabled) { verbose_logging_enabled_ = enabled; }
+    bool verboseLoggingEnabled() const { return verbose_logging_enabled_; }
+
+    void start();
+    void stop();
+    void enable(bool active);
+    bool enabled() const { return enabled_; }
+    void requestStats();
+    void requestRandomData();
+    void requestDataLog(const String &args = String());
+
+private:
 
     struct PendingCommand
     {
@@ -83,11 +87,13 @@ private:
     void issueCurrentCommand();
     void handleSuccess();
     void handleError();
+    void emitResult(CommandType type, const String &value);
 
     UsbCdcHost &host_;
 
     LineHandler line_handler_ = nullptr;
     RawHandler raw_handler_ = nullptr;
+    CommandResultHandler command_result_handler_ = nullptr;
 
     bool raw_logging_enabled_ = false;
     bool verbose_logging_enabled_ = false;

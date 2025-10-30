@@ -223,10 +223,10 @@ void DeviceManager::onLine(const String &line)
         String payload = trimmed.substring(3);
         int firstSemi = payload.indexOf(';');
         int secondSemi = (firstSemi >= 0) ? payload.indexOf(';', firstSemi + 1) : -1;
+        String deviceId;
 
         if (firstSemi > 0)
         {
-            String deviceId;
             if (secondSemi > firstSemi && secondSemi > 0)
                 deviceId = payload.substring(secondSemi + 1);
             else
@@ -235,6 +235,8 @@ void DeviceManager::onLine(const String &line)
             if (!device_id_logged_ && line_handler_)
                 line_handler_(String("Device ID: ") + deviceId);
             device_id_logged_ = true;
+            if (deviceId.length())
+                emitResult(CommandType::DeviceId, deviceId);
         }
 
         if (!device_details_logged_)
@@ -296,38 +298,46 @@ void DeviceManager::onLine(const String &line)
     }
     case CommandType::DevicePower:
     {
-        if (trimmed.startsWith("OK ") && line_handler_)
+        if (trimmed.startsWith("OK "))
         {
             String value = trimmed.substring(3);
             value.trim();
-            line_handler_(String("Device Power: ") + (value == "1" ? "ON" : "OFF"));
+            if (line_handler_)
+                line_handler_(String("Device Power: ") + (value == "1" ? "ON" : "OFF"));
+            emitResult(CommandType::DevicePower, value);
         }
         handleSuccess();
         break;
     }
     case CommandType::DeviceBatteryVoltage:
     {
-        if (trimmed.startsWith("OK ") && line_handler_)
+        if (trimmed.startsWith("OK "))
         {
             String value = trimmed.substring(3);
             value.trim();
-            line_handler_(String("Battery Voltage: ") + value + " V");
+            if (line_handler_)
+                line_handler_(String("Battery Voltage: ") + value + " V");
+            emitResult(CommandType::DeviceBatteryVoltage, value);
         }
         handleSuccess();
         break;
     }
     case CommandType::DeviceTime:
     {
-        if (trimmed.startsWith("OK ") && line_handler_)
+        if (trimmed.startsWith("OK "))
         {
             String value = trimmed.substring(3);
             value.trim();
-            time_t ts = static_cast<time_t>(value.toInt());
-            struct tm tm_info;
-            gmtime_r(&ts, &tm_info);
-            char buf[32];
-            strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S UTC", &tm_info);
-            line_handler_(String("Device Time: ") + buf + " (" + value + ")");
+            if (line_handler_)
+            {
+                time_t ts = static_cast<time_t>(value.toInt());
+                struct tm tm_info;
+                gmtime_r(&ts, &tm_info);
+                char buf[32];
+                strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S UTC", &tm_info);
+                line_handler_(String("Device Time: ") + buf + " (" + value + ")");
+            }
+            emitResult(CommandType::DeviceTime, value);
         }
         handleSuccess();
         break;
@@ -340,6 +350,7 @@ void DeviceManager::onLine(const String &line)
             zone.trim();
             if (line_handler_)
                 line_handler_(String("Device Time Zone: ") + zone);
+            emitResult(CommandType::DeviceTimeZone, zone);
         }
         handleSuccess();
         break;
@@ -352,6 +363,7 @@ void DeviceManager::onLine(const String &line)
             sens.trim();
             if (line_handler_)
                 line_handler_(String("Tube Sensitivity: ") + sens + " cpm/µSv/h");
+            emitResult(CommandType::DeviceSensitivity, sens);
         }
         handleSuccess();
         break;
@@ -364,91 +376,104 @@ void DeviceManager::onLine(const String &line)
             value.trim();
             if (line_handler_)
                 line_handler_(String("Tube Lifetime: ") + value + " s");
+            emitResult(CommandType::TubeTime, value);
         }
         handleSuccess();
         break;
     }
     case CommandType::TubePulseCount:
     {
-        if (!trimmed.startsWith("OK "))
-            return;
-
+        String value = trimmed.startsWith("OK ") ? trimmed.substring(3) : trimmed;
+        value.trim();
         if (line_handler_)
-            line_handler_(current_command_.command + " -> " + trimmed);
+            line_handler_(String("Tube Pulse Count: ") + value);
+        emitResult(CommandType::TubePulseCount, value);
         handleSuccess();
         break;
     }
     case CommandType::TubeRate:
     {
-        if (!trimmed.startsWith("OK "))
-            return;
-
+        String value = trimmed.startsWith("OK ") ? trimmed.substring(3) : trimmed;
+        value.trim();
         if (line_handler_)
-            line_handler_(current_command_.command + " -> " + trimmed);
+            line_handler_(String("Tube Rate: ") + value + " cpm");
+        emitResult(CommandType::TubeRate, value);
         handleSuccess();
         break;
     }
     case CommandType::TubeDeadTime:
     {
-        if (trimmed.startsWith("OK ") && line_handler_)
+        if (trimmed.startsWith("OK "))
         {
             String value = trimmed.substring(3);
             value.trim();
-            line_handler_(String("Tube Dead Time: ") + value + " s");
+            if (line_handler_)
+                line_handler_(String("Tube Dead Time: ") + value + " s");
+            emitResult(CommandType::TubeDeadTime, value);
         }
         handleSuccess();
         break;
     }
     case CommandType::TubeDeadTimeCompensation:
     {
-        if (trimmed.startsWith("OK ") && line_handler_)
+        if (trimmed.startsWith("OK "))
         {
             String value = trimmed.substring(3);
             value.trim();
-            line_handler_(String("Dead Time Compensation: ") + value + " s");
+            if (line_handler_)
+                line_handler_(String("Dead Time Compensation: ") + value + " s");
+            emitResult(CommandType::TubeDeadTimeCompensation, value);
         }
         handleSuccess();
         break;
     }
     case CommandType::TubeHVFrequency:
     {
-        if (trimmed.startsWith("OK ") && line_handler_)
+        if (trimmed.startsWith("OK "))
         {
             String value = trimmed.substring(3);
             value.trim();
-            line_handler_(String("HV Frequency: ") + value + " Hz");
+            if (line_handler_)
+                line_handler_(String("HV Frequency: ") + value + " Hz");
+            emitResult(CommandType::TubeHVFrequency, value);
         }
         handleSuccess();
         break;
     }
     case CommandType::TubeHVDutyCycle:
     {
-        if (trimmed.startsWith("OK ") && line_handler_)
+        if (trimmed.startsWith("OK "))
         {
             String value = trimmed.substring(3);
             value.trim();
-            line_handler_(String("HV Duty Cycle: ") + value);
+            if (line_handler_)
+                line_handler_(String("HV Duty Cycle: ") + value);
+            emitResult(CommandType::TubeHVDutyCycle, value);
         }
         handleSuccess();
         break;
     }
     case CommandType::RandomData:
     {
-        if (trimmed.startsWith("OK ") && line_handler_)
+        if (trimmed.startsWith("OK "))
         {
             String value = trimmed.substring(3);
             value.trim();
-            line_handler_(String("Random Data: ") + value);
+            if (line_handler_)
+                line_handler_(String("Random Data: ") + value);
+            emitResult(CommandType::RandomData, value);
         }
         handleSuccess();
         break;
     }
     case CommandType::DataLog:
     {
-        if (trimmed.startsWith("OK ") && line_handler_)
+        if (trimmed.startsWith("OK "))
         {
             String value = trimmed.substring(3);
-            line_handler_(String("Data Log: ") + value);
+            if (line_handler_)
+                line_handler_(String("Data Log: ") + value);
+            emitResult(CommandType::DataLog, value);
         }
         handleSuccess();
         break;
@@ -578,4 +603,12 @@ void DeviceManager::handleError()
     has_current_command_ = false;
     current_command_ = PendingCommand{};
     processQueue();
+}
+
+void DeviceManager::emitResult(CommandType type, const String &value)
+{
+    if (command_result_handler_)
+    {
+        command_result_handler_(type, value);
+    }
 }
