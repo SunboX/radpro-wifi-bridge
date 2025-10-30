@@ -1,7 +1,13 @@
 #include <Arduino.h>
 #include "UsbCdcHost.h"
 #include "esp_log.h"
-#include <DeviceManager.h>
+#include <cstring>
+#include <WiFi.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "DeviceManager.h"
+#include "AppConfig/AppConfig.h"
+#include "ConfigPortal/WiFiPortalService.h"
 
 // =========================
 // Board / LED definitions
@@ -57,6 +63,10 @@ static void logRaw(const uint8_t *data, size_t len)
     DBG.println();
 }
 
+static AppConfig appConfig;
+static AppConfigStore configStore;
+static WiFiPortalService portalService(appConfig, configStore, DBG);
+
 // =========================
 // Arduino setup / loop
 // =========================
@@ -102,6 +112,25 @@ void setup()
             DBG.println("Send 'start', 'delay <ms>', or 'raw on/off/toggle' on this port.");
         }
     }
+
+    if (!configStore.load(appConfig))
+    {
+        DBG.println("Preferences read failed; keeping defaults.");
+    }
+
+    portalService.begin();
+
+    WiFi.mode(WIFI_STA);
+    WiFi.setHostname(appConfig.deviceName.c_str());
+
+    if (!portalService.connect(false))
+    {
+        DBG.println("Auto-connect or portal timed out; starting configuration portal.");
+        portalService.connect(true);
+    }
+
+    portalService.dumpStatus();
+    portalService.maintain();
 }
 
 void loop()
@@ -116,6 +145,9 @@ void loop()
     }
 
     device_manager.loop();
+    portalService.syncIfRequested();
+    portalService.maintain();
+    portalService.process();
 
     // Keep loop snappy; USB host runs in its own tasks
     delay(5);
@@ -166,33 +198,6 @@ static void handleStartupLogic()
             DBG.print("USB raw logging toggled ");
             DBG.println(device_manager.rawLoggingEnabled() ? "ON." : "OFF.");
         }
-        else if (command.equalsIgnoreCase("verbose on"))
-        {
-            device_manager.setVerboseLogging(true);
-            DBG.println("Verbose host logging enabled.");
-        }
-        else if (command.equalsIgnoreCase("verbose off"))
-        {
-            device_manager.setVerboseLogging(false);
-            DBG.println("Verbose host logging disabled.");
-        }
-        else if (command.equalsIgnoreCase("verbose toggle"))
-        {
-            bool newState = !device_manager.verboseLoggingEnabled();
-            device_manager.setVerboseLogging(newState);
-            DBG.print("Verbose host logging toggled ");
-            DBG.println(newState ? "ON." : "OFF.");
-        }
-        else if (command.equalsIgnoreCase("random"))
-        {
-            device_manager.requestRandomData();
-        }
-        else if (command.startsWith("datalog"))
-        {
-            String args = command.length() > 7 ? command.substring(7) : String();
-            args.trim();
-            device_manager.requestDataLog(args);
-        }
         else if (ALLOW_EARLY_START && command.length() > 0)
         {
             isRunning = true;
@@ -241,11 +246,15 @@ static void runMainLogic()
         neopixelWrite(RGB_BUILTIN, r, g, b);
     }
 
-    // Task 2: Log once per second on debug UART
-    static unsigned long lastLoopTime = 0;
-    if (millis() - lastLoopTime >= 1000)
+    // Task 2: Poll rad-pro statistics according to configured interval
+    static unsigned long lastStatsRequest = 0;
+    unsigned long now = millis();
+    uint32_t interval = appConfig.readIntervalMs;
+    if (interval < kMinReadIntervalMs)
+        interval = kMinReadIntervalMs;
+    if (now - lastStatsRequest >= interval)
     {
-        lastLoopTime = millis();
+        lastStatsRequest = now;
         device_manager.requestStats();
     }
 }

@@ -7,6 +7,7 @@ namespace
     constexpr uint32_t DEVICE_ID_RETRY_DELAY_MS = 1500;
     constexpr uint32_t DEVICE_ID_RESPONSE_TIMEOUT_MS = 3000;
     constexpr uint8_t DEVICE_ID_MAX_RETRY = 4;
+    constexpr const char *DEVICE_KEEPALIVE_LINE = "Main loop is running.";
 }
 
 DeviceManager *DeviceManager::instance_ = nullptr;
@@ -203,6 +204,9 @@ void DeviceManager::onLine(const String &line)
     String trimmed = line;
     trimmed.trim();
 
+    if (trimmed.equalsIgnoreCase(DEVICE_KEEPALIVE_LINE))
+        return;
+
     if (trimmed.equalsIgnoreCase("ERROR"))
     {
         handleError();
@@ -366,19 +370,21 @@ void DeviceManager::onLine(const String &line)
     }
     case CommandType::TubePulseCount:
     {
-        String value = trimmed.startsWith("OK ") ? trimmed.substring(3) : trimmed;
-        value.trim();
+        if (!trimmed.startsWith("OK "))
+            return;
+
         if (line_handler_)
-            line_handler_(String("Tube Pulse Count: ") + value);
+            line_handler_(current_command_.command + " -> " + trimmed);
         handleSuccess();
         break;
     }
     case CommandType::TubeRate:
     {
-        String value = trimmed.startsWith("OK ") ? trimmed.substring(3) : trimmed;
-        value.trim();
+        if (!trimmed.startsWith("OK "))
+            return;
+
         if (line_handler_)
-            line_handler_(String("Tube Rate: ") + value + " cpm");
+            line_handler_(current_command_.command + " -> " + trimmed);
         handleSuccess();
         break;
     }
