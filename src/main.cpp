@@ -8,6 +8,7 @@
 #include "DeviceManager.h"
 #include "AppConfig/AppConfig.h"
 #include "ConfigPortal/WiFiPortalService.h"
+#include "Mqtt/MqttPublisher.h"
 
 // =========================
 // Board / LED definitions
@@ -66,6 +67,7 @@ static void logRaw(const uint8_t *data, size_t len)
 static AppConfig appConfig;
 static AppConfigStore configStore;
 static WiFiPortalService portalService(appConfig, configStore, DBG);
+static MqttPublisher mqttPublisher(appConfig, DBG);
 
 // =========================
 // Arduino setup / loop
@@ -94,6 +96,9 @@ void setup()
 
     device_manager.setLineHandler(logLine);
     device_manager.setRawHandler(logRaw);
+    device_manager.setCommandResultHandler([](DeviceManager::CommandType type, const String &value) {
+        mqttPublisher.onCommandResult(type, value);
+    });
     device_manager.begin(0x1A86, 0x7523);
 
     // Optionally set target baud for CDC device
@@ -119,6 +124,7 @@ void setup()
     }
 
     portalService.begin();
+    mqttPublisher.begin();
 
     WiFi.mode(WIFI_STA);
     WiFi.setHostname(appConfig.deviceName.c_str());
@@ -128,6 +134,7 @@ void setup()
         DBG.println("Auto-connect or portal timed out; starting configuration portal.");
         portalService.connect(true);
     }
+    mqttPublisher.updateConfig();
     portalService.maintain();
 }
 
@@ -146,6 +153,8 @@ void loop()
     portalService.syncIfRequested();
     portalService.maintain();
     portalService.process();
+    mqttPublisher.updateConfig();
+    mqttPublisher.loop();
 
     // Keep loop snappy; USB host runs in its own tasks
     delay(5);
