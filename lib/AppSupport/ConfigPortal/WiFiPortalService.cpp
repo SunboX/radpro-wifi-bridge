@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <algorithm>
 #include <cstring>
+#include <vector>
 #include <esp_wifi_types.h>
 
 WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, Print &logPort, LedController &led)
@@ -38,6 +39,9 @@ void WiFiPortalService::begin()
     manager_.setClass("invert");
     manager_.setConnectTimeout(10);
     manager_.setConnectRetries(1);
+    manager_.setTitle("RadPro WiFi Bridge Configuration");
+    std::vector<const char *> menuEntries = {"wifi", "custom"};
+    manager_.setMenu(menuEntries);
     manager_.setSaveConfigCallback([this]()
                                    { store_.requestSave(); });
     manager_.setSaveParamsCallback([this]() {
@@ -221,20 +225,23 @@ void WiFiPortalService::attachParameters()
         return;
 
     manager_.addParameter(&paramDeviceName_);
-    manager_.addParameter(&paramMqttHost_);
-    manager_.addParameter(&paramMqttPort_);
-    manager_.addParameter(&paramMqttClient_);
-    manager_.addParameter(&paramMqttUser_);
-    manager_.addParameter(&paramMqttPass_);
-    manager_.addParameter(&paramMqttTopic_);
-    manager_.addParameter(&paramMqttFullTopic_);
-    manager_.addParameter(&paramReadInterval_);
 
-    manager_.setCustomMenuHTML("<div style='padding:12px;'><a class='btn btn-xs btn-warning' href='/restart'>Restart Device</a></div>");
+    manager_.setCustomMenuHTML("<div style='margin:-5px;display:flex;flex-direction:column;gap:20px;'>"
+                               "<form action='/mqtt' method='get'><button class='btn btn-primary' type='submit'>Configure MQTT</button></form>"
+                               "<form action='/restart' method='get'><button class='btn btn-primary' type='submit'>Restart Device</button></form>"
+                               "</div>");
 
     manager_.setWebServerCallback([this]() {
         if (!manager_.server)
             return;
+
+        manager_.server->on("/mqtt", HTTP_GET, [this]() {
+            sendMqttForm();
+        });
+
+        manager_.server->on("/mqtt", HTTP_POST, [this]() {
+            handleMqttPost();
+        });
 
         manager_.server->on("/restart", HTTP_GET, [this]() {
             manager_.server->send(200, "text/plain", "Restarting...\n");
@@ -521,4 +528,170 @@ void WiFiPortalService::attemptReconnect()
         log_.println("Wi-Fi.begin() with stored credentials.");
         WiFi.begin();
     }
+}
+
+void WiFiPortalService::sendMqttForm(const String &message)
+{
+    if (!manager_.server)
+        return;
+
+    String html;
+    html.reserve(2048);
+    html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/><title>Configure MQTT</title><style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}label{font-weight:bold;}input,select{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;}button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}button:hover{background:#1976D2;}a{color:#03A9F4;} .wrap{display:inline-block;min-width:260px;max-width:500px;width:100%;text-align:left;} p.notice{margin:0 0 12px 0;color:#8bc34a;}</style></head><body class='invert'><div class='wrap'><h1>MQTT Settings</h1>");
+
+    if (message.length())
+    {
+        html += F("<p class='notice'>");
+        html += message;
+        html += F("</p>");
+    }
+
+    html += F("<form method='POST' action='/mqtt'>");
+
+    html += F("<label for='mqttHost'>Host</label><input id='mqttHost' name='mqttHost' type='text' style='box-sizing:border-box;' value='");
+    html += htmlEscape(config_.mqttHost);
+    html += F("'/>");
+
+    html += F("<label for='mqttPort'>Port</label><input id='mqttPort' name='mqttPort' type='number' min='1' max='65535' style='box-sizing:border-box;' value='");
+    html += String(config_.mqttPort);
+    html += F("'/>");
+
+    html += F("<label for='mqttClient'>Client ID Suffix</label><input id='mqttClient' name='mqttClient' type='text' style='box-sizing:border-box;' value='");
+    html += htmlEscape(config_.mqttClient);
+    html += F("'/>");
+
+    html += F("<label for='mqttUser'>Username</label><input id='mqttUser' name='mqttUser' type='text' style='box-sizing:border-box;' value='");
+    html += htmlEscape(config_.mqttUser);
+    html += F("'/>");
+
+    html += F("<label for='mqttPass'>Password</label><input id='mqttPass' name='mqttPass' type='password' style='box-sizing:border-box;' value='");
+    html += htmlEscape(config_.mqttPassword);
+    html += F("'/>");
+
+    html += F("<label for='mqttTopic'>Base Topic</label><input id='mqttTopic' name='mqttTopic' type='text' style='box-sizing:border-box;' value='");
+    html += htmlEscape(config_.mqttTopic);
+    html += F("'/>");
+
+    html += F("<label for='mqttFullTopic'>Full Topic Template</label><input id='mqttFullTopic' name='mqttFullTopic' type='text' style='box-sizing:border-box;' value='");
+    html += htmlEscape(config_.mqttFullTopic);
+    html += F("'/>");
+
+    html += F("<label for='readInterval'>Read Interval (ms)</label><input id='readInterval' name='readInterval' type='number' style='box-sizing:border-box;' min='");
+    html += String(kMinReadIntervalMs);
+    html += F("' value='");
+    html += String(config_.readIntervalMs);
+    html += F("'/>");
+
+    html += F("<button type='submit'>Save MQTT Settings</button></form>"
+              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Main menu</button></form>"
+              "</div></body></html>");
+
+    manager_.server->send(200, "text/html", html);
+}
+
+void WiFiPortalService::handleMqttPost()
+{
+    if (!manager_.server)
+        return;
+
+    auto &server = *manager_.server;
+    String host = server.arg("mqttHost");
+    String portStr = server.arg("mqttPort");
+    String client = server.arg("mqttClient");
+    String user = server.arg("mqttUser");
+    String pass = server.arg("mqttPass");
+    String topic = server.arg("mqttTopic");
+    String fullTopic = server.arg("mqttFullTopic");
+    String intervalStr = server.arg("readInterval");
+
+    host.trim();
+    client.trim();
+    user.trim();
+    pass.trim();
+    topic.trim();
+    fullTopic.trim();
+    intervalStr.trim();
+
+    bool changed = false;
+    changed |= UpdateStringIfChanged(config_.mqttHost, host.c_str());
+    changed |= UpdateStringIfChanged(config_.mqttClient, client.c_str());
+    changed |= UpdateStringIfChanged(config_.mqttUser, user.c_str());
+    changed |= UpdateStringIfChanged(config_.mqttPassword, pass.c_str());
+    changed |= UpdateStringIfChanged(config_.mqttTopic, topic.c_str());
+    changed |= UpdateStringIfChanged(config_.mqttFullTopic, fullTopic.c_str());
+
+    uint32_t parsedPort = strtoul(portStr.c_str(), nullptr, 10);
+    if (parsedPort == 0 || parsedPort > 65535)
+        parsedPort = config_.mqttPort;
+    if (config_.mqttPort != parsedPort)
+    {
+        config_.mqttPort = static_cast<uint16_t>(parsedPort);
+        changed = true;
+    }
+
+    uint32_t newInterval = strtoul(intervalStr.c_str(), nullptr, 10);
+    if (newInterval < kMinReadIntervalMs)
+        newInterval = kMinReadIntervalMs;
+    if (config_.readIntervalMs != newInterval)
+    {
+        config_.readIntervalMs = newInterval;
+        changed = true;
+    }
+
+    String message;
+    if (changed)
+    {
+        if (store_.save(config_))
+        {
+            log_.println("MQTT configuration updated via portal.");
+            led_.clearFault(FaultCode::NvsWriteFailure);
+            pendingReconnect_ = true;
+            lastReconnectAttemptMs_ = 0;
+            hasLoggedIp_ = false;
+            message = F("Settings saved. The device will reconnect using the new MQTT configuration.");
+        }
+        else
+        {
+            led_.activateFault(FaultCode::NvsWriteFailure);
+            message = F("Failed to save settings to NVS.");
+        }
+    }
+    else
+    {
+        message = F("No changes detected.");
+    }
+
+    sendMqttForm(message);
+}
+
+String WiFiPortalService::htmlEscape(const String &value)
+{
+    String out;
+    out.reserve(value.length());
+    for (size_t i = 0; i < value.length(); ++i)
+    {
+        char c = value[i];
+        switch (c)
+        {
+        case '&':
+            out += F("&amp;");
+            break;
+        case '<':
+            out += F("&lt;");
+            break;
+        case '>':
+            out += F("&gt;");
+            break;
+        case '"':
+            out += F("&quot;");
+            break;
+        case '\'':
+            out += F("&#39;");
+            break;
+        default:
+            out += c;
+            break;
+        }
+    }
+    return out;
 }
