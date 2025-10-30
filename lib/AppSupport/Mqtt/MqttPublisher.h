@@ -19,6 +19,7 @@ public:
     void loop();
     void onCommandResult(DeviceManager::CommandType type, const String &value);
     void setPublishCallback(std::function<void(bool)> cb) { publishCallback_ = std::move(cb); }
+    void setBridgeVersion(const String &version);
 
 private:
     bool ensureConnected();
@@ -32,7 +33,9 @@ private:
                                 const char *deviceClass,
                                 const char *stateClass,
                                 const char *payloadOn,
-                                const char *payloadOff);
+                                const char *payloadOff,
+                                const char *entityCategory = nullptr,
+                                const char *leafOverride = nullptr);
     String buildTopic(const String &leaf) const;
     String commandLeaf(DeviceManager::CommandType type) const;
     String makeSlug(const String &raw) const;
@@ -44,6 +47,8 @@ private:
     String deviceModelForDiscovery() const;
     void markAllPending();
     void republishRetained();
+    bool publishVersionDiscovery();
+    bool publishBridgeVersion();
     struct RetainedState
     {
         DeviceManager::CommandType type;
@@ -86,4 +91,7 @@ private:
     static const std::array<DeviceManager::CommandType, 15> kRetainedTypes_;
     std::array<RetainedState, kRetainedTypes_.size()> retainedStates_;
     LedController &led_;
+    String bridgeVersion_;
+    bool bridgeVersionDirty_ = true;
+    bool versionDiscoveryDone_ = false;
 };

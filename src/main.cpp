@@ -12,6 +12,8 @@
 #include "Led/LedController.h"
 #include "Mqtt/MqttPublisher.h"
 
+constexpr char kBridgeFirmwareVersion[] = "1.0.0";
+
 // =========================
 // Board / LED definitions
 // =========================
@@ -209,6 +211,7 @@ void setup()
 
     portalService.begin();
     mqttPublisher.begin();
+    mqttPublisher.setBridgeVersion(kBridgeFirmwareVersion);
     mqttPublisher.setPublishCallback([&](bool success) {
         if (success)
         {
