@@ -61,7 +61,7 @@ Raw USB logging is invaluable when reverse-engineering RadPro responses; disable
 `WiFiPortalService` keeps the setup UI reachable at each stage:
 
 - **Captive portal:** if auto-connect fails (or no credentials exist) an AP named `<deviceName> Setup` opens until valid settings are entered.
-- **Station portal:** once connected, the same UI is hosted at `http://<device-ip>/`. The built-in **Configure WiFi** page handles SSID/password and the device name (with a “Main menu” button to return), while a separate **Configure MQTT** page exposes the broker host/port, credentials, base topics, and polling interval. A `Restart Device` button (served at `/restart`) lets you reboot the ESP remotely from the main menu.
+- **Station portal:** once connected, the same UI is hosted at `http://<device-ip>/`. The built-in **Configure WiFi** page handles SSID/password and the device name (with a “Main menu” button to return). Dedicated pages let you manage **Configure MQTT** and **Configure OpenSenseMap** settings, complete with enable/disable toggles, broker/sensor details, and the RadPro polling interval. A `Restart Device` button (served at `/restart`) lets you reboot the ESP remotely from the main menu.
 - **Editable fields:** Wi-Fi SSID/password plus device name on the Wi-Fi page; MQTT host/port/client/user/password, base topic, full topic pattern, and RadPro polling interval on the MQTT page. Values are trimmed; `readIntervalMs` is clamped to a minimum of 500 ms.
 - **Persistence:** saving the form flushes settings to NVS and reboots the station interface so new credentials take effect immediately.
 - **Status logging:** after `Starting RadPro WiFi Bridge…` the service announces SSID, IP, gateway, mask, RSSI, and disconnect reasons.
@@ -73,6 +73,7 @@ Raw USB logging is invaluable when reverse-engineering RadPro responses; disable
 The `MqttPublisher` bridges every RadPro response to MQTT when a broker is configured:
 
 - **Configuration fields:** host, port (default 1883), client ID suffix, username/password, topic template, and full topic template (all editable from the portal).
+- **Enablement:** MQTT is disabled by default; open the portal’s **Configure MQTT** page and tick *Enable MQTT publishing* once your broker details are set.
 - **Topic templating:** `%deviceid%` (lowercase slug of the reported device ID) and `%DeviceId%` are replaced in the base topic. `%prefix%` and `%topic%` are substituted inside the full topic template. Defaults yield `stat/radpro/<deviceid>/<leaf>`.
 - **Published leaves:** `bridgeVersion`, `deviceId`, `devicePower`, `deviceBatteryVoltage`, `deviceBatteryPercent`, `deviceTime`, `deviceTimeZone`, `tubeSensitivity`, `tubeLifetime`, `tubePulseCount`, `tubeRate`, `tubeDoseRate`, `tubeDeadTime`, `tubeDeadTimeCompensation`, `tubeHvFrequency`, `tubeHvDutyCycle`, plus `randomData` and `dataLog` when requested.
 - **Bridge metadata:** the `bridgeVersion` topic is retained and surfaced as a diagnostic sensor so Home Assistant shows which RadPro WiFi Bridge firmware is running.
@@ -82,6 +83,28 @@ The `MqttPublisher` bridges every RadPro response to MQTT when a broker is confi
 As soon as the bridge learns the RadPro device ID it emits Home Assistant MQTT Discovery payloads under `homeassistant/<component>/…/config`, creating sensors such as tube rate, pulse count, battery voltage/percentage, and power state automatically. Entities update in place whenever you rename the device in the portal.
 
 > **Home Assistant / Mosquitto tip:** the default add-on configuration disables anonymous clients. Either enable anonymous mode (`anonymous: true`) or create a dedicated MQTT user and enter those credentials in the portal. A `MQTT connect failed: 5` log means the broker rejected the connection as unauthorised.
+
+---
+
+## OpenSenseMap Publishing
+
+If you use [OpenSenseMap](https://opensensemap.org/) you can push RadPro telemetry directly to your box:
+
+- Toggle publishing on from the portal’s **Configure OpenSenseMap** page (disabled by default).
+- Enter your **Box ID**, **API key**, and the sensor IDs that should receive tube rate (cpm) and dose rate (µSv/h).
+- The bridge sends HTTPS requests to `api.opensensemap.org` as new readings arrive. Each value is queued and retried with a short back-off whenever Wi-Fi or the API is temporarily unavailable.
+- Tube rate and dose rate are uploaded together in a single HTTPS request (about every 4 s) to stay under openSenseMap’s API rate limits—both sensors must have valid IDs for data to appear.
+- Creating a box: pick any station name, choose the exposure that matches your installation (indoor/outdoor/mobile), set the location on the map, then select **Manual configuration** under *Hardware* and add two sensors (tube rate in cpm, dose rate in µSv/h). Save the box to get the generated sensor IDs.
+- Manual sensor entries:
+- **Tube Rate** - icon: radiation symbol, phenomenon "Tube Rate (cpm) - RadPro FS-600 Geiger", unit `cpm`, type "RadPro FS-600 Geiger".
+- **Dose Rate** - icon: radiation symbol, phenomenon "Dose Rate (uSv/h) - RadPro FS-600 Dose", unit `µSv/h`, type "RadPro FS-600 Dose".
+  - After saving you’ll see the summary screen with your **senseBox ID**, **Access Token**, and the generated sensor IDs (e.g. `69040c394b6e60008c9a770` for tube rate, `69040c394b6e60008c9a771` for dose rate). Copy the relevant IDs into the bridge’s OpenSenseMap settings.
+- Need the sensor IDs?
+  - In the OpenSenseMap dashboard: log in → *My senseBoxes* → pick your RadPro box → the **Equipment** tab lists each sensor with its `Sensor ID`.
+  - From the public box page: use **Download data → senseBox JSON** and copy the `_id` values from the `sensors` array (match by `title`).
+  - Through the API: `GET https://api.opensensemap.org/boxes/<box-id>` returns the same JSON; the `_id` fields under `sensors` are the IDs to paste into the portal.
+
+Leave the feature disabled if you don’t use OpenSenseMap—no requests will be made until you supply IDs and flip the toggle on.
 
 ---
 
@@ -167,7 +190,7 @@ Retries, back-off, and duplicate suppression are handled inside `DeviceManager`.
 
 ## Roadmap
 
-- Push CPM / pulse counts to cloud services such as **openSenseMap**.
+- Push CPM / pulse counts to cloud services such as **OpenSenseMap**.
 - Add configurable reporting thresholds / batching beyond the global interval.
 - Integrate OTA firmware updates.
 
