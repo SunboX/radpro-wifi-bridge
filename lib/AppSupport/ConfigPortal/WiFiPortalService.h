@@ -28,7 +28,9 @@ private:
     void logStatus();
     void attemptReconnect();
     void sendMqttForm(const String &message = String());
+    void sendOpenSenseForm(const String &message = String());
     void handleMqttPost();
+    void handleOpenSensePost();
     static String htmlEscape(const String &value);
 
     AppConfig &config_;
