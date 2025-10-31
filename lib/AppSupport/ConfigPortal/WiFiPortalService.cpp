@@ -228,6 +228,7 @@ void WiFiPortalService::attachParameters()
 
     manager_.setCustomMenuHTML("<div style='margin:-5px;display:flex;flex-direction:column;gap:20px;'>"
                                "<form action='/mqtt' method='get'><button class='btn btn-primary' type='submit'>Configure MQTT</button></form>"
+                               "<form action='/osem' method='get'><button class='btn btn-primary' type='submit'>Configure OpenSenseMap</button></form>"
                                "<form action='/restart' method='get'><button class='btn btn-primary' type='submit'>Restart Device</button></form>"
                                "</div>");
 
@@ -241,6 +242,14 @@ void WiFiPortalService::attachParameters()
 
         manager_.server->on("/mqtt", HTTP_POST, [this]() {
             handleMqttPost();
+        });
+
+        manager_.server->on("/osem", HTTP_GET, [this]() {
+            sendOpenSenseForm();
+        });
+
+        manager_.server->on("/osem", HTTP_POST, [this]() {
+            handleOpenSensePost();
         });
 
         manager_.server->on("/restart", HTTP_GET, [this]() {
@@ -537,7 +546,15 @@ void WiFiPortalService::sendMqttForm(const String &message)
 
     String html;
     html.reserve(2048);
-    html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/><title>Configure MQTT</title><style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}label{font-weight:bold;}input,select{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;}button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}button:hover{background:#1976D2;}a{color:#03A9F4;} .wrap{display:inline-block;min-width:260px;max-width:500px;width:100%;text-align:left;} p.notice{margin:0 0 12px 0;color:#8bc34a;}</style></head><body class='invert'><div class='wrap'><h1>MQTT Settings</h1>");
+    html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>"
+              "<title>Configure MQTT</title>"
+              "<style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}"
+              "h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}"
+              "label{font-weight:bold;}input,select{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;}"
+              "button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}"
+              "button:hover{background:#1976D2;}a{color:#03A9F4;} .wrap{display:inline-block;min-width:260px;max-width:500px;width:100%;text-align:left;}"
+              "p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;}"
+              ".toggle input{width:auto;}</style></head><body class='invert'><div class='wrap'><h1>MQTT Settings</h1>");
 
     if (message.length())
     {
@@ -547,6 +564,11 @@ void WiFiPortalService::sendMqttForm(const String &message)
     }
 
     html += F("<form method='POST' action='/mqtt'>");
+
+    html += F("<label class='toggle'><input id='mqttEnabled' name='mqttEnabled' type='checkbox' value='1'");
+    if (config_.mqttEnabled)
+        html += F(" checked");
+    html += F("> Enable MQTT publishing</label>");
 
     html += F("<label for='mqttHost'>Host</label><input id='mqttHost' name='mqttHost' type='text' style='box-sizing:border-box;' value='");
     html += htmlEscape(config_.mqttHost);
@@ -603,6 +625,7 @@ void WiFiPortalService::handleMqttPost()
     String topic = server.arg("mqttTopic");
     String fullTopic = server.arg("mqttFullTopic");
     String intervalStr = server.arg("readInterval");
+    bool enabled = server.hasArg("mqttEnabled") && server.arg("mqttEnabled") == "1";
 
     host.trim();
     client.trim();
@@ -619,6 +642,12 @@ void WiFiPortalService::handleMqttPost()
     changed |= UpdateStringIfChanged(config_.mqttPassword, pass.c_str());
     changed |= UpdateStringIfChanged(config_.mqttTopic, topic.c_str());
     changed |= UpdateStringIfChanged(config_.mqttFullTopic, fullTopic.c_str());
+
+    if (config_.mqttEnabled != enabled)
+    {
+        config_.mqttEnabled = enabled;
+        changed = true;
+    }
 
     uint32_t parsedPort = strtoul(portStr.c_str(), nullptr, 10);
     if (parsedPort == 0 || parsedPort > 65535)
@@ -662,6 +691,110 @@ void WiFiPortalService::handleMqttPost()
     }
 
     sendMqttForm(message);
+}
+
+void WiFiPortalService::sendOpenSenseForm(const String &message)
+{
+    if (!manager_.server)
+        return;
+
+    String html;
+    html.reserve(2048);
+    html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>"
+              "<title>Configure OpenSenseMap</title>"
+              "<style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}"
+              "h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}"
+              "label{font-weight:bold;}input{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;}"
+              "button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}"
+              "button:hover{background:#1976D2;} .wrap{display:inline-block;min-width:260px;max-width:500px;width:100%;text-align:left;}"
+              "p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;}"
+              ".toggle input{width:auto;}</style></head><body class='invert'><div class='wrap'><h1>OpenSenseMap Settings</h1>");
+
+    if (message.length())
+    {
+        html += F("<p class='notice'>");
+        html += message;
+        html += F("</p>");
+    }
+
+    html += F("<form method='POST' action='/osem'>");
+    html += F("<label class='toggle'><input id='osemEnabled' name='osemEnabled' type='checkbox' value='1'");
+    if (config_.openSenseMapEnabled)
+        html += F(" checked");
+    html += F("> Enable OpenSenseMap publishing</label>");
+
+    html += F("<label for='osemBoxId'>Box ID</label><input id='osemBoxId' name='osemBoxId' type='text' value='");
+    html += htmlEscape(config_.openSenseBoxId);
+    html += F("'/>");
+
+    html += F("<label for='osemApiKey'>Access Token</label><input id='osemApiKey' name='osemApiKey' type='text' value='");
+    html += htmlEscape(config_.openSenseApiKey);
+    html += F("'/>");
+
+    html += F("<label for='osemRate'>Tube Rate (cpm) - Geiger Sensor ID</label><input id='osemRate' name='osemRate' type='text' value='");
+    html += htmlEscape(config_.openSenseTubeRateSensorId);
+    html += F("'/>");
+
+    html += F("<label for='osemDose'>Dose Rate (uSv/h) - Dose Sensor ID</label><input id='osemDose' name='osemDose' type='text' value='");
+    html += htmlEscape(config_.openSenseDoseRateSensorId);
+    html += F("'/>");
+
+    html += F("<button type='submit'>Save OpenSenseMap Settings</button></form>"
+              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Main menu</button></form>"
+              "</div></body></html>");
+
+    manager_.server->send(200, "text/html", html);
+}
+
+void WiFiPortalService::handleOpenSensePost()
+{
+    if (!manager_.server)
+        return;
+
+    auto &server = *manager_.server;
+    bool enabled = server.hasArg("osemEnabled") && server.arg("osemEnabled") == "1";
+    String boxId = server.arg("osemBoxId");
+    String apiKey = server.arg("osemApiKey");
+    String rateId = server.arg("osemRate");
+    String doseId = server.arg("osemDose");
+
+    boxId.trim();
+    apiKey.trim();
+    rateId.trim();
+    doseId.trim();
+
+    bool changed = false;
+    if (config_.openSenseMapEnabled != enabled)
+    {
+        config_.openSenseMapEnabled = enabled;
+        changed = true;
+    }
+    changed |= UpdateStringIfChanged(config_.openSenseBoxId, boxId.c_str());
+    changed |= UpdateStringIfChanged(config_.openSenseApiKey, apiKey.c_str());
+    changed |= UpdateStringIfChanged(config_.openSenseTubeRateSensorId, rateId.c_str());
+    changed |= UpdateStringIfChanged(config_.openSenseDoseRateSensorId, doseId.c_str());
+
+    String message;
+    if (changed)
+    {
+        if (store_.save(config_))
+        {
+            log_.println("OpenSenseMap configuration updated via portal.");
+            led_.clearFault(FaultCode::NvsWriteFailure);
+            message = F("OpenSenseMap settings saved.");
+        }
+        else
+        {
+            led_.activateFault(FaultCode::NvsWriteFailure);
+            message = F("Failed to save settings to NVS.");
+        }
+    }
+    else
+    {
+        message = F("No changes detected.");
+    }
+
+    sendOpenSenseForm(message);
 }
 
 String WiFiPortalService::htmlEscape(const String &value)

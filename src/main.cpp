@@ -11,8 +11,9 @@
 #include "ConfigPortal/WiFiPortalService.h"
 #include "Led/LedController.h"
 #include "Mqtt/MqttPublisher.h"
+#include "OpenSenseMap/OpenSenseMapPublisher.h"
 
-constexpr char kBridgeFirmwareVersion[] = "1.0.0";
+constexpr char kBridgeFirmwareVersion[] = "1.1.0";
 
 // =========================
 // Board / LED definitions
@@ -91,6 +92,7 @@ static AppConfig appConfig;
 static AppConfigStore configStore;
 static WiFiPortalService portalService(appConfig, configStore, DBG, ledController);
 static MqttPublisher mqttPublisher(appConfig, DBG, ledController);
+static OpenSenseMapPublisher openSenseMapPublisher(appConfig, DBG);
 static bool deviceReady = false;
 static bool deviceError = false;
 static bool mqttError = false;
@@ -177,6 +179,7 @@ void setup()
         ledController.clearFault(FaultCode::CommandTimeout);
 
         mqttPublisher.onCommandResult(type, value);
+        openSenseMapPublisher.onCommandResult(type, value);
     });
     device_manager.begin(0x1A86, 0x7523);
 
@@ -212,6 +215,7 @@ void setup()
     portalService.begin();
     mqttPublisher.begin();
     mqttPublisher.setBridgeVersion(kBridgeFirmwareVersion);
+    openSenseMapPublisher.begin();
     mqttPublisher.setPublishCallback([&](bool success) {
         if (success)
         {
@@ -237,6 +241,7 @@ void setup()
         portalService.connect(true);
     }
     mqttPublisher.updateConfig();
+    openSenseMapPublisher.updateConfig();
     portalService.maintain();
     updateLedStatus();
     ledController.update();
@@ -259,6 +264,8 @@ void loop()
     portalService.process();
     mqttPublisher.updateConfig();
     mqttPublisher.loop();
+    openSenseMapPublisher.updateConfig();
+    openSenseMapPublisher.loop();
     if (!usb.isConnected())
         deviceReady = false;
     updateLedStatus();
