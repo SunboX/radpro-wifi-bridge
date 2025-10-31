@@ -13,10 +13,14 @@ constexpr size_t kMqttTopicParamLen = 64;
 constexpr size_t kMqttFullTopicParamLen = 64;
 constexpr size_t kReadIntervalParamLen = 12;
 constexpr size_t kMqttPortParamLen = 6;
+constexpr size_t kOsemBoxIdLen = 64;
+constexpr size_t kOsemApiKeyLen = 80;
+constexpr size_t kOsemSensorIdLen = 64;
 
 struct AppConfig
 {
     String deviceName = "RadPro WiFi Bridge";
+    bool mqttEnabled = false;
     String mqttHost;
     uint16_t mqttPort = 1883;
     String mqttClient = "radpro-bridge";
@@ -25,6 +29,11 @@ struct AppConfig
     String mqttTopic = "radpro/%deviceid%";
     String mqttFullTopic = "%prefix%/%topic%/";
     uint32_t readIntervalMs = 1000;
+    bool openSenseMapEnabled = false;
+    String openSenseBoxId;
+    String openSenseApiKey;
+    String openSenseTubeRateSensorId;
+    String openSenseDoseRateSensorId;
 };
 
 inline bool UpdateStringIfChanged(String &target, const char *value)

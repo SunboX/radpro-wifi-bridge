@@ -17,6 +17,8 @@ bool AppConfigStore::load(AppConfig &cfg)
     cfg.deviceName = prefs_.getString("devName", cfg.deviceName);
     cfg.deviceName.trim();
 
+    cfg.mqttEnabled = prefs_.getBool("mqttEnabled", cfg.mqttEnabled);
+
     cfg.mqttHost = prefs_.getString("mqttHost", cfg.mqttHost);
     cfg.mqttHost.trim();
 
@@ -37,6 +39,17 @@ bool AppConfigStore::load(AppConfig &cfg)
     cfg.mqttFullTopic.trim();
 
     cfg.readIntervalMs = prefs_.getUInt("readInterval", cfg.readIntervalMs);
+
+    cfg.openSenseMapEnabled = prefs_.getBool("osemEnabled", cfg.openSenseMapEnabled);
+    cfg.openSenseBoxId = prefs_.getString("osemBoxId", cfg.openSenseBoxId);
+    cfg.openSenseBoxId.trim();
+    cfg.openSenseApiKey = prefs_.getString("osemApiKey", cfg.openSenseApiKey);
+    cfg.openSenseApiKey.trim();
+    cfg.openSenseTubeRateSensorId = prefs_.getString("osemRateId", cfg.openSenseTubeRateSensorId);
+    cfg.openSenseTubeRateSensorId.trim();
+    cfg.openSenseDoseRateSensorId = prefs_.getString("osemDoseId", cfg.openSenseDoseRateSensorId);
+    cfg.openSenseDoseRateSensorId.trim();
+
     prefs_.end();
 
     if (cfg.readIntervalMs < kMinReadIntervalMs)
@@ -53,6 +66,7 @@ bool AppConfigStore::save(const AppConfig &cfg)
     }
 
     prefs_.putString("devName", cfg.deviceName);
+    prefs_.putBool("mqttEnabled", cfg.mqttEnabled);
     prefs_.putString("mqttHost", cfg.mqttHost);
     prefs_.putUShort("mqttPort", cfg.mqttPort);
     prefs_.putString("mqttClient", cfg.mqttClient);
@@ -61,6 +75,11 @@ bool AppConfigStore::save(const AppConfig &cfg)
     prefs_.putString("mqttTopic", cfg.mqttTopic);
     prefs_.putString("mqttFullTopic", cfg.mqttFullTopic);
     prefs_.putUInt("readInterval", cfg.readIntervalMs);
+    prefs_.putBool("osemEnabled", cfg.openSenseMapEnabled);
+    prefs_.putString("osemBoxId", cfg.openSenseBoxId);
+    prefs_.putString("osemApiKey", cfg.openSenseApiKey);
+    prefs_.putString("osemRateId", cfg.openSenseTubeRateSensorId);
+    prefs_.putString("osemDoseId", cfg.openSenseDoseRateSensorId);
 
     prefs_.end();
     return true;
