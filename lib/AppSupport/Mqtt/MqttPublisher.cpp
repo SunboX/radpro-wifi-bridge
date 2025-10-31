@@ -49,6 +49,25 @@ void MqttPublisher::updateConfig()
     host.trim();
     uint16_t port = config_.mqttPort ? config_.mqttPort : 1883;
 
+    if (!config_.mqttEnabled || host.isEmpty())
+    {
+        if (mqtt_client_.connected())
+            mqtt_client_.disconnect();
+        if (configValid_)
+        {
+            log_.println("MQTT disabled; publisher idle.");
+            configValid_ = false;
+        }
+        currentHost_ = host;
+        currentPort_ = port;
+        currentUser_ = config_.mqttUser;
+        currentPassword_ = config_.mqttPassword;
+        clientIdBase_ = config_.mqttClient;
+        topicTemplate_ = config_.mqttTopic;
+        fullTopicTemplate_ = config_.mqttFullTopic;
+        return;
+    }
+
     if (currentDeviceName_ != config_.deviceName)
     {
         currentDeviceName_ = config_.deviceName;
@@ -113,6 +132,9 @@ void MqttPublisher::updateConfig()
 
 void MqttPublisher::loop()
 {
+    if (!config_.mqttEnabled)
+        return;
+
     if (!configValid_)
         return;
 
@@ -131,6 +153,9 @@ void MqttPublisher::loop()
 
 void MqttPublisher::onCommandResult(DeviceManager::CommandType type, const String &value)
 {
+    if (!config_.mqttEnabled)
+        return;
+
     switch (type)
     {
     case DeviceManager::CommandType::DeviceModel:
@@ -410,6 +435,13 @@ String MqttPublisher::sanitizedDeviceId() const
 
 bool MqttPublisher::publish(const String &leaf, const String &payload, bool retain)
 {
+    if (!config_.mqttEnabled)
+    {
+        if (publishCallback_)
+            publishCallback_(true);
+        return true;
+    }
+
     if (!leaf.length())
     {
         if (publishCallback_)
