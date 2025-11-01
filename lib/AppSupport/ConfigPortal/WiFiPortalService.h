@@ -29,9 +29,11 @@ private:
     void attemptReconnect();
     void sendMqttForm(const String &message = String());
     void sendOpenSenseForm(const String &message = String());
+    void sendRadmonForm(const String &message = String());
     void sendGmcMapForm(const String &message = String());
     void handleMqttPost();
     void handleOpenSensePost();
+    void handleRadmonPost();
     void handleGmcMapPost();
     static String htmlEscape(const String &value);
 
@@ -52,6 +54,8 @@ private:
     WiFiManagerParameter paramReadInterval_;
     WiFiManagerParameter paramGmcAccount_;
     WiFiManagerParameter paramGmcDevice_;
+    WiFiManagerParameter paramRadmonUser_;
+    WiFiManagerParameter paramRadmonPassword_;
     bool paramsAttached_;
     wl_status_t lastStatus_;
     WiFiEventId_t wifiEventId_;
