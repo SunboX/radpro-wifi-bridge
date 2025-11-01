@@ -50,6 +50,12 @@ bool AppConfigStore::load(AppConfig &cfg)
     cfg.openSenseDoseRateSensorId = prefs_.getString("osemDoseId", cfg.openSenseDoseRateSensorId);
     cfg.openSenseDoseRateSensorId.trim();
 
+    cfg.gmcMapEnabled = prefs_.getBool("gmcEnabled", cfg.gmcMapEnabled);
+    cfg.gmcMapAccountId = prefs_.getString("gmcAccount", cfg.gmcMapAccountId);
+    cfg.gmcMapAccountId.trim();
+    cfg.gmcMapDeviceId = prefs_.getString("gmcDevice", cfg.gmcMapDeviceId);
+    cfg.gmcMapDeviceId.trim();
+
     prefs_.end();
 
     if (cfg.readIntervalMs < kMinReadIntervalMs)
@@ -80,6 +86,9 @@ bool AppConfigStore::save(const AppConfig &cfg)
     prefs_.putString("osemApiKey", cfg.openSenseApiKey);
     prefs_.putString("osemRateId", cfg.openSenseTubeRateSensorId);
     prefs_.putString("osemDoseId", cfg.openSenseDoseRateSensorId);
+    prefs_.putBool("gmcEnabled", cfg.gmcMapEnabled);
+    prefs_.putString("gmcAccount", cfg.gmcMapAccountId);
+    prefs_.putString("gmcDevice", cfg.gmcMapDeviceId);
 
     prefs_.end();
     return true;
