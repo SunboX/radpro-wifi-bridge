@@ -55,6 +55,10 @@ bool AppConfigStore::load(AppConfig &cfg)
     cfg.gmcMapAccountId.trim();
     cfg.gmcMapDeviceId = prefs_.getString("gmcDevice", cfg.gmcMapDeviceId);
     cfg.gmcMapDeviceId.trim();
+    cfg.radmonEnabled = prefs_.getBool("radmonEnabled", cfg.radmonEnabled);
+    cfg.radmonUser = prefs_.getString("radmonUser", cfg.radmonUser);
+    cfg.radmonUser.trim();
+    cfg.radmonPassword = prefs_.getString("radmonPass", cfg.radmonPassword);
 
     prefs_.end();
 
@@ -89,6 +93,9 @@ bool AppConfigStore::save(const AppConfig &cfg)
     prefs_.putBool("gmcEnabled", cfg.gmcMapEnabled);
     prefs_.putString("gmcAccount", cfg.gmcMapAccountId);
     prefs_.putString("gmcDevice", cfg.gmcMapDeviceId);
+    prefs_.putBool("radmonEnabled", cfg.radmonEnabled);
+    prefs_.putString("radmonUser", cfg.radmonUser);
+    prefs_.putString("radmonPass", cfg.radmonPassword);
 
     prefs_.end();
     return true;
