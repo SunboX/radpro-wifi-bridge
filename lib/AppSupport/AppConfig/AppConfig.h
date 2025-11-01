@@ -34,6 +34,9 @@ struct AppConfig
     String openSenseApiKey;
     String openSenseTubeRateSensorId;
     String openSenseDoseRateSensorId;
+    bool gmcMapEnabled = false;
+    String gmcMapAccountId;
+    String gmcMapDeviceId;
 };
 
 inline bool UpdateStringIfChanged(String &target, const char *value)

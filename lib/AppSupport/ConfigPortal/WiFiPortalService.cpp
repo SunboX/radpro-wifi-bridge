@@ -21,6 +21,8 @@ WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, P
       paramMqttTopic_("mqttTopic", "MQTT Topic", "", kMqttTopicParamLen),
       paramMqttFullTopic_("mqttFullTopic", "MQTT Full Topic", "", kMqttFullTopicParamLen),
       paramReadInterval_("readInterval", "Rad Pro Read Interval (ms)", "", kReadIntervalParamLen),
+      paramGmcAccount_("gmcAccount", "GMCMap Account ID", "", 16),
+      paramGmcDevice_("gmcDevice", "GMCMap Device ID", "", 24),
       paramsAttached_(false),
       lastStatus_(WL_NO_SHIELD),
       wifiEventId_(0),
@@ -216,6 +218,9 @@ void WiFiPortalService::refreshParameters()
     String intervalStr = String(config_.readIntervalMs);
     paramReadInterval_.setValue(intervalStr.c_str(), kReadIntervalParamLen);
 
+    paramGmcAccount_.setValue(config_.gmcMapAccountId.c_str(), 16);
+    paramGmcDevice_.setValue(config_.gmcMapDeviceId.c_str(), 24);
+
     attachParameters();
 }
 
@@ -229,6 +234,7 @@ void WiFiPortalService::attachParameters()
     manager_.setCustomMenuHTML("<div style='margin:-5px;display:flex;flex-direction:column;gap:20px;'>"
                                "<form action='/mqtt' method='get'><button class='btn btn-primary' type='submit'>Configure MQTT</button></form>"
                                "<form action='/osem' method='get'><button class='btn btn-primary' type='submit'>Configure OpenSenseMap</button></form>"
+                               "<form action='/gmc' method='get'><button class='btn btn-primary' type='submit'>Configure GMCMap</button></form>"
                                "<form action='/restart' method='get'><button class='btn btn-primary' type='submit'>Restart Device</button></form>"
                                "</div>");
 
@@ -250,6 +256,14 @@ void WiFiPortalService::attachParameters()
 
         manager_.server->on("/osem", HTTP_POST, [this]() {
             handleOpenSensePost();
+        });
+
+        manager_.server->on("/gmc", HTTP_GET, [this]() {
+            sendGmcMapForm();
+        });
+
+        manager_.server->on("/gmc", HTTP_POST, [this]() {
+            handleGmcMapPost();
         });
 
         manager_.server->on("/restart", HTTP_GET, [this]() {
@@ -795,6 +809,93 @@ void WiFiPortalService::handleOpenSensePost()
     }
 
     sendOpenSenseForm(message);
+}
+
+void WiFiPortalService::sendGmcMapForm(const String &message)
+{
+    if (!manager_.server)
+        return;
+
+    String html;
+    html.reserve(2048);
+    html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>");
+    html += F("<title>Configure GMCMap</title><style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}");
+    html += F("h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}label{font-weight:bold;}input{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;}");
+    html += F("button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}button:hover{background:#1976D2;}");
+    html += F(".wrap{display:inline-block;min-width:260px;max-width:500px;width:100%;text-align:left;}p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;} .toggle input{width:auto;}</style></head><body class='invert'><div class='wrap'><h1>GMCMap Settings</h1>");
+
+    if (message.length())
+    {
+        html += F("<p class='notice'>");
+        html += message;
+        html += F("</p>");
+    }
+
+    html += F("<form method='POST' action='/gmc'>");
+    html += F("<label class='toggle'><input id='gmcEnabled' name='gmcEnabled' type='checkbox' value='1'");
+    if (config_.gmcMapEnabled)
+        html += F(" checked");
+    html += F("> Enable GMCMap publishing</label>");
+
+    html += F("<label for='gmcAccount'>Account ID</label><input id='gmcAccount' name='gmcAccount' type='text' value='");
+    html += htmlEscape(config_.gmcMapAccountId);
+    html += F("'/>");
+
+    html += F("<label for='gmcDevice'>Device ID</label><input id='gmcDevice' name='gmcDevice' type='text' value='");
+    html += htmlEscape(config_.gmcMapDeviceId);
+    html += F("'/>");
+
+    html += F("<button type='submit'>Save GMCMap Settings</button></form>"
+              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Main menu</button></form>"
+              "</div></body></html>");
+
+    manager_.server->send(200, "text/html", html);
+}
+
+void WiFiPortalService::handleGmcMapPost()
+{
+    if (!manager_.server)
+        return;
+
+    auto &server = *manager_.server;
+    bool enabled = server.hasArg("gmcEnabled") && server.arg("gmcEnabled") == "1";
+    String account = server.arg("gmcAccount");
+    String device = server.arg("gmcDevice");
+
+    account.trim();
+    device.trim();
+
+    bool changed = false;
+    if (config_.gmcMapEnabled != enabled)
+    {
+        config_.gmcMapEnabled = enabled;
+        changed = true;
+    }
+    changed |= UpdateStringIfChanged(config_.gmcMapAccountId, account.c_str());
+    changed |= UpdateStringIfChanged(config_.gmcMapDeviceId, device.c_str());
+
+    String message;
+    if (changed)
+    {
+        if (store_.save(config_))
+        {
+            log_.println("GMCMap configuration saved to NVS.");
+            led_.clearFault(FaultCode::NvsWriteFailure);
+            message = F("GMCMap settings saved.");
+        }
+        else
+        {
+            log_.println("Preferences write failed; GMCMap configuration not saved.");
+            led_.activateFault(FaultCode::NvsWriteFailure);
+            message = F("Failed to save settings.");
+        }
+    }
+    else
+    {
+        message = F("No changes detected.");
+    }
+
+    sendGmcMapForm(message);
 }
 
 String WiFiPortalService::htmlEscape(const String &value)
