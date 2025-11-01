@@ -16,6 +16,8 @@ constexpr size_t kMqttPortParamLen = 6;
 constexpr size_t kOsemBoxIdLen = 64;
 constexpr size_t kOsemApiKeyLen = 80;
 constexpr size_t kOsemSensorIdLen = 64;
+constexpr size_t kRadmonUserLen = 48;
+constexpr size_t kRadmonPasswordLen = 48;
 
 struct AppConfig
 {
@@ -37,6 +39,9 @@ struct AppConfig
     bool gmcMapEnabled = false;
     String gmcMapAccountId;
     String gmcMapDeviceId;
+    bool radmonEnabled = false;
+    String radmonUser;
+    String radmonPassword;
 };
 
 inline bool UpdateStringIfChanged(String &target, const char *value)

@@ -23,6 +23,8 @@ WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, P
       paramReadInterval_("readInterval", "Rad Pro Read Interval (ms)", "", kReadIntervalParamLen),
       paramGmcAccount_("gmcAccount", "GMCMap Account ID", "", 16),
       paramGmcDevice_("gmcDevice", "GMCMap Device ID", "", 24),
+      paramRadmonUser_("radmonUser", "Radmon Username", "", kRadmonUserLen),
+      paramRadmonPassword_("radmonPass", "Radmon Password", "", kRadmonPasswordLen, "type=\"password\""),
       paramsAttached_(false),
       lastStatus_(WL_NO_SHIELD),
       wifiEventId_(0),
@@ -220,6 +222,8 @@ void WiFiPortalService::refreshParameters()
 
     paramGmcAccount_.setValue(config_.gmcMapAccountId.c_str(), 16);
     paramGmcDevice_.setValue(config_.gmcMapDeviceId.c_str(), 24);
+    paramRadmonUser_.setValue(config_.radmonUser.c_str(), kRadmonUserLen);
+    paramRadmonPassword_.setValue(config_.radmonPassword.c_str(), kRadmonPasswordLen);
 
     attachParameters();
 }
@@ -234,6 +238,7 @@ void WiFiPortalService::attachParameters()
     manager_.setCustomMenuHTML("<div style='margin:-5px;display:flex;flex-direction:column;gap:20px;'>"
                                "<form action='/mqtt' method='get'><button class='btn btn-primary' type='submit'>Configure MQTT</button></form>"
                                "<form action='/osem' method='get'><button class='btn btn-primary' type='submit'>Configure OpenSenseMap</button></form>"
+                               "<form action='/radmon' method='get'><button class='btn btn-primary' type='submit'>Configure Radmon</button></form>"
                                "<form action='/gmc' method='get'><button class='btn btn-primary' type='submit'>Configure GMCMap</button></form>"
                                "<form action='/restart' method='get'><button class='btn btn-primary' type='submit'>Restart Device</button></form>"
                                "</div>");
@@ -256,6 +261,14 @@ void WiFiPortalService::attachParameters()
 
         manager_.server->on("/osem", HTTP_POST, [this]() {
             handleOpenSensePost();
+        });
+
+        manager_.server->on("/radmon", HTTP_GET, [this]() {
+            sendRadmonForm();
+        });
+
+        manager_.server->on("/radmon", HTTP_POST, [this]() {
+            handleRadmonPost();
         });
 
         manager_.server->on("/gmc", HTTP_GET, [this]() {
@@ -809,6 +822,97 @@ void WiFiPortalService::handleOpenSensePost()
     }
 
     sendOpenSenseForm(message);
+}
+
+void WiFiPortalService::sendRadmonForm(const String &message)
+{
+    if (!manager_.server)
+        return;
+
+    String html;
+    html.reserve(2048);
+    html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>");
+    html += F("<title>Configure Radmon</title><style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}");
+    html += F("h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}label{font-weight:bold;}input{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;}");
+    html += F("button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}button:hover{background:#1976D2;}");
+    html += F(".wrap{display:inline-block;min-width:260px;max-width:500px;width:100%;text-align:left;}p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;} .toggle input{width:auto;}</style></head><body class='invert'><div class='wrap'><h1>Radmon Settings</h1>");
+
+    if (message.length())
+    {
+        html += F("<p class='notice'>");
+        html += message;
+        html += F("</p>");
+    }
+
+    html += F("<form method='POST' action='/radmon'>");
+    html += F("<label class='toggle'><input id='radmonEnabled' name='radmonEnabled' type='checkbox' value='1'");
+    if (config_.radmonEnabled)
+        html += F(" checked");
+    html += F("> Enable Radmon publishing</label>");
+
+    html += F("<label for='radmonUser'>Username</label><input id='radmonUser' name='radmonUser' type='text' value='");
+    html += htmlEscape(config_.radmonUser);
+    html += F("'/>");
+
+    html += F("<label for='radmonPass'>Password</label><input id='radmonPass' name='radmonPass' type='password' value='");
+    html += htmlEscape(config_.radmonPassword);
+    html += F("'/>");
+
+    html += F("<button type='submit'>Save Radmon Settings</button></form>"
+              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Main menu</button></form>"
+              "</div></body></html>");
+
+    manager_.server->send(200, "text/html", html);
+}
+
+void WiFiPortalService::handleRadmonPost()
+{
+    if (!manager_.server)
+        return;
+
+    auto &server = *manager_.server;
+    bool enabled = server.hasArg("radmonEnabled") && server.arg("radmonEnabled") == "1";
+    String user = server.arg("radmonUser");
+    String password = server.arg("radmonPass");
+
+    user.trim();
+
+    bool changed = false;
+    if (config_.radmonEnabled != enabled)
+    {
+        config_.radmonEnabled = enabled;
+        changed = true;
+    }
+    changed |= UpdateStringIfChanged(config_.radmonUser, user.c_str());
+
+    if (password != config_.radmonPassword)
+    {
+        config_.radmonPassword = password;
+        changed = true;
+    }
+
+    String message;
+    if (changed)
+    {
+        if (store_.save(config_))
+        {
+            log_.println("Radmon configuration saved to NVS.");
+            led_.clearFault(FaultCode::NvsWriteFailure);
+            message = F("Radmon settings saved.");
+        }
+        else
+        {
+            log_.println("Preferences write failed; Radmon configuration not saved.");
+            led_.activateFault(FaultCode::NvsWriteFailure);
+            message = F("Failed to save settings.");
+        }
+    }
+    else
+    {
+        message = F("No changes detected.");
+    }
+
+    sendRadmonForm(message);
 }
 
 void WiFiPortalService::sendGmcMapForm(const String &message)
