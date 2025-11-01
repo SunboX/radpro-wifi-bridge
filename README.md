@@ -108,6 +108,18 @@ Leave the feature disabled if you don’t use OpenSenseMap—no requests will be
 
 ---
 
+## GMCMap Publishing
+
+The bridge can also submit measurements to [GMCMap](https://www.gmcmap.com/):
+
+- Enable publishing from **Configure GMCMap** in the portal and provide your Account ID, Device ID, and optional device password from the GMCMap dashboard.
+- Every time a new tube rate and dose rate pair is available the bridge issues a single HTTP GET request to `www.gmcmap.com/log2.asp` with both CPM and µSv/h values (roughly once per minute to respect GMCMap’s API limits).
+- Check the serial console for `GMCMap: GET ...` entries if you need to debug submissions.
+
+Disable the feature if you don’t use GMCMap; no HTTP requests are made unless valid credentials are stored.
+
+---
+
 ## LED Feedback
 
 Base modes communicate long-running state (default brightness is gentle to avoid glare):
