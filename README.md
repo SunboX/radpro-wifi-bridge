@@ -1,5 +1,7 @@
 # RadPro WiFi Bridge (ESP32-S3)
 
+![RadPro WiFi Bridge](PXL_20251102_093211783~3.jpg)
+
 Wi-Fi/USB bridge firmware for **Bosean RadPro (FS-600) class** Geiger counters.  
 The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides status over the debug UART, keeps a heartbeat on the on-board WS2812, and mirrors telemetry to MQTT. Configuration is handled through a captive portal that stays available as a normal web UI once the device is on the network.
 
