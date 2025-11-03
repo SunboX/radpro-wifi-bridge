@@ -1,38 +1,6 @@
 #include "UsbCdcHost.h"
 #include <cstring>
-#include "usb/vcp.hpp"       // VCP service (C++)
-#include "usb/vcp_ch34x.hpp" // CH340/CH341 driver registration
-
-using namespace esp_usb; // so VCP and CH34x are found
-
-#if __has_include("usb/vcp_ch34x.hpp")
-namespace
-{
-    struct Ch34xVcpDriver : CdcAcmDevice
-    {
-        struct PidList
-        {
-            const uint16_t values[3];
-            constexpr const uint16_t *begin() const { return values; }
-            constexpr const uint16_t *end() const { return values + 3; }
-        };
-
-        static constexpr uint16_t vid = NANJING_QINHENG_MICROE_VID;
-        static const PidList pids;
-
-        Ch34xVcpDriver(uint16_t pid, const cdc_acm_host_device_config_t *dev_cfg, uint8_t interface_idx = 0)
-        {
-            const esp_err_t err = ch34x_vcp_open(pid, interface_idx, dev_cfg, &this->cdc_hdl);
-            if (err != ESP_OK)
-            {
-                throw err;
-            }
-        }
-    };
-
-    const Ch34xVcpDriver::PidList Ch34xVcpDriver::pids = {{CH340_PID, CH340_PID_1, CH341_PID}};
-} // namespace
-#endif
+#include <inttypes.h>
 
 namespace
 {
@@ -50,7 +18,9 @@ void UsbCdcHost::setDeviceCallbacks(DeviceCb on_connected, DeviceCb on_disconnec
     on_connected_ = on_connected;
     on_disconnected_ = on_disconnected;
 }
+
 void UsbCdcHost::setLineCallback(LineCb on_line) { on_line_ = on_line; }
+
 void UsbCdcHost::setVidPidFilter(uint16_t vid, uint16_t pid)
 {
     allow_vid_ = vid;
@@ -62,15 +32,6 @@ bool UsbCdcHost::begin()
     if (running_)
         return true;
     running_ = true;
-
-#if __has_include("usb/vcp.hpp")
-    static bool vcp_ch34x_registered = false;
-    if (!vcp_ch34x_registered)
-    {
-        esp_usb::VCP::register_driver<Ch34xVcpDriver>();
-        vcp_ch34x_registered = true;
-    }
-#endif
 
     tx_q_ = xQueueCreate(16, sizeof(TxItem *));
     tx_mutex_ = xSemaphoreCreateMutex();
@@ -86,6 +47,20 @@ bool UsbCdcHost::begin()
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
     {
         ESP_LOGE(TAG, "usb_host_install failed: %s", esp_err_to_name(err));
+        stop();
+        return false;
+    }
+
+    const cdc_acm_host_driver_config_t acm_cfg = {
+        .driver_task_stack_size = 4096,
+        .driver_task_priority = 20,
+        .xCoreID = tskNO_AFFINITY,
+        .new_dev_cb = nullptr,
+    };
+    err = cdc_acm_host_install(&acm_cfg);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
+    {
+        ESP_LOGE(TAG, "cdc_acm_host_install failed: %s", esp_err_to_name(err));
         stop();
         return false;
     }
@@ -139,15 +114,6 @@ void UsbCdcHost::stop()
         cdc_acm_host_close(dev_);
         dev_ = nullptr;
     }
-#if __has_include("usb/vcp.hpp")
-    if (vcp_dev_)
-    {
-        (void)vcp_dev_->close();
-        vcp_dev_ = nullptr;
-    }
-#endif
-    use_vcp_ = false;
-
     if (tx_q_)
     {
         TxItem *it = nullptr;
@@ -221,10 +187,12 @@ bool UsbCdcHost::send(const uint8_t *data, size_t len, uint32_t timeout_ms)
 {
     return enqueueRaw(data, len, timeout_ms);
 }
+
 bool UsbCdcHost::sendLine(const String &line, uint32_t timeout_ms)
 {
     return enqueueRaw(reinterpret_cast<const uint8_t *>(line.c_str()), line.length(), timeout_ms);
 }
+
 bool UsbCdcHost::sendCommand(const String &cmd, bool append_crlf, uint32_t timeout_ms)
 {
     String out = cmd;
@@ -239,17 +207,6 @@ bool UsbCdcHost::setBaud(uint32_t baud)
     target_baud_ = baud;
     if (dev_)
         return (configureLineCoding(baud) == ESP_OK);
-#if __has_include("usb/vcp.hpp")
-    if (vcp_dev_)
-    {
-        cdc_acm_line_coding_t lc{};
-        lc.dwDTERate = baud;
-        lc.bCharFormat = 0;
-        lc.bParityType = 0;
-        lc.bDataBits = 8;
-        return (vcp_dev_->line_coding_set(&lc) == ESP_OK);
-    }
-#endif
     return true;
 }
 
@@ -264,7 +221,6 @@ esp_err_t UsbCdcHost::configureLineCoding(uint32_t baud)
     lc.bParityType = 0; // none
     lc.bCharFormat = 0; // 1 stop bit
 
-    // When opened via VCP, the underlying handle routes this to vendor requests (CH34x, etc.)
     esp_err_t err = cdc_acm_host_line_coding_set(dev_, &lc);
     if (err == ESP_ERR_NOT_SUPPORTED)
     {
@@ -282,7 +238,9 @@ esp_err_t UsbCdcHost::configureLineCoding(uint32_t baud)
 
 // ---------- tasks ----------
 void UsbCdcHost::UsbLibTaskThunk(void *arg) { static_cast<UsbCdcHost *>(arg)->usbLibTask(); }
+
 void UsbCdcHost::CdcTaskThunk(void *arg) { static_cast<UsbCdcHost *>(arg)->cdcTask(); }
+
 void UsbCdcHost::TxTaskThunk(void *arg) { static_cast<UsbCdcHost *>(arg)->txTask(); }
 
 void UsbCdcHost::usbLibTask()
@@ -290,7 +248,15 @@ void UsbCdcHost::usbLibTask()
     while (running_)
     {
         uint32_t flags = 0;
-        usb_host_lib_handle_events(portMAX_DELAY, &flags);
+        esp_err_t err = usb_host_lib_handle_events(portMAX_DELAY, &flags);
+        if (err != ESP_OK)
+        {
+            ESP_LOGW(TAG, "usb_host_lib_handle_events: %s", esp_err_to_name(err));
+        }
+        if (flags)
+        {
+            ESP_LOGI(TAG, "usb_host_lib flags=0x%08" PRIx32, flags);
+        }
         if (flags & USB_HOST_LIB_EVENT_FLAGS_NO_CLIENTS)
             usb_host_device_free_all();
     }
@@ -316,62 +282,21 @@ void UsbCdcHost::cdcTask()
         cdc_acm_host_close(dev_);
         dev_ = nullptr;
     }
-    if (vcp_dev_)
-    {
-#if __has_include("usb/vcp.hpp")
-        (void)vcp_dev_->close();
-#endif
-        vcp_dev_ = nullptr;
-    }
-    use_vcp_ = false;
-
     while (running_)
     {
         // If we aren’t open yet, try to find & open a CDC-ACM interface
-        if (!dev_ && !vcp_dev_)
+        if (!dev_)
         {
             const uint16_t open_vid = allow_vid_ ? allow_vid_ : CDC_HOST_ANY_VID;
             const uint16_t open_pid = allow_pid_ ? allow_pid_ : CDC_HOST_ANY_PID;
             opened_intf_idx_ = kDefaultInterfaceIndex;
 
-#if __has_include("usb/vcp.hpp")
-            // Prefer vendor-specific VCP drivers first
-            if (!vcp_dev_)
-            {
-                CdcAcmDevice *v = nullptr;
-                if (allow_vid_ || allow_pid_)
-                {
-                    v = esp_usb::VCP::open(open_vid, open_pid, &dev_cfg, opened_intf_idx_);
-                }
-                else
-                {
-                    v = esp_usb::VCP::open(&dev_cfg, opened_intf_idx_);
-                }
-                if (v)
-                {
-                    vcp_dev_ = v;
-                    use_vcp_ = true;
-                    ESP_LOGI(TAG, "CDC/VCP device opened (vendor-specific, interface idx=%u)",
-                             opened_intf_idx_);
-                    (void)vcp_dev_->set_control_line_state(true, true);
-                    cdc_acm_line_coding_t lc{};
-                    lc.dwDTERate = target_baud_;
-                    lc.bCharFormat = 0;
-                    lc.bParityType = 0;
-                    lc.bDataBits = 8;
-                    (void)vcp_dev_->line_coding_set(&lc);
-                    ready_after_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(80);
-                    if (on_connected_)
-                        on_connected_();
-                    continue;
-                }
-            }
-#endif
+            ESP_LOGI(TAG, "Attempting to open CDC device (VID=0x%04X, PID=0x%04X, iface=%u)",
+                     open_vid, open_pid, opened_intf_idx_);
 
             esp_err_t err = cdc_acm_host_open(open_vid, open_pid, opened_intf_idx_, &dev_cfg, &dev_);
             if (err == ESP_OK && dev_ != nullptr)
             {
-                use_vcp_ = false;
                 ESP_LOGI(TAG, "CDC device opened (iface=%u, %04X:%04X)",
                          opened_intf_idx_, open_vid, open_pid);
                 esp_err_t lerr = cdc_acm_host_set_control_line_state(dev_, true, true);
@@ -385,6 +310,10 @@ void UsbCdcHost::cdcTask()
                     on_connected_();
                 continue;
             }
+            else
+            {
+                ESP_LOGW(TAG, "cdc_acm_host_open failed: %s", esp_err_to_name(err));
+            }
 
             // Nothing opened yet; avoid tight loop
             vTaskDelay(pdMS_TO_TICKS(200));
@@ -392,7 +321,6 @@ void UsbCdcHost::cdcTask()
         }
         else
         {
-
             // Already open; keep the task responsive but light
             vTaskDelay(pdMS_TO_TICKS(25));
         }
@@ -404,12 +332,6 @@ void UsbCdcHost::cdcTask()
         cdc_acm_host_close(dev_);
         dev_ = nullptr;
     }
-#if __has_include("usb/vcp.hpp")
-    if (vcp_dev_)
-        (void)vcp_dev_->close();
-    vcp_dev_ = nullptr;
-#endif
-    use_vcp_ = false;
 
     ESP_LOGI(TAG, "CDC task stopped");
 }
@@ -424,7 +346,7 @@ void UsbCdcHost::txTask()
             continue;
 
         // Wait for device
-        while (running_ && dev_ == nullptr && vcp_dev_ == nullptr)
+        while (running_ && dev_ == nullptr)
             vTaskDelay(pdMS_TO_TICKS(50));
         if (!running_)
         {
@@ -450,11 +372,7 @@ void UsbCdcHost::txTask()
 
         ESP_LOGI(TAG, "TX %u bytes (intf=%u)", (unsigned)it->len, (unsigned)opened_intf_idx_);
         esp_err_t err = ESP_FAIL;
-        if (use_vcp_ && vcp_dev_)
-        {
-            err = vcp_dev_->tx_blocking(reinterpret_cast<uint8_t *>(it->data), it->len, it->timeout_ms);
-        }
-        else if (dev_)
+        if (dev_)
         {
             err = cdc_acm_host_data_tx_blocking(dev_, reinterpret_cast<const uint8_t *>(it->data), it->len, it->timeout_ms);
         }
@@ -493,6 +411,7 @@ bool UsbCdcHost::DataCb(const uint8_t *data, size_t len, void *user_arg)
     auto *self = static_cast<UsbCdcHost *>(user_arg);
     return self ? self->onRx(data, len) : true;
 }
+
 void UsbCdcHost::DevEventCb(const cdc_acm_host_dev_event_data_t *event, void *user_arg)
 {
     auto *self = static_cast<UsbCdcHost *>(user_arg);
@@ -547,21 +466,18 @@ void UsbCdcHost::onDevEvent(const cdc_acm_host_dev_event_data_t *event)
             on_line_(line_buf_);
             line_buf_.clear();
         }
-#if __has_include("usb/vcp.hpp")
-        if (vcp_dev_)
-            (void)vcp_dev_->close();
-#endif
-        vcp_dev_ = nullptr; // if we were on VCP
-        use_vcp_ = false;
         if (on_disconnected_)
             on_disconnected_();
         break;
+
     case CDC_ACM_HOST_ERROR:
         ESP_LOGE(TAG, "CDC-ACM driver error: %d", event->data.error);
         break;
+
     case CDC_ACM_HOST_SERIAL_STATE:
         ESP_LOGI(TAG, "Serial state: 0x%04X", event->data.serial_state.val);
         break;
+
     default:
         ESP_LOGW(TAG, "Unhandled CDC event: %d", event->type);
         break;
@@ -626,10 +542,12 @@ void UsbCdcHost::DbgClientCb(const usb_host_client_event_msg_t *evt, void *arg)
         }
         break;
     }
+
     case USB_HOST_CLIENT_EVENT_DEV_GONE:
         // IDF 4.4.x: no dev_addr field here; keep it simple and portable
         ESP_LOGI(TAG, "DEV GONE");
         break;
+
     default:
         break;
     }

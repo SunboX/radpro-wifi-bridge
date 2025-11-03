@@ -9,7 +9,7 @@
 class GmcMapPublisher
 {
 public:
-    GmcMapPublisher(AppConfig &config, Print &log);
+    GmcMapPublisher(AppConfig &config, Print &log, const char *firmwareVersion);
 
     void begin();
     void updateConfig();
@@ -27,6 +27,7 @@ private:
 
     AppConfig &config_;
     Print &log_;
+    const char *firmwareVersion_;
     String pendingCpm_;
     String pendinguSv_;
     float pendingCpmValue_ = 0.0f;

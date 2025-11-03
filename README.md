@@ -9,7 +9,7 @@ The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides s
 
 ## Highlights
 
-- **TinyUSB host stack** with a CH34x VCP shim so the RadPro enumerates reliably on the ESP32-S3 OTG port.
+- **TinyUSB host stack** using upstream CH34x CDC support so the RadPro enumerates reliably on the ESP32-S3 OTG port.
 - **DeviceManager command queue** that boots the tube, logs identity/metadata, and keeps issuing telemetry `GET` commands.
 - **Wi-Fi configuration portal** (WiFiManager based) that launches an AP when credentials fail, serves the same form at `http://<device-ip>/`, and persists settings to NVS. A one-click “Restart Device” action is exposed in the UI.
 - **Runtime Wi-Fi diagnostics & startup control**: countdown-driven boot with serial overrides, plus SSID/IP/RSSI logging after the main firmware starts.
@@ -189,7 +189,7 @@ The lowest-numbered active fault is displayed. Resolving the root cause (for exa
 
 ## Device Telemetry Flow
 
-1. **USB enumeration** uses TinyUSB with a CH34x fallback so the RadPro reliably appears as a CDC device.
+1. **USB enumeration** uses TinyUSB with built-in CH34x handling so the RadPro reliably appears as a CDC device.
 2. **Handshake:** `GET deviceId` logs the raw ID, model, firmware, and locale. Additional metadata (`devicePower`, `deviceBatteryVoltage`, `deviceTime`, `tube` parameters) is fetched immediately afterwards.
 3. **Continuous polling:** `GET tubePulseCount` and `GET tubeRate` are queued at the configured interval (`readIntervalMs`, clamped to ≥ 500 ms).
 4. **MQTT forwarding:** each successful response is offered to the MQTT publisher; failures propagate to the LED and console.
@@ -204,13 +204,13 @@ Retries, back-off, and duplicate suppression are handled inside `DeviceManager`.
 | Path                                   | Purpose |
 |----------------------------------------|---------|
 | `src/main.cpp`                         | Arduino entry point: startup state machine, Wi-Fi orchestration, LED updates, telemetry loop. |
-| `lib/UsbCdcHost`                       | TinyUSB host wrapper plus CH34x helper for the vendor CDC transport. |
+| `lib/UsbCdcHost`                       | TinyUSB host wrapper for the vendor CDC transport. |
 | `lib/DeviceManager`                    | RadPro command queue, response parsing, publish callbacks, retry/back-off logic. |
 | `lib/AppSupport/AppConfig`             | NVS-backed configuration storage and parameter helpers. |
 | `lib/AppSupport/ConfigPortal`          | WiFiManager integration, captive/station portal, restart endpoint, Wi-Fi logging. |
 | `lib/AppSupport/Mqtt`                  | PubSubClient-based MQTT publisher with topic templating and slug generation. |
 | `lib/AppSupport/Led`                   | WS2812 status controller and LED pulse handling. |
-| `platformio.ini`                       | PlatformIO configuration for ESP32-S3 DevKitC-1 with TinyUSB host. |
+| `platformio.ini`                       | PlatformIO configuration for ESP32-S3 DevKitC-1 with TinyUSB host (enables the upstream CH34x driver). |
 
 ---
 
