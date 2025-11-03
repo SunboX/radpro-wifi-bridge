@@ -1,6 +1,7 @@
 #include "UsbCdcHost.h"
 #include <cstring>
 #include <inttypes.h>
+#include <new>
 
 namespace
 {
@@ -50,6 +51,7 @@ bool UsbCdcHost::begin()
         stop();
         return false;
     }
+    host_installed_ = (err == ESP_OK);
 
     const cdc_acm_host_driver_config_t acm_cfg = {
         .driver_task_stack_size = 4096,
@@ -64,6 +66,7 @@ bool UsbCdcHost::begin()
         stop();
         return false;
     }
+    acm_installed_ = (err == ESP_OK);
 
     usb_host_client_config_t cfg = {
         .is_synchronous = false,
@@ -109,21 +112,13 @@ void UsbCdcHost::stop()
         lib_task_ = nullptr;
     }
 
-    if (dev_)
-    {
-        cdc_acm_host_close(dev_);
-        dev_ = nullptr;
-    }
+    closeDevice();
     if (tx_q_)
     {
         TxItem *it = nullptr;
         while (xQueueReceive(tx_q_, &it, 0) == pdTRUE)
         {
-            if (it)
-            {
-                free(it->data);
-                delete it;
-            }
+            delete it;
         }
         vQueueDelete(tx_q_);
         tx_q_ = nullptr;
@@ -134,8 +129,16 @@ void UsbCdcHost::stop()
         tx_mutex_ = nullptr;
     }
 
-    cdc_acm_host_uninstall();
-    usb_host_uninstall();
+    if (acm_installed_)
+    {
+        cdc_acm_host_uninstall();
+        acm_installed_ = false;
+    }
+    if (host_installed_)
+    {
+        usb_host_uninstall();
+        host_installed_ = false;
+    }
 
     if (dbg_task_)
     {
@@ -154,33 +157,33 @@ bool UsbCdcHost::enqueueRaw(const uint8_t *data, size_t len, uint32_t timeout_ms
     if (!data || !len || !tx_q_ || !tx_mutex_)
         return false;
 
-    auto *item = new TxItem();
+    auto *item = new (std::nothrow) TxItem();
     if (!item)
         return false;
-    item->data = (char *)malloc(len);
+    item->data.reset(new (std::nothrow) uint8_t[len]);
     if (!item->data)
     {
         delete item;
         return false;
     }
-    memcpy(item->data, data, len);
+    memcpy(item->data.get(), data, len);
     item->len = len;
     item->timeout_ms = timeout_ms;
 
-    bool ok = false;
+    bool queued = false;
     if (xSemaphoreTake(tx_mutex_, pdMS_TO_TICKS(200)) == pdTRUE)
     {
-        ok = (xQueueSend(tx_q_, &item, pdMS_TO_TICKS(50)) == pdTRUE);
-        if (!ok)
-        {
-            free(item->data);
-            delete item;
-        }
+        queued = (xQueueSend(tx_q_, &item, pdMS_TO_TICKS(50)) == pdTRUE);
         xSemaphoreGive(tx_mutex_);
     }
-    if (!ok)
+
+    if (!queued)
+    {
         ESP_LOGW(TAG, "enqueueRaw: queue full/busy; dropping");
-    return ok;
+        delete item;
+    }
+
+    return queued;
 }
 
 bool UsbCdcHost::send(const uint8_t *data, size_t len, uint32_t timeout_ms)
@@ -190,7 +193,7 @@ bool UsbCdcHost::send(const uint8_t *data, size_t len, uint32_t timeout_ms)
 
 bool UsbCdcHost::sendLine(const String &line, uint32_t timeout_ms)
 {
-    return enqueueRaw(reinterpret_cast<const uint8_t *>(line.c_str()), line.length(), timeout_ms);
+    return send(reinterpret_cast<const uint8_t *>(line.c_str()), line.length(), timeout_ms);
 }
 
 bool UsbCdcHost::sendCommand(const String &cmd, bool append_crlf, uint32_t timeout_ms)
@@ -199,7 +202,17 @@ bool UsbCdcHost::sendCommand(const String &cmd, bool append_crlf, uint32_t timeo
     if (append_crlf)
         out += "\r\n";
     ESP_LOGI(TAG, "Queue cmd: %s", out.c_str());
-    return enqueueRaw(reinterpret_cast<const uint8_t *>(out.c_str()), out.length(), timeout_ms);
+    return send(reinterpret_cast<const uint8_t *>(out.c_str()), out.length(), timeout_ms);
+}
+
+void UsbCdcHost::closeDevice()
+{
+    if (dev_)
+    {
+        cdc_acm_host_close(dev_);
+        dev_ = nullptr;
+    }
+    ready_after_tick_ = 0;
 }
 
 bool UsbCdcHost::setBaud(uint32_t baud)
@@ -284,7 +297,6 @@ void UsbCdcHost::cdcTask()
     }
     while (running_)
     {
-        // If we aren’t open yet, try to find & open a CDC-ACM interface
         if (!dev_)
         {
             const uint16_t open_vid = allow_vid_ ? allow_vid_ : CDC_HOST_ANY_VID;
@@ -294,12 +306,12 @@ void UsbCdcHost::cdcTask()
             ESP_LOGI(TAG, "Attempting to open CDC device (VID=0x%04X, PID=0x%04X, iface=%u)",
                      open_vid, open_pid, opened_intf_idx_);
 
-            esp_err_t err = cdc_acm_host_open(open_vid, open_pid, opened_intf_idx_, &dev_cfg, &dev_);
+            const esp_err_t err = cdc_acm_host_open(open_vid, open_pid, opened_intf_idx_, &dev_cfg, &dev_);
             if (err == ESP_OK && dev_ != nullptr)
             {
                 ESP_LOGI(TAG, "CDC device opened (iface=%u, %04X:%04X)",
                          opened_intf_idx_, open_vid, open_pid);
-                esp_err_t lerr = cdc_acm_host_set_control_line_state(dev_, true, true);
+                const esp_err_t lerr = cdc_acm_host_set_control_line_state(dev_, true, true);
                 if (lerr != ESP_OK && lerr != ESP_ERR_NOT_SUPPORTED)
                 {
                     ESP_LOGW(TAG, "set_control_line_state: %s", esp_err_to_name(lerr));
@@ -310,28 +322,16 @@ void UsbCdcHost::cdcTask()
                     on_connected_();
                 continue;
             }
-            else
-            {
-                ESP_LOGW(TAG, "cdc_acm_host_open failed: %s", esp_err_to_name(err));
-            }
 
-            // Nothing opened yet; avoid tight loop
+            ESP_LOGW(TAG, "cdc_acm_host_open failed: %s", esp_err_to_name(err));
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
-        else
-        {
-            // Already open; keep the task responsive but light
-            vTaskDelay(pdMS_TO_TICKS(25));
-        }
+
+        vTaskDelay(pdMS_TO_TICKS(25));
     }
 
-    // Cleanup on task exit
-    if (dev_)
-    {
-        cdc_acm_host_close(dev_);
-        dev_ = nullptr;
-    }
+    closeDevice();
 
     ESP_LOGI(TAG, "CDC task stopped");
 }
@@ -350,7 +350,6 @@ void UsbCdcHost::txTask()
             vTaskDelay(pdMS_TO_TICKS(50));
         if (!running_)
         {
-            free(it->data);
             delete it;
             break;
         }
@@ -360,6 +359,7 @@ void UsbCdcHost::txTask()
         if (ready_after_tick_ && now < ready_after_tick_)
         {
             vTaskDelay(ready_after_tick_ - now);
+            now = xTaskGetTickCount();
         }
 
         // Idle flush of unterminated lines after ~100ms of inactivity
@@ -370,36 +370,22 @@ void UsbCdcHost::txTask()
             line_buf_.clear();
         }
 
-        ESP_LOGI(TAG, "TX %u bytes (intf=%u)", (unsigned)it->len, (unsigned)opened_intf_idx_);
+        ESP_LOGI(TAG, "TX %u bytes (intf=%u)", static_cast<unsigned>(it->len), static_cast<unsigned>(opened_intf_idx_));
         esp_err_t err = ESP_FAIL;
         if (dev_)
         {
-            err = cdc_acm_host_data_tx_blocking(dev_, reinterpret_cast<const uint8_t *>(it->data), it->len, it->timeout_ms);
+            err = cdc_acm_host_data_tx_blocking(dev_, it->data.get(), it->len, it->timeout_ms);
         }
         if (err != ESP_OK)
         {
             ESP_LOGW(TAG, "TX failed: %s", esp_err_to_name(err));
-            // Requeue to front once; if full, drop
-            if (running_)
+            if (running_ && xQueueSendToFront(tx_q_, &it, pdMS_TO_TICKS(10)) == pdTRUE)
             {
-                TxItem *retry = it;
-                if (xQueueSendToFront(tx_q_, &retry, pdMS_TO_TICKS(10)) != pdTRUE)
-                {
-                    free(it->data);
-                    delete it;
-                }
-            }
-            else
-            {
-                free(it->data);
-                delete it;
+                continue;
             }
         }
-        else
-        {
-            free(it->data);
-            delete it;
-        }
+
+        delete it;
     }
     ESP_LOGI(TAG, "TX task exit");
     vTaskDelete(nullptr);
