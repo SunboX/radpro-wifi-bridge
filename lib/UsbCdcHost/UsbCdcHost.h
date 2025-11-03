@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <memory>
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -69,6 +70,7 @@ private:
     // Helpers
     esp_err_t configureLineCoding(uint32_t baud);
     bool enqueueRaw(const uint8_t *data, size_t len, uint32_t timeout_ms);
+    void closeDevice();
 
     static constexpr const char *TAG = "UsbCdcHost";
 
@@ -77,6 +79,8 @@ private:
     TaskHandle_t tx_task_ = nullptr;
 
     cdc_acm_dev_hdl_t dev_ = nullptr;
+    bool host_installed_ = false;
+    bool acm_installed_ = false;
 
     uint32_t target_baud_ = 115200;
     volatile bool running_ = false;
@@ -95,9 +99,9 @@ private:
     // TX queue + mutex
     struct TxItem
     {
-        char *data;
-        size_t len;
-        uint32_t timeout_ms;
+        std::unique_ptr<uint8_t[]> data;
+        size_t len = 0;
+        uint32_t timeout_ms = 0;
     };
     QueueHandle_t tx_q_ = nullptr;
     SemaphoreHandle_t tx_mutex_ = nullptr;
