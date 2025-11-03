@@ -1,4 +1,5 @@
 #pragma once
+
 #include <Arduino.h>
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -46,7 +47,7 @@ public:
     void setVidPidFilter(uint16_t vid, uint16_t pid);
 
     // Status
-    bool isConnected() const { return dev_ != nullptr || vcp_dev_ != nullptr; }
+    bool isConnected() const { return dev_ != nullptr; }
 
 private:
     // Tasks
@@ -107,10 +108,6 @@ private:
 
     // Post-connect settle time for first TX
     volatile TickType_t ready_after_tick_ = 0;
-
-    // VCP wrapper state (when using the VCP service for CH34x/CP210x/FTDI)
-    bool use_vcp_ = false;
-    CdcAcmDevice *vcp_dev_ = nullptr; // returned by VCP::open(); owned by the VCP service
 
     // Descriptor logging client
     usb_host_client_handle_t dbg_client_ = nullptr;

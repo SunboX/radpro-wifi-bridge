@@ -10,9 +10,10 @@ namespace
     constexpr unsigned long kRetryBackoffMs = 60000;
 }
 
-RadmonPublisher::RadmonPublisher(AppConfig &config, Print &log)
+RadmonPublisher::RadmonPublisher(AppConfig &config, Print &log, const char *firmwareVersion)
     : config_(config),
-      log_(log)
+      log_(log),
+      firmwareVersion_(firmwareVersion)
 {
 }
 
@@ -143,7 +144,9 @@ bool RadmonPublisher::sendRequest(const String &query)
     request += query;
     request += " HTTP/1.1\r\nHost: ";
     request += kHost;
-    request += "\r\nConnection: close\r\nUser-Agent: RadPro-WiFi-Bridge/1.2.0\r\n\r\n";
+    request += "\r\nConnection: close\r\nUser-Agent: RadPro-WiFi-Bridge/";
+    request += firmwareVersion_ ? firmwareVersion_ : "unknown";
+    request += "\r\n\r\n";
 
     if (client.print(request) != request.length())
     {
