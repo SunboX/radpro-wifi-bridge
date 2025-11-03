@@ -36,10 +36,34 @@ void DeviceManager::HandleRaw(const uint8_t *data, size_t len)
         instance_->onRaw(data, len);
 }
 
+void DeviceManager::lock()
+{
+    if (mutex_)
+        xSemaphoreTakeRecursive(mutex_, portMAX_DELAY);
+}
+
+void DeviceManager::unlock()
+{
+    if (mutex_)
+        xSemaphoreGiveRecursive(mutex_);
+}
+
 DeviceManager::DeviceManager(UsbCdcHost &host)
     : host_(host)
 {
     instance_ = this;
+    mutex_ = xSemaphoreCreateRecursiveMutex();
+}
+
+DeviceManager::~DeviceManager()
+{
+    if (mutex_)
+    {
+        vSemaphoreDelete(mutex_);
+        mutex_ = nullptr;
+    }
+    if (instance_ == this)
+        instance_ = nullptr;
 }
 
 void DeviceManager::begin(uint16_t vid, uint16_t pid)
@@ -52,6 +76,7 @@ void DeviceManager::begin(uint16_t vid, uint16_t pid)
 
     host_.setVidPidFilter(vid, pid);
 
+    ScopedLock lock(*this);
     enabled_ = false;
     device_id_logged_ = false;
     device_details_logged_ = false;
@@ -62,11 +87,13 @@ void DeviceManager::begin(uint16_t vid, uint16_t pid)
 
 void DeviceManager::setRawLogging(bool enabled)
 {
+    ScopedLock lock(*this);
     raw_logging_enabled_ = enabled;
 }
 
 void DeviceManager::toggleRawLogging()
 {
+    ScopedLock lock(*this);
     raw_logging_enabled_ = !raw_logging_enabled_;
 }
 
@@ -82,19 +109,25 @@ void DeviceManager::stop()
 
 void DeviceManager::enable(bool active)
 {
-    if (enabled_ == active)
-        return;
+    bool should_schedule = false;
+    {
+        ScopedLock lock(*this);
+        if (enabled_ == active)
+            return;
 
-    enabled_ = active;
+        enabled_ = active;
 
-    command_queue_.clear();
-    awaiting_response_ = false;
-    has_current_command_ = false;
-    device_id_logged_ = false;
-    device_details_logged_ = false;
-    current_command_ = PendingCommand{};
+        command_queue_.clear();
+        awaiting_response_ = false;
+        has_current_command_ = false;
+        device_id_logged_ = false;
+        device_details_logged_ = false;
+        current_command_ = PendingCommand{};
 
-    if (enabled_)
+        should_schedule = enabled_;
+    }
+
+    if (should_schedule)
     {
         scheduleDeviceId(DEVICE_ID_INITIAL_DELAY_MS, true);
         processQueue();
@@ -103,39 +136,48 @@ void DeviceManager::enable(bool active)
 
 void DeviceManager::requestStats()
 {
-    if (!enabled_ || !host_.isConnected() || !device_id_logged_)
-        return;
+    {
+        ScopedLock lock(*this);
+        if (!enabled_ || !host_.isConnected() || !device_id_logged_)
+            return;
 
-    if (!isCommandPending("GET tubePulseCount") && (!awaiting_response_ || current_command_.command != "GET tubePulseCount"))
-        enqueueCommand("GET tubePulseCount", CommandType::TubePulseCount, 0, false);
-    if (!isCommandPending("GET tubeRate") && (!awaiting_response_ || current_command_.command != "GET tubeRate"))
-        enqueueCommand("GET tubeRate", CommandType::TubeRate, 0, false);
-    if (!isCommandPending("GET deviceBatteryVoltage") && (!awaiting_response_ || current_command_.command != "GET deviceBatteryVoltage"))
-        enqueueCommand("GET deviceBatteryVoltage", CommandType::DeviceBatteryVoltage, 0, false);
+        if (!isCommandPending("GET tubePulseCount") && (!awaiting_response_ || current_command_.command != "GET tubePulseCount"))
+            enqueueCommand("GET tubePulseCount", CommandType::TubePulseCount, 0, false);
+        if (!isCommandPending("GET tubeRate") && (!awaiting_response_ || current_command_.command != "GET tubeRate"))
+            enqueueCommand("GET tubeRate", CommandType::TubeRate, 0, false);
+        if (!isCommandPending("GET deviceBatteryVoltage") && (!awaiting_response_ || current_command_.command != "GET deviceBatteryVoltage"))
+            enqueueCommand("GET deviceBatteryVoltage", CommandType::DeviceBatteryVoltage, 0, false);
+    }
 
     processQueue();
 }
 
 void DeviceManager::requestRandomData()
 {
-    if (!enabled_ || !host_.isConnected())
-        return;
-    if (!isCommandPending("GET randomData"))
-        enqueueCommand("GET randomData", CommandType::RandomData, 0, true);
+    {
+        ScopedLock lock(*this);
+        if (!enabled_ || !host_.isConnected())
+            return;
+        if (!isCommandPending("GET randomData"))
+            enqueueCommand("GET randomData", CommandType::RandomData, 0, true);
+    }
     processQueue();
 }
 
 void DeviceManager::requestDataLog(const String &args)
 {
-    if (!enabled_ || !host_.isConnected())
-        return;
     String cmd = "GET datalog";
-    if (args.length())
     {
-        cmd += " ";
-        cmd += args;
+        ScopedLock lock(*this);
+        if (!enabled_ || !host_.isConnected())
+            return;
+        if (args.length())
+        {
+            cmd += " ";
+            cmd += args;
+        }
+        enqueueCommand(cmd, CommandType::DataLog, 0, true);
     }
-    enqueueCommand(cmd, CommandType::DataLog, 0, true);
     processQueue();
 }
 
@@ -144,17 +186,30 @@ void DeviceManager::loop()
     if (!enabled_)
         return;
 
-    if (!host_.isConnected())
+    bool connected = host_.isConnected();
+    bool awaiting = false;
+    unsigned long request_ms = 0;
+
     {
-        awaiting_response_ = false;
-        has_current_command_ = false;
-        command_queue_.clear();
-        return;
+        ScopedLock lock(*this);
+        if (!enabled_)
+            return;
+
+        if (!connected)
+        {
+            awaiting_response_ = false;
+            has_current_command_ = false;
+            command_queue_.clear();
+            return;
+        }
+
+        awaiting = awaiting_response_;
+        request_ms = last_request_ms_;
     }
 
-    if (awaiting_response_)
+    if (awaiting)
     {
-        if ((millis() - last_request_ms_) > DEVICE_ID_RESPONSE_TIMEOUT_MS)
+        if ((millis() - request_ms) > DEVICE_ID_RESPONSE_TIMEOUT_MS)
             handleError();
         return;
     }
@@ -164,40 +219,57 @@ void DeviceManager::loop()
 
 void DeviceManager::onConnected()
 {
-    device_id_logged_ = false;
-    device_details_logged_ = false;
-    command_queue_.clear();
-    awaiting_response_ = false;
-    has_current_command_ = false;
-    current_command_ = PendingCommand{};
+    bool should_schedule = false;
+    LineHandler handler;
+    {
+        ScopedLock lock(*this);
+        device_id_logged_ = false;
+        device_details_logged_ = false;
+        command_queue_.clear();
+        awaiting_response_ = false;
+        has_current_command_ = false;
+        current_command_ = PendingCommand{};
 
-    if (enabled_)
+        should_schedule = enabled_;
+        handler = line_handler_;
+    }
+
+    if (handler)
+        handler(String("USB device CONNECTED"));
+
+    if (should_schedule)
         scheduleDeviceId(DEVICE_ID_INITIAL_DELAY_MS, true);
-
-    if (line_handler_)
-        line_handler_(String("USB device CONNECTED"));
 
     processQueue();
 }
 
 void DeviceManager::onDisconnected()
 {
-    device_id_logged_ = false;
-    device_details_logged_ = false;
-    awaiting_response_ = false;
-    has_current_command_ = false;
-    command_queue_.clear();
-    device_sensitivity_cpm_per_uSv_ = 0.0f;
+    bool should_schedule = false;
+    LineHandler handler;
+    {
+        ScopedLock lock(*this);
+        device_id_logged_ = false;
+        device_details_logged_ = false;
+        awaiting_response_ = false;
+        has_current_command_ = false;
+        command_queue_.clear();
+        device_sensitivity_cpm_per_uSv_ = 0.0f;
+        should_schedule = enabled_;
+        handler = line_handler_;
+    }
 
-    if (enabled_)
+    if (should_schedule)
         scheduleDeviceId(DEVICE_ID_INITIAL_DELAY_MS, true);
 
-    if (line_handler_)
-        line_handler_(String("USB device DISCONNECTED"));
+    if (handler)
+        handler(String("USB device DISCONNECTED"));
 }
 
 void DeviceManager::onLine(const String &line)
 {
+    ScopedLock lock(*this);
+
     if (verbose_logging_enabled_ && line_handler_)
         line_handler_(String("<- Line: ") + line);
 
@@ -532,9 +604,16 @@ void DeviceManager::onLine(const String &line)
 
 void DeviceManager::onRaw(const uint8_t *data, size_t len)
 {
-    if (!raw_logging_enabled_ || !raw_handler_)
-        return;
-    raw_handler_(data, len);
+    RawHandler handler = nullptr;
+    {
+        ScopedLock lock(*this);
+        if (!raw_logging_enabled_)
+            return;
+        handler = raw_handler_;
+    }
+
+    if (handler)
+        handler(data, len);
 }
 
 void DeviceManager::scheduleDeviceId(uint32_t delay_ms, bool announce)
@@ -545,11 +624,13 @@ void DeviceManager::scheduleDeviceId(uint32_t delay_ms, bool announce)
 void DeviceManager::enqueueCommand(const String &cmd, CommandType type, uint32_t delay_ms, bool announce)
 {
     PendingCommand entry{cmd, type, announce, 0, millis() + delay_ms};
+    ScopedLock lock(*this);
     command_queue_.push_back(entry);
 }
 
 bool DeviceManager::isCommandPending(const String &cmd) const
 {
+    ScopedLock lock(const_cast<DeviceManager &>(*this));
     if (has_current_command_ && current_command_.command == cmd)
         return true;
     for (const auto &entry : command_queue_)
@@ -562,90 +643,137 @@ bool DeviceManager::isCommandPending(const String &cmd) const
 
 void DeviceManager::processQueue()
 {
-    if (awaiting_response_ || has_current_command_)
-        return;
+    PendingCommand command_to_issue;
+    bool should_issue = false;
 
-    if (command_queue_.empty())
-        return;
-
-    unsigned long now = millis();
-    for (auto it = command_queue_.begin(); it != command_queue_.end(); ++it)
     {
-        if (static_cast<long>(now - it->ready_ms) >= 0)
+        ScopedLock lock(*this);
+        if (awaiting_response_ || has_current_command_ || command_queue_.empty())
+            return;
+
+        unsigned long now = millis();
+        for (auto it = command_queue_.begin(); it != command_queue_.end(); ++it)
         {
-            current_command_ = *it;
-            command_queue_.erase(it);
-            has_current_command_ = true;
-            issueCurrentCommand();
-            break;
+            if (static_cast<long>(now - it->ready_ms) >= 0)
+            {
+                current_command_ = *it;
+                command_to_issue = current_command_;
+                command_queue_.erase(it);
+                has_current_command_ = true;
+                awaiting_response_ = true;
+                last_request_ms_ = millis();
+                should_issue = true;
+                break;
+            }
         }
     }
+
+    if (should_issue)
+        issueCurrentCommand(command_to_issue);
 }
 
-void DeviceManager::issueCurrentCommand()
+void DeviceManager::issueCurrentCommand(const PendingCommand &command)
 {
-    if (!has_current_command_ || !host_.isConnected())
-        return;
-
-    if (current_command_.announce && verbose_logging_enabled_ && line_handler_)
-        line_handler_(String("-> Queue: ") + current_command_.command);
-
-    if (current_command_.type == CommandType::DeviceId)
+    if (!host_.isConnected())
     {
-        host_.sendCommand(current_command_.command, true);
-        host_.sendCommand(current_command_.command + "\n", false);
-        host_.sendCommand(current_command_.command + "\r", false);
+        ScopedLock lock(*this);
+        awaiting_response_ = false;
+        has_current_command_ = false;
+        current_command_ = PendingCommand{};
+        return;
+    }
+
+    if (command.announce && verbose_logging_enabled_ && line_handler_)
+        line_handler_(String("-> Queue: ") + command.command);
+
+    bool ok = true;
+    if (command.type == CommandType::DeviceId)
+    {
+        ok = host_.sendCommand(command.command, true) &&
+             host_.sendCommand(command.command + "\n", false) &&
+             host_.sendCommand(command.command + "\r", false);
     }
     else
     {
-        host_.sendCommand(current_command_.command, true);
+        ok = host_.sendCommand(command.command, true);
     }
 
-    awaiting_response_ = true;
-    last_request_ms_ = millis();
+    if (!ok)
+        handleError();
 }
 
 void DeviceManager::handleSuccess()
 {
-    awaiting_response_ = false;
-    has_current_command_ = false;
-    current_command_ = PendingCommand{};
+    {
+        ScopedLock lock(*this);
+        awaiting_response_ = false;
+        has_current_command_ = false;
+        current_command_ = PendingCommand{};
+    }
     processQueue();
 }
 
 void DeviceManager::handleError()
 {
-    awaiting_response_ = false;
+    bool should_retry = false;
+    bool retry_front = false;
+    PendingCommand retry_cmd;
+    CommandType failed_type = CommandType::Generic;
+    String failed_command;
+    LineHandler handler = nullptr;
+    bool should_log_failure = false;
 
-    if (!has_current_command_)
-        return;
-
-    if (current_command_.type == CommandType::DeviceId && current_command_.retry < DEVICE_ID_MAX_RETRY)
     {
-        PendingCommand retry = current_command_;
-        retry.retry++;
-        retry.ready_ms = millis() + DEVICE_ID_RETRY_DELAY_MS;
-        command_queue_.insert(command_queue_.begin(), retry);
-    }
-    else if ((current_command_.type == CommandType::TubePulseCount || current_command_.type == CommandType::TubeRate) &&
-             current_command_.retry < 1)
-    {
-        PendingCommand retry = current_command_;
-        retry.retry++;
-        retry.ready_ms = millis() + DEVICE_ID_RETRY_DELAY_MS;
-        command_queue_.push_back(retry);
-    }
-    else if (line_handler_ &&
-             current_command_.type != CommandType::TubePulseCount &&
-             current_command_.type != CommandType::TubeRate)
-    {
-        line_handler_(String("Command failed: ") + current_command_.command);
+        ScopedLock lock(*this);
+        awaiting_response_ = false;
+
+        if (!has_current_command_)
+            return;
+
+        failed_type = current_command_.type;
+        failed_command = current_command_.command;
+
+        if (current_command_.type == CommandType::DeviceId && current_command_.retry < DEVICE_ID_MAX_RETRY)
+        {
+            retry_cmd = current_command_;
+            retry_cmd.retry++;
+            retry_cmd.ready_ms = millis() + DEVICE_ID_RETRY_DELAY_MS;
+            should_retry = true;
+            retry_front = true;
+        }
+        else if ((current_command_.type == CommandType::TubePulseCount || current_command_.type == CommandType::TubeRate) &&
+                 current_command_.retry < 1)
+        {
+            retry_cmd = current_command_;
+            retry_cmd.retry++;
+            retry_cmd.ready_ms = millis() + DEVICE_ID_RETRY_DELAY_MS;
+            should_retry = true;
+        }
+        else if (line_handler_ &&
+                 current_command_.type != CommandType::TubePulseCount &&
+                 current_command_.type != CommandType::TubeRate)
+        {
+            handler = line_handler_;
+            should_log_failure = true;
+        }
+
+        if (should_retry)
+        {
+            if (retry_front)
+                command_queue_.insert(command_queue_.begin(), retry_cmd);
+            else
+                command_queue_.push_back(retry_cmd);
+        }
+
+        has_current_command_ = false;
+        current_command_ = PendingCommand{};
     }
 
-    emitResult(current_command_.type, String(), false);
+    if (should_log_failure && handler)
+        handler(String("Command failed: ") + failed_command);
 
-    has_current_command_ = false;
-    current_command_ = PendingCommand{};
+    emitResult(failed_type, String(), false);
+
     processQueue();
 }
 
