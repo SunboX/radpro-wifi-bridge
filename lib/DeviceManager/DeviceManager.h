@@ -5,6 +5,8 @@
 #include <utility>
 #include <vector>
 #include "UsbCdcHost.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 class DeviceManager
 {
@@ -13,6 +15,7 @@ public:
     using RawHandler = std::function<void(const uint8_t *, size_t)>;
 
     explicit DeviceManager(UsbCdcHost &host);
+    ~DeviceManager();
 
     void begin(uint16_t vid, uint16_t pid);
     void loop();
@@ -90,12 +93,25 @@ private:
     void enqueueCommand(const String &cmd, CommandType type, uint32_t delay_ms, bool announce);
     bool isCommandPending(const String &cmd) const;
     void processQueue();
-    void issueCurrentCommand();
+    void issueCurrentCommand(const PendingCommand &command);
     void handleSuccess();
     void handleError();
     void emitResult(CommandType type, const String &value, bool success);
 
     UsbCdcHost &host_;
+
+    class ScopedLock
+    {
+    public:
+        explicit ScopedLock(DeviceManager &manager) : manager_(manager) { manager_.lock(); }
+        ~ScopedLock() { manager_.unlock(); }
+
+    private:
+        DeviceManager &manager_;
+    };
+
+    void lock();
+    void unlock();
 
     LineHandler line_handler_ = nullptr;
     RawHandler raw_handler_ = nullptr;
@@ -112,4 +128,6 @@ private:
     std::vector<PendingCommand> command_queue_;
     unsigned long last_request_ms_ = 0;
     float device_sensitivity_cpm_per_uSv_ = 0.0f;
+
+    SemaphoreHandle_t mutex_ = nullptr;
 };
