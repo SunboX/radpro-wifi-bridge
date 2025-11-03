@@ -14,10 +14,7 @@
 #include "OpenSenseMap/OpenSenseMapPublisher.h"
 #include "GmcMap/GmcMapPublisher.h"
 #include "Radmon/RadmonPublisher.h"
-
-#ifndef USB_DEBUG_LOGS_ENABLED
-#define USB_DEBUG_LOGS_ENABLED 1
-#endif
+#include "BridgeDiagnostics.h"
 
 // =========================
 // Board / LED definitions
@@ -46,10 +43,6 @@ static unsigned long startupStartTime = 0;
 // Forward declarations
 static void handleStartupLogic();
 static void runMainLogic();
-static void logLine(const String &msg);
-static void logRaw(const uint8_t *data, size_t len);
-static void updateLedStatus();
-static void configureUsbLogging(bool announce);
 
 // =========================
 // USB Host wrapper
@@ -58,39 +51,16 @@ static UsbCdcHost usb;
 static DeviceManager device_manager(usb);
 
 static LedController ledController;
-static void logLine(const String &msg)
+static BridgeDiagnostics diagnostics(DBG, ledController);
+
+static void DeviceManagerLineHandler(const String &line)
 {
-    DBG.println(msg);
-    if (msg == "USB device CONNECTED")
-    {
-        ledController.clearFault(FaultCode::UsbDeviceGone);
-    }
-    else if (msg == "USB device DISCONNECTED")
-    {
-        ledController.activateFault(FaultCode::UsbDeviceGone);
-    }
-    else if (msg.startsWith("Device ID:"))
-    {
-        ledController.clearFault(FaultCode::DeviceIdTimeout);
-    }
-    else if (msg.startsWith("Tube Sensitivity:"))
-    {
-        ledController.clearFault(FaultCode::MissingSensitivity);
-    }
+    diagnostics.handleLine(line);
 }
 
-static void logRaw(const uint8_t *data, size_t len)
+static void DeviceManagerRawHandler(const uint8_t *data, size_t len)
 {
-    DBG.print("<- Raw: ");
-    for (size_t i = 0; i < len; ++i)
-    {
-        if (i)
-            DBG.print(' ');
-        char buf[4];
-        sprintf(buf, "%02X", data[i]);
-        DBG.print(buf);
-    }
-    DBG.println();
+    diagnostics.handleRaw(data, len);
 }
 
 static AppConfig appConfig;
@@ -103,7 +73,6 @@ static RadmonPublisher radmonPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
 static bool deviceReady = false;
 static bool deviceError = false;
 static bool mqttError = false;
-static bool usbDebugLogsEnabled = (USB_DEBUG_LOGS_ENABLED != 0);
 
 // =========================
 // Arduino setup / loop
@@ -131,13 +100,13 @@ void setup()
     ledController.setMode(LedMode::Booting);
     ledController.update();
 
-    configureUsbLogging(true);
+    diagnostics.initialize();
 
     // Record start time for non-blocking startup delay
     startupStartTime = millis();
 
-    device_manager.setLineHandler(logLine);
-    device_manager.setRawHandler(logRaw);
+    device_manager.setLineHandler(DeviceManagerLineHandler);
+    device_manager.setRawHandler(DeviceManagerRawHandler);
     device_manager.setCommandResultHandler([&](DeviceManager::CommandType type, const String &value, bool success)
                                            {
         if (!success)
@@ -252,7 +221,7 @@ void setup()
     gmcMapPublisher.updateConfig();
     radmonPublisher.updateConfig();
     portalService.maintain();
-    updateLedStatus();
+    diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
     ledController.update();
 }
 
@@ -281,7 +250,7 @@ void loop()
     radmonPublisher.loop();
     if (!usb.isConnected())
         deviceReady = false;
-    updateLedStatus();
+    diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
     ledController.update();
 
     // Keep loop snappy; USB host runs in its own tasks
@@ -332,18 +301,15 @@ static void handleStartupLogic()
         }
         else if (command.equalsIgnoreCase("usb debug on"))
         {
-            usbDebugLogsEnabled = true;
-            configureUsbLogging(true);
+            diagnostics.setUsbDebugEnabled(true, true);
         }
         else if (command.equalsIgnoreCase("usb debug off"))
         {
-            usbDebugLogsEnabled = false;
-            configureUsbLogging(true);
+            diagnostics.setUsbDebugEnabled(false, true);
         }
         else if (command.equalsIgnoreCase("usb debug toggle"))
         {
-            usbDebugLogsEnabled = !usbDebugLogsEnabled;
-            configureUsbLogging(true);
+            diagnostics.toggleUsbDebug();
         }
         else if (command.equalsIgnoreCase("raw toggle"))
         {
@@ -395,54 +361,5 @@ static void runMainLogic()
     {
         lastStatsRequest = now;
         device_manager.requestStats();
-    }
-}
-
-static void updateLedStatus()
-{
-    if (!isRunning)
-    {
-        ledController.setMode(LedMode::WaitingForStart);
-        return;
-    }
-
-    if (deviceError || mqttError)
-    {
-        ledController.setMode(LedMode::Error);
-        return;
-    }
-
-    if (WiFi.status() != WL_CONNECTED)
-    {
-        ledController.setMode(LedMode::WifiConnecting);
-        return;
-    }
-
-    if (!deviceReady)
-    {
-        ledController.setMode(LedMode::WifiConnected);
-        return;
-    }
-
-    ledController.setMode(LedMode::DeviceReady);
-}
-
-static void configureUsbLogging(bool announce)
-{
-    if (usbDebugLogsEnabled)
-    {
-        esp_log_level_set("cdc_acm_ops", ESP_LOG_INFO);
-        esp_log_level_set("UsbCdcHost", ESP_LOG_INFO);
-        esp_log_level_set("USBH", ESP_LOG_INFO);
-        if (announce)
-            DBG.println("USB debug logging ENABLED (cdc_acm_ops/UsbCdcHost/USBH=INFO).");
-    }
-    else
-    {
-        esp_log_level_set("cdc_acm_ops", ESP_LOG_NONE);
-        esp_log_level_set("UsbCdcHost", ESP_LOG_WARN);
-        esp_log_level_set("USBH", ESP_LOG_NONE);
-        if (announce)
-            DBG.println("USB debug logging disabled (restored quiet log levels).");
     }
 }
