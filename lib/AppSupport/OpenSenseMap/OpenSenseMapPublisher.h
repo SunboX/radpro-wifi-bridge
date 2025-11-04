@@ -8,7 +8,7 @@
 class OpenSenseMapPublisher
 {
 public:
-    OpenSenseMapPublisher(AppConfig &config, Print &log);
+    OpenSenseMapPublisher(AppConfig &config, Print &log, const char *bridgeVersion);
 
     void begin();
     void updateConfig();
@@ -23,6 +23,7 @@ private:
 
     AppConfig &config_;
     Print &log_;
+    String bridgeVersion_;
     String pendingTubeValue_;
     String pendingDoseValue_;
     bool haveTubeValue_ = false;
