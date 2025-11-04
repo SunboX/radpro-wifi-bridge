@@ -46,9 +46,10 @@ namespace
     constexpr unsigned long kRetryBackoffMs = 10000;
 }
 
-OpenSenseMapPublisher::OpenSenseMapPublisher(AppConfig &config, Print &log)
+OpenSenseMapPublisher::OpenSenseMapPublisher(AppConfig &config, Print &log, const char *bridgeVersion)
     : config_(config),
-      log_(log)
+      log_(log),
+      bridgeVersion_(bridgeVersion ? bridgeVersion : "")
 {
 }
 
@@ -186,6 +187,8 @@ bool OpenSenseMapPublisher::sendPayload(const String &payload)
     request += "\r\n";
     request += "Authorization: ";
     request += config_.openSenseApiKey;
+    request += "\r\nUser-Agent: RadPro-WiFi-Bridge/";
+    request += bridgeVersion_;
     request += "\r\n\r\n";
     request += payload;
 

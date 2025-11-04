@@ -13,9 +13,10 @@ namespace
     constexpr unsigned long kAcpmWindowMs = 60000;
 }
 
-GmcMapPublisher::GmcMapPublisher(AppConfig &config, Print &log)
+GmcMapPublisher::GmcMapPublisher(AppConfig &config, Print &log, const char *bridgeVersion)
     : config_(config),
-      log_(log)
+      log_(log),
+      bridgeVersion_(bridgeVersion ? bridgeVersion : "")
 {
 }
 
@@ -218,7 +219,9 @@ bool GmcMapPublisher::sendRequest(const String &query)
     request += query;
     request += " HTTP/1.1\r\nHost: ";
     request += kHost;
-    request += "\r\nConnection: close\r\nUser-Agent: RadPro-WiFi-Bridge/1.2.0\r\n\r\n";
+    request += "\r\nConnection: close\r\nUser-Agent: RadPro-WiFi-Bridge/";
+    request += bridgeVersion_;
+    request += "\r\n\r\n";
 
     if (client.print(request) != request.length())
     {

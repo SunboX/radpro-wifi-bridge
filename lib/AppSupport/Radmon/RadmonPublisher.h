@@ -8,7 +8,7 @@
 class RadmonPublisher
 {
 public:
-    RadmonPublisher(AppConfig &config, Print &log);
+    RadmonPublisher(AppConfig &config, Print &log, const char *bridgeVersion);
 
     void begin();
     void updateConfig();
@@ -23,6 +23,7 @@ private:
 
     AppConfig &config_;
     Print &log_;
+    String bridgeVersion_;
     String pendingCpm_;
     String pendingUsv_;
     bool haveCpm_ = false;
