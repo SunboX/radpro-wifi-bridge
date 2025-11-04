@@ -14,8 +14,11 @@
 #include "OpenSenseMap/OpenSenseMapPublisher.h"
 #include "GmcMap/GmcMapPublisher.h"
 #include "Radmon/RadmonPublisher.h"
+#include "BridgeDiagnostics.h"
 
-constexpr char kBridgeFirmwareVersion[] = "1.2.0";
+#ifndef BRIDGE_FIRMWARE_VERSION
+#define BRIDGE_FIRMWARE_VERSION "0.0.0"
+#endif
 
 // =========================
 // Board / LED definitions
@@ -44,9 +47,6 @@ static unsigned long startupStartTime = 0;
 // Forward declarations
 static void handleStartupLogic();
 static void runMainLogic();
-static void logLine(const String &msg);
-static void logRaw(const uint8_t *data, size_t len);
-static void updateLedStatus();
 
 // =========================
 // USB Host wrapper
@@ -55,48 +55,15 @@ static UsbCdcHost usb;
 static DeviceManager device_manager(usb);
 
 static LedController ledController;
-static void logLine(const String &msg)
-{
-    DBG.println(msg);
-    if (msg == "USB device CONNECTED")
-    {
-        ledController.clearFault(FaultCode::UsbDeviceGone);
-    }
-    else if (msg == "USB device DISCONNECTED")
-    {
-        ledController.activateFault(FaultCode::UsbDeviceGone);
-    }
-    else if (msg.startsWith("Device ID:"))
-    {
-        ledController.clearFault(FaultCode::DeviceIdTimeout);
-    }
-    else if (msg.startsWith("Tube Sensitivity:"))
-    {
-        ledController.clearFault(FaultCode::MissingSensitivity);
-    }
-}
-
-static void logRaw(const uint8_t *data, size_t len)
-{
-    DBG.print("<- Raw: ");
-    for (size_t i = 0; i < len; ++i)
-    {
-        if (i)
-            DBG.print(' ');
-        char buf[4];
-        sprintf(buf, "%02X", data[i]);
-        DBG.print(buf);
-    }
-    DBG.println();
-}
+static BridgeDiagnostics diagnostics(DBG, ledController);
 
 static AppConfig appConfig;
 static AppConfigStore configStore;
 static WiFiPortalService portalService(appConfig, configStore, DBG, ledController);
 static MqttPublisher mqttPublisher(appConfig, DBG, ledController);
-static OpenSenseMapPublisher openSenseMapPublisher(appConfig, DBG);
-static GmcMapPublisher gmcMapPublisher(appConfig, DBG);
-static RadmonPublisher radmonPublisher(appConfig, DBG);
+static OpenSenseMapPublisher openSenseMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
+static GmcMapPublisher gmcMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
+static RadmonPublisher radmonPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
 static bool deviceReady = false;
 static bool deviceError = false;
 static bool mqttError = false;
@@ -127,19 +94,17 @@ void setup()
     ledController.setMode(LedMode::Booting);
     ledController.update();
 
-    // Silence noisy CDC driver errors when using vendor-specific transport
-    esp_log_level_set("cdc_acm_ops", ESP_LOG_NONE);
-    // Keep UsbCdcHost chatter to warnings (use INFO for detailed debugging)
-    esp_log_level_set("UsbCdcHost", ESP_LOG_WARN);
-    // Suppress USB host stack info/error prints for cleaner output
-    esp_log_level_set("USBH", ESP_LOG_NONE);
+    diagnostics.initialize();
 
     // Record start time for non-blocking startup delay
     startupStartTime = millis();
 
-    device_manager.setLineHandler(logLine);
-    device_manager.setRawHandler(logRaw);
-    device_manager.setCommandResultHandler([&](DeviceManager::CommandType type, const String &value, bool success) {
+    device_manager.setLineHandler([&](const String &line)
+                                  { diagnostics.handleLine(line); });
+    device_manager.setRawHandler([&](const uint8_t *data, size_t len)
+                                 { diagnostics.handleRaw(data, len); });
+    device_manager.setCommandResultHandler([&](DeviceManager::CommandType type, const String &value, bool success)
+                                           {
         if (!success)
         {
             deviceError = true;
@@ -185,8 +150,7 @@ void setup()
         mqttPublisher.onCommandResult(type, value);
         openSenseMapPublisher.onCommandResult(type, value);
         gmcMapPublisher.onCommandResult(type, value);
-        radmonPublisher.onCommandResult(type, value);
-    });
+        radmonPublisher.onCommandResult(type, value); });
     device_manager.begin(0x1A86, 0x7523);
 
     // Optionally set target baud for CDC device
@@ -220,11 +184,12 @@ void setup()
 
     portalService.begin();
     mqttPublisher.begin();
-    mqttPublisher.setBridgeVersion(kBridgeFirmwareVersion);
+    mqttPublisher.setBridgeVersion(BRIDGE_FIRMWARE_VERSION);
     openSenseMapPublisher.begin();
     gmcMapPublisher.begin();
     radmonPublisher.begin();
-    mqttPublisher.setPublishCallback([&](bool success) {
+    mqttPublisher.setPublishCallback([&](bool success)
+                                     {
         if (success)
         {
             mqttError = false;
@@ -237,8 +202,7 @@ void setup()
             DBG.println("MQTT publish failed.");
             ledController.triggerPulse(LedPulse::MqttFailure, 250);
             ledController.activateFault(FaultCode::MqttConnectionReset);
-        }
-    });
+        } });
 
     WiFi.mode(WIFI_STA);
     WiFi.setHostname(appConfig.deviceName.c_str());
@@ -253,7 +217,7 @@ void setup()
     gmcMapPublisher.updateConfig();
     radmonPublisher.updateConfig();
     portalService.maintain();
-    updateLedStatus();
+    diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
     ledController.update();
 }
 
@@ -282,7 +246,7 @@ void loop()
     radmonPublisher.loop();
     if (!usb.isConnected())
         deviceReady = false;
-    updateLedStatus();
+    diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
     ledController.update();
 
     // Keep loop snappy; USB host runs in its own tasks
@@ -337,6 +301,18 @@ static void handleStartupLogic()
             DBG.print("USB raw logging toggled ");
             DBG.println(device_manager.rawLoggingEnabled() ? "ON." : "OFF.");
         }
+        else if (command.equalsIgnoreCase("usb debug on"))
+        {
+            diagnostics.setUsbDebugEnabled(true);
+        }
+        else if (command.equalsIgnoreCase("usb debug off"))
+        {
+            diagnostics.setUsbDebugEnabled(false);
+        }
+        else if (command.equalsIgnoreCase("usb debug toggle"))
+        {
+            diagnostics.toggleUsbDebug();
+        }
         else if (ALLOW_EARLY_START && command.length() > 0)
         {
             isRunning = true;
@@ -382,33 +358,4 @@ static void runMainLogic()
         lastStatsRequest = now;
         device_manager.requestStats();
     }
-}
-
-static void updateLedStatus()
-{
-    if (!isRunning)
-    {
-        ledController.setMode(LedMode::WaitingForStart);
-        return;
-    }
-
-    if (deviceError || mqttError)
-    {
-        ledController.setMode(LedMode::Error);
-        return;
-    }
-
-    if (WiFi.status() != WL_CONNECTED)
-    {
-        ledController.setMode(LedMode::WifiConnecting);
-        return;
-    }
-
-    if (!deviceReady)
-    {
-        ledController.setMode(LedMode::WifiConnected);
-        return;
-    }
-
-    ledController.setMode(LedMode::DeviceReady);
 }
