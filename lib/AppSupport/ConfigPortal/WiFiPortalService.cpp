@@ -10,6 +10,7 @@
 
 #include <Arduino.h>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <vector>
 #include <esp_wifi.h>
@@ -44,6 +45,8 @@ WiFiPortalService::WiFiPortalService(AppConfig &config,
       paramGmcDevice_("gmcDevice", "GMCMap Device ID", "", 24),
       paramRadmonUser_("radmonUser", "Radmon Username", "", kRadmonUserLen),
       paramRadmonPassword_("radmonPass", "Radmon Password", "", kRadmonPasswordLen, "type=\"password\""),
+      paramOpenRadiationDevice_("orDeviceId", "OpenRadiation Device ID", "", kOpenRadiationDeviceIdLen),
+      paramOpenRadiationApiKey_("orApiKey", "OpenRadiation API Key", "", kOpenRadiationApiKeyLen, "type=\"password\""),
       paramsAttached_(false),
       lastStatus_(WL_NO_SHIELD),
       wifiEventId_(0),
@@ -367,6 +370,8 @@ void WiFiPortalService::refreshParameters()
     paramGmcDevice_.setValue(config_.gmcMapDeviceId.c_str(), 24);
     paramRadmonUser_.setValue(config_.radmonUser.c_str(), kRadmonUserLen);
     paramRadmonPassword_.setValue(config_.radmonPassword.c_str(), kRadmonPasswordLen);
+    paramOpenRadiationDevice_.setValue(config_.openRadiationDeviceId.c_str(), kOpenRadiationDeviceIdLen);
+    paramOpenRadiationApiKey_.setValue(config_.openRadiationApiKey.c_str(), kOpenRadiationApiKeyLen);
 
     attachParameters();
 }
@@ -405,7 +410,7 @@ void WiFiPortalService::attachParameters()
             return;
         }
         routesRegistered_ = true;
-        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /gmc /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /logs /logs.json /ota /ota/status /ota/fetch /ota/upload/* /restart"));
+        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /openradiation /gmc /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /logs /logs.json /ota /ota/status /ota/fetch /ota/upload/* /restart"));
 
         manager_.server->on("/mqtt", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /mqtt"));
@@ -513,6 +518,16 @@ void WiFiPortalService::attachParameters()
             String message;
             RadmonPublisher::HandlePortalPost(*manager_.server, config_, store_, led_, log_, message);
             RadmonPublisher::SendPortalForm(*this, message);
+        });
+
+        manager_.server->on("/openradiation", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /openradiation"));
+            sendOpenRadiationForm();
+        });
+
+        manager_.server->on("/openradiation", HTTP_POST, [this]() {
+            log_.println(F("HTTP POST /openradiation"));
+            handleOpenRadiationPost();
         });
 
         manager_.server->on("/gmc", HTTP_GET, [this]() {
@@ -1228,6 +1243,13 @@ String WiFiPortalService::exportConfigJson() const
     doc["radmonEnabled"] = config_.radmonEnabled;
     doc["radmonUser"] = config_.radmonUser;
     doc["radmonPassword"] = config_.radmonPassword;
+    doc["openRadiationEnabled"] = config_.openRadiationEnabled;
+    doc["openRadiationDeviceId"] = config_.openRadiationDeviceId;
+    doc["openRadiationApiKey"] = config_.openRadiationApiKey;
+    doc["openRadiationLatitude"] = config_.openRadiationLatitude;
+    doc["openRadiationLongitude"] = config_.openRadiationLongitude;
+    doc["openRadiationAltitude"] = config_.openRadiationAltitude;
+    doc["openRadiationAccuracy"] = config_.openRadiationAccuracy;
 
     String json;
     serializeJsonPretty(doc, json);
@@ -1289,6 +1311,18 @@ bool WiFiPortalService::importConfigJson(const String &body, String &errorMessag
         target = temp;
     };
 
+    auto setFloat = [](float &target, JsonVariantConst value, float minValue, float maxValue)
+    {
+        if (value.isNull())
+            return;
+        float parsed = value.as<float>();
+        if (parsed < minValue)
+            parsed = minValue;
+        if (parsed > maxValue)
+            parsed = maxValue;
+        target = parsed;
+    };
+
     setString(updated.deviceName, doc["deviceName"]);
     setBool(updated.mqttEnabled, doc["mqttEnabled"]);
     setString(updated.mqttHost, doc["mqttHost"]);
@@ -1310,6 +1344,13 @@ bool WiFiPortalService::importConfigJson(const String &body, String &errorMessag
     setBool(updated.radmonEnabled, doc["radmonEnabled"]);
     setString(updated.radmonUser, doc["radmonUser"]);
     setString(updated.radmonPassword, doc["radmonPassword"]);
+    setBool(updated.openRadiationEnabled, doc["openRadiationEnabled"]);
+    setString(updated.openRadiationDeviceId, doc["openRadiationDeviceId"]);
+    setString(updated.openRadiationApiKey, doc["openRadiationApiKey"]);
+    setFloat(updated.openRadiationLatitude, doc["openRadiationLatitude"], -90.0f, 90.0f);
+    setFloat(updated.openRadiationLongitude, doc["openRadiationLongitude"], -180.0f, 180.0f);
+    setFloat(updated.openRadiationAltitude, doc["openRadiationAltitude"], -10000.0f, 100000.0f);
+    setFloat(updated.openRadiationAccuracy, doc["openRadiationAccuracy"], 0.0f, 100000.0f);
 
     if (updated.readIntervalMs < kMinReadIntervalMs)
         updated.readIntervalMs = kMinReadIntervalMs;
@@ -1329,6 +1370,160 @@ bool WiFiPortalService::importConfigJson(const String &body, String &errorMessag
     hasLoggedIp_ = false;
     log_.println(F("Configuration restored from backup."));
     return true;
+}
+
+void WiFiPortalService::sendOpenRadiationForm(const String &message)
+{
+    if (!manager_.server)
+        return;
+
+    String html;
+    html.reserve(2400);
+    html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>"
+              "<title>Configure OpenRadiation</title>"
+              "<style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}"
+              "h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}"
+              "label{font-weight:bold;}input{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;}"
+              "button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}"
+              "button:hover{background:#1976D2;} .wrap{display:inline-block;min-width:260px;max-width:520px;width:100%;text-align:left;}"
+              "p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;}"
+              ".toggle input{width:auto;}</style></head><body class='invert'><div class='wrap'><h1>OpenRadiation Settings</h1>");
+
+    if (message.length())
+    {
+        html += F("<p class='notice'>");
+        html += message;
+        html += F("</p>");
+    }
+
+    html += F("<form method='POST' action='/openradiation'>");
+    html += F("<label class='toggle'><input id='orEnabled' name='orEnabled' type='checkbox' value='1'");
+    if (config_.openRadiationEnabled)
+        html += F(" checked");
+    html += F("> Enable OpenRadiation publishing</label>");
+
+    html += F("<label for='orDeviceId'>Device ID</label><input id='orDeviceId' name='orDeviceId' type='text' value='");
+    html += htmlEscape(config_.openRadiationDeviceId);
+    html += F("'/>");
+
+    html += F("<label for='orApiKey'>API Key</label><input id='orApiKey' name='orApiKey' type='password' value='");
+    html += htmlEscape(config_.openRadiationApiKey);
+    html += F("'/>");
+
+    html += F("<label for='orLatitude'>Latitude</label><input id='orLatitude' name='orLatitude' type='number' step='0.000001' min='-90' max='90' value='");
+    html += String(config_.openRadiationLatitude, 6);
+    html += F("'/>");
+
+    html += F("<label for='orLongitude'>Longitude</label><input id='orLongitude' name='orLongitude' type='number' step='0.000001' min='-180' max='180' value='");
+    html += String(config_.openRadiationLongitude, 6);
+    html += F("'/>");
+
+    html += F("<label for='orAltitude'>Altitude (m, optional)</label><input id='orAltitude' name='orAltitude' type='number' step='0.1' value='");
+    html += String(config_.openRadiationAltitude, 1);
+    html += F("'/>");
+
+    html += F("<label for='orAccuracy'>Position Accuracy (m, optional)</label><input id='orAccuracy' name='orAccuracy' type='number' step='0.1' min='0' value='");
+    html += String(config_.openRadiationAccuracy, 1);
+    html += F("'/>");
+
+    html += F("<button type='submit'>Save OpenRadiation Settings</button></form>"
+              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Main menu</button></form>"
+              "</div></body></html>");
+
+    manager_.server->send(200, "text/html", html);
+}
+
+void WiFiPortalService::handleOpenRadiationPost()
+{
+    if (!manager_.server)
+        return;
+
+    auto &server = *manager_.server;
+    bool enabled = server.hasArg("orEnabled") && server.arg("orEnabled") == "1";
+    String deviceId = server.arg("orDeviceId");
+    String apiKey = server.arg("orApiKey");
+    String latStr = server.arg("orLatitude");
+    String lonStr = server.arg("orLongitude");
+    String altStr = server.arg("orAltitude");
+    String accStr = server.arg("orAccuracy");
+
+    deviceId.trim();
+    apiKey.trim();
+    latStr.trim();
+    lonStr.trim();
+    altStr.trim();
+    accStr.trim();
+
+    bool changed = false;
+    if (config_.openRadiationEnabled != enabled)
+    {
+        config_.openRadiationEnabled = enabled;
+        changed = true;
+    }
+    changed |= UpdateStringIfChanged(config_.openRadiationDeviceId, deviceId.c_str());
+    changed |= UpdateStringIfChanged(config_.openRadiationApiKey, apiKey.c_str());
+
+    auto updateFloat = [&](float &target, const String &source, float minValue, float maxValue) {
+        if (!source.length())
+            return false;
+        float parsed = source.toFloat();
+        if (parsed < minValue)
+            parsed = minValue;
+        if (parsed > maxValue)
+            parsed = maxValue;
+        if (fabsf(parsed - target) > 0.0005f)
+        {
+            target = parsed;
+            return true;
+        }
+        return false;
+    };
+
+    changed |= updateFloat(config_.openRadiationLatitude, latStr, -90.0f, 90.0f);
+    changed |= updateFloat(config_.openRadiationLongitude, lonStr, -180.0f, 180.0f);
+    if (altStr.length())
+    {
+        float parsedAlt = altStr.toFloat();
+        if (fabsf(parsedAlt - config_.openRadiationAltitude) > 0.05f)
+        {
+            config_.openRadiationAltitude = parsedAlt;
+            changed = true;
+        }
+    }
+    if (accStr.length())
+    {
+        float parsedAcc = accStr.toFloat();
+        if (parsedAcc < 0.0f)
+            parsedAcc = 0.0f;
+        if (fabsf(parsedAcc - config_.openRadiationAccuracy) > 0.05f)
+        {
+            config_.openRadiationAccuracy = parsedAcc;
+            changed = true;
+        }
+    }
+
+    String message;
+    if (changed)
+    {
+        if (store_.save(config_))
+        {
+            log_.println("OpenRadiation configuration saved to NVS.");
+            led_.clearFault(FaultCode::NvsWriteFailure);
+            message = F("OpenRadiation settings saved.");
+        }
+        else
+        {
+            log_.println("Preferences write failed; OpenRadiation configuration not saved.");
+            led_.activateFault(FaultCode::NvsWriteFailure);
+            message = F("Failed to save settings.");
+        }
+    }
+    else
+    {
+        message = F("No changes detected.");
+    }
+
+    sendOpenRadiationForm(message);
 }
 
 String WiFiPortalService::htmlEscape(const String &value)

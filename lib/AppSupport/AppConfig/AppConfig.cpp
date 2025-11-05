@@ -59,6 +59,15 @@ bool AppConfigStore::load(AppConfig &cfg)
     cfg.radmonUser = prefs_.getString("radmonUser", cfg.radmonUser);
     cfg.radmonUser.trim();
     cfg.radmonPassword = prefs_.getString("radmonPass", cfg.radmonPassword);
+    cfg.openRadiationEnabled = prefs_.getBool("orEnabled", cfg.openRadiationEnabled);
+    cfg.openRadiationDeviceId = prefs_.getString("orDeviceId", cfg.openRadiationDeviceId);
+    cfg.openRadiationDeviceId.trim();
+    cfg.openRadiationApiKey = prefs_.getString("orApiKey", cfg.openRadiationApiKey);
+    cfg.openRadiationApiKey.trim();
+    cfg.openRadiationLatitude = prefs_.getFloat("orLat", cfg.openRadiationLatitude);
+    cfg.openRadiationLongitude = prefs_.getFloat("orLon", cfg.openRadiationLongitude);
+    cfg.openRadiationAltitude = prefs_.getFloat("orAlt", cfg.openRadiationAltitude);
+    cfg.openRadiationAccuracy = prefs_.getFloat("orAcc", cfg.openRadiationAccuracy);
 
     prefs_.end();
 
@@ -96,6 +105,13 @@ bool AppConfigStore::save(const AppConfig &cfg)
     prefs_.putBool("radmonEnabled", cfg.radmonEnabled);
     prefs_.putString("radmonUser", cfg.radmonUser);
     prefs_.putString("radmonPass", cfg.radmonPassword);
+    prefs_.putBool("orEnabled", cfg.openRadiationEnabled);
+    prefs_.putString("orDeviceId", cfg.openRadiationDeviceId);
+    prefs_.putString("orApiKey", cfg.openRadiationApiKey);
+    prefs_.putFloat("orLat", cfg.openRadiationLatitude);
+    prefs_.putFloat("orLon", cfg.openRadiationLongitude);
+    prefs_.putFloat("orAlt", cfg.openRadiationAltitude);
+    prefs_.putFloat("orAcc", cfg.openRadiationAccuracy);
 
     prefs_.end();
     return true;
