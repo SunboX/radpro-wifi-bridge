@@ -18,6 +18,8 @@ constexpr size_t kOsemApiKeyLen = 80;
 constexpr size_t kOsemSensorIdLen = 64;
 constexpr size_t kRadmonUserLen = 48;
 constexpr size_t kRadmonPasswordLen = 48;
+constexpr size_t kOpenRadiationDeviceIdLen = 64;
+constexpr size_t kOpenRadiationApiKeyLen = 96;
 
 struct AppConfig
 {
@@ -42,6 +44,13 @@ struct AppConfig
     bool radmonEnabled = false;
     String radmonUser;
     String radmonPassword;
+    bool openRadiationEnabled = false;
+    String openRadiationDeviceId;
+    String openRadiationApiKey;
+    float openRadiationLatitude = 0.0f;
+    float openRadiationLongitude = 0.0f;
+    float openRadiationAltitude = 0.0f;
+    float openRadiationAccuracy = 0.0f;
 };
 
 inline bool UpdateStringIfChanged(String &target, const char *value)

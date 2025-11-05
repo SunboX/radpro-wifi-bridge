@@ -14,6 +14,7 @@
 #include "OpenSenseMap/OpenSenseMapPublisher.h"
 #include "GmcMap/GmcMapPublisher.h"
 #include "Radmon/RadmonPublisher.h"
+#include "OpenRadiation/OpenRadiationPublisher.h"
 #include "BridgeDiagnostics.h"
 
 #ifndef BRIDGE_FIRMWARE_VERSION
@@ -64,6 +65,7 @@ static MqttPublisher mqttPublisher(appConfig, DBG, ledController);
 static OpenSenseMapPublisher openSenseMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
 static GmcMapPublisher gmcMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
 static RadmonPublisher radmonPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
+static OpenRadiationPublisher openRadiationPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
 static bool deviceReady = false;
 static bool deviceError = false;
 static bool mqttError = false;
@@ -150,7 +152,8 @@ void setup()
         mqttPublisher.onCommandResult(type, value);
         openSenseMapPublisher.onCommandResult(type, value);
         gmcMapPublisher.onCommandResult(type, value);
-        radmonPublisher.onCommandResult(type, value); });
+        radmonPublisher.onCommandResult(type, value);
+        openRadiationPublisher.onCommandResult(type, value); });
     device_manager.begin(0x1A86, 0x7523);
 
     // Optionally set target baud for CDC device
@@ -188,6 +191,7 @@ void setup()
     openSenseMapPublisher.begin();
     gmcMapPublisher.begin();
     radmonPublisher.begin();
+    openRadiationPublisher.begin();
     mqttPublisher.setPublishCallback([&](bool success)
                                      {
         if (success)
@@ -216,6 +220,7 @@ void setup()
     openSenseMapPublisher.updateConfig();
     gmcMapPublisher.updateConfig();
     radmonPublisher.updateConfig();
+    openRadiationPublisher.updateConfig();
     portalService.maintain();
     diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
     ledController.update();
@@ -244,6 +249,8 @@ void loop()
     gmcMapPublisher.loop();
     radmonPublisher.updateConfig();
     radmonPublisher.loop();
+    openRadiationPublisher.updateConfig();
+    openRadiationPublisher.loop();
     if (!usb.isConnected())
         deviceReady = false;
     diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
