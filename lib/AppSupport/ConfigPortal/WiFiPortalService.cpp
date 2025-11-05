@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstring>
 #include <vector>
+#include <cmath>
 #include <esp_wifi_types.h>
 
 WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, Print &logPort, LedController &led)
@@ -25,6 +26,8 @@ WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, P
       paramGmcDevice_("gmcDevice", "GMCMap Device ID", "", 24),
       paramRadmonUser_("radmonUser", "Radmon Username", "", kRadmonUserLen),
       paramRadmonPassword_("radmonPass", "Radmon Password", "", kRadmonPasswordLen, "type=\"password\""),
+      paramOpenRadiationDevice_("orDeviceId", "OpenRadiation Device ID", "", kOpenRadiationDeviceIdLen),
+      paramOpenRadiationApiKey_("orApiKey", "OpenRadiation API Key", "", kOpenRadiationApiKeyLen, "type=\"password\""),
       paramsAttached_(false),
       lastStatus_(WL_NO_SHIELD),
       wifiEventId_(0),
@@ -239,6 +242,7 @@ void WiFiPortalService::attachParameters()
                                "<form action='/mqtt' method='get'><button class='btn btn-primary' type='submit'>Configure MQTT</button></form>"
                                "<form action='/osem' method='get'><button class='btn btn-primary' type='submit'>Configure OpenSenseMap</button></form>"
                                "<form action='/radmon' method='get'><button class='btn btn-primary' type='submit'>Configure Radmon</button></form>"
+                               "<form action='/openradiation' method='get'><button class='btn btn-primary' type='submit'>Configure OpenRadiation</button></form>"
                                "<form action='/gmc' method='get'><button class='btn btn-primary' type='submit'>Configure GMCMap</button></form>"
                                "<form action='/restart' method='get'><button class='btn btn-primary' type='submit'>Restart Device</button></form>"
                                "</div>");
@@ -269,6 +273,14 @@ void WiFiPortalService::attachParameters()
 
         manager_.server->on("/radmon", HTTP_POST, [this]() {
             handleRadmonPost();
+        });
+
+        manager_.server->on("/openradiation", HTTP_GET, [this]() {
+            sendOpenRadiationForm();
+        });
+
+        manager_.server->on("/openradiation", HTTP_POST, [this]() {
+            handleOpenRadiationPost();
         });
 
         manager_.server->on("/gmc", HTTP_GET, [this]() {
@@ -913,6 +925,160 @@ void WiFiPortalService::handleRadmonPost()
     }
 
     sendRadmonForm(message);
+}
+
+void WiFiPortalService::sendOpenRadiationForm(const String &message)
+{
+    if (!manager_.server)
+        return;
+
+    String html;
+    html.reserve(2400);
+    html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>"
+              "<title>Configure OpenRadiation</title>"
+              "<style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}"
+              "h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}"
+              "label{font-weight:bold;}input{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;}"
+              "button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}"
+              "button:hover{background:#1976D2;} .wrap{display:inline-block;min-width:260px;max-width:520px;width:100%;text-align:left;}"
+              "p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;}"
+              ".toggle input{width:auto;}</style></head><body class='invert'><div class='wrap'><h1>OpenRadiation Settings</h1>");
+
+    if (message.length())
+    {
+        html += F("<p class='notice'>");
+        html += message;
+        html += F("</p>");
+    }
+
+    html += F("<form method='POST' action='/openradiation'>");
+    html += F("<label class='toggle'><input id='orEnabled' name='orEnabled' type='checkbox' value='1'");
+    if (config_.openRadiationEnabled)
+        html += F(" checked");
+    html += F("> Enable OpenRadiation publishing</label>");
+
+    html += F("<label for='orDeviceId'>Device ID</label><input id='orDeviceId' name='orDeviceId' type='text' value='");
+    html += htmlEscape(config_.openRadiationDeviceId);
+    html += F("'/>");
+
+    html += F("<label for='orApiKey'>API Key</label><input id='orApiKey' name='orApiKey' type='password' value='");
+    html += htmlEscape(config_.openRadiationApiKey);
+    html += F("'/>");
+
+    html += F("<label for='orLatitude'>Latitude</label><input id='orLatitude' name='orLatitude' type='number' step='0.000001' min='-90' max='90' value='");
+    html += String(config_.openRadiationLatitude, 6);
+    html += F("'/>");
+
+    html += F("<label for='orLongitude'>Longitude</label><input id='orLongitude' name='orLongitude' type='number' step='0.000001' min='-180' max='180' value='");
+    html += String(config_.openRadiationLongitude, 6);
+    html += F("'/>");
+
+    html += F("<label for='orAltitude'>Altitude (m, optional)</label><input id='orAltitude' name='orAltitude' type='number' step='0.1' value='");
+    html += String(config_.openRadiationAltitude, 1);
+    html += F("'/>");
+
+    html += F("<label for='orAccuracy'>Position Accuracy (m, optional)</label><input id='orAccuracy' name='orAccuracy' type='number' step='0.1' min='0' value='");
+    html += String(config_.openRadiationAccuracy, 1);
+    html += F("'/>");
+
+    html += F("<button type='submit'>Save OpenRadiation Settings</button></form>"
+              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Main menu</button></form>"
+              "</div></body></html>");
+
+    manager_.server->send(200, "text/html", html);
+}
+
+void WiFiPortalService::handleOpenRadiationPost()
+{
+    if (!manager_.server)
+        return;
+
+    auto &server = *manager_.server;
+    bool enabled = server.hasArg("orEnabled") && server.arg("orEnabled") == "1";
+    String deviceId = server.arg("orDeviceId");
+    String apiKey = server.arg("orApiKey");
+    String latStr = server.arg("orLatitude");
+    String lonStr = server.arg("orLongitude");
+    String altStr = server.arg("orAltitude");
+    String accStr = server.arg("orAccuracy");
+
+    deviceId.trim();
+    apiKey.trim();
+    latStr.trim();
+    lonStr.trim();
+    altStr.trim();
+    accStr.trim();
+
+    bool changed = false;
+    if (config_.openRadiationEnabled != enabled)
+    {
+        config_.openRadiationEnabled = enabled;
+        changed = true;
+    }
+    changed |= UpdateStringIfChanged(config_.openRadiationDeviceId, deviceId.c_str());
+    changed |= UpdateStringIfChanged(config_.openRadiationApiKey, apiKey.c_str());
+
+    auto updateFloat = [&](float &target, const String &source, float minValue, float maxValue) {
+        if (!source.length())
+            return false;
+        float parsed = source.toFloat();
+        if (parsed < minValue)
+            parsed = minValue;
+        if (parsed > maxValue)
+            parsed = maxValue;
+        if (fabsf(parsed - target) > 0.0005f)
+        {
+            target = parsed;
+            return true;
+        }
+        return false;
+    };
+
+    changed |= updateFloat(config_.openRadiationLatitude, latStr, -90.0f, 90.0f);
+    changed |= updateFloat(config_.openRadiationLongitude, lonStr, -180.0f, 180.0f);
+    if (altStr.length())
+    {
+        float parsedAlt = altStr.toFloat();
+        if (fabsf(parsedAlt - config_.openRadiationAltitude) > 0.05f)
+        {
+            config_.openRadiationAltitude = parsedAlt;
+            changed = true;
+        }
+    }
+    if (accStr.length())
+    {
+        float parsedAcc = accStr.toFloat();
+        if (parsedAcc < 0.0f)
+            parsedAcc = 0.0f;
+        if (fabsf(parsedAcc - config_.openRadiationAccuracy) > 0.05f)
+        {
+            config_.openRadiationAccuracy = parsedAcc;
+            changed = true;
+        }
+    }
+
+    String message;
+    if (changed)
+    {
+        if (store_.save(config_))
+        {
+            log_.println("OpenRadiation configuration saved to NVS.");
+            led_.clearFault(FaultCode::NvsWriteFailure);
+            message = F("OpenRadiation settings saved.");
+        }
+        else
+        {
+            log_.println("Preferences write failed; OpenRadiation configuration not saved.");
+            led_.activateFault(FaultCode::NvsWriteFailure);
+            message = F("Failed to save settings.");
+        }
+    }
+    else
+    {
+        message = F("No changes detected.");
+    }
+
+    sendOpenRadiationForm(message);
 }
 
 void WiFiPortalService::sendGmcMapForm(const String &message)

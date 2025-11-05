@@ -31,10 +31,12 @@ private:
     void sendOpenSenseForm(const String &message = String());
     void sendRadmonForm(const String &message = String());
     void sendGmcMapForm(const String &message = String());
+    void sendOpenRadiationForm(const String &message = String());
     void handleMqttPost();
     void handleOpenSensePost();
     void handleRadmonPost();
     void handleGmcMapPost();
+    void handleOpenRadiationPost();
     static String htmlEscape(const String &value);
 
     AppConfig &config_;
@@ -56,6 +58,8 @@ private:
     WiFiManagerParameter paramGmcDevice_;
     WiFiManagerParameter paramRadmonUser_;
     WiFiManagerParameter paramRadmonPassword_;
+    WiFiManagerParameter paramOpenRadiationDevice_;
+    WiFiManagerParameter paramOpenRadiationApiKey_;
     bool paramsAttached_;
     wl_status_t lastStatus_;
     WiFiEventId_t wifiEventId_;
