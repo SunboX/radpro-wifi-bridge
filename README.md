@@ -28,7 +28,17 @@ Need help soldering the ESP32-S3 jumpers or printing the enclosure? Follow the s
 
 ---
 
+## Web Installer (ESP Web Tools)
+
+Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/
+
+Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required.
+
+---
+
 ## Quick Start
+
+### PlatformIO Install
 
 1. Install [PlatformIO](https://platformio.org/) and open this project.
 2. The default environment targets **ESP32-S3 DevKitC-1 (N16R8)** with TinyUSB host support (`platformio.ini`) and a custom `partitions.csv` that provides a 6 MB application slot (make sure that file is present when building).
@@ -36,17 +46,13 @@ Need help soldering the ESP32-S3 jumpers or printing the enclosure? Follow the s
    - CP210x (UART) port → logs & commands (`Serial0`, 115200 baud).
    - Native USB-OTG port → leave free for the RadPro sensor.
 4. Flash with `platformio run --target upload` (or `--target upload --target monitor` to auto-open the serial monitor).
-5. Watch the countdown on the UART. Enter `start` to skip the delay or adjust it with `delay <ms>`.
 
-On first boot— or whenever stored credentials fail— the firmware hosts a captive portal named `<device name> Setup`. After Wi-Fi joins successfully the same configuration UI is served at `http://<device-ip>/`.
+### First Boot & Portal
+
+1. Watch the countdown on the UART. Enter `start` to skip the delay or adjust it with `delay <ms>`.
+2. On first boot— or whenever stored credentials fail— the firmware hosts a captive portal named `<device name> Setup`. After Wi-Fi joins successfully the same configuration UI is served at `http://<device-ip>/`.
 
 ---
-
-## Web Installer (ESP Web Tools)
-
-Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/
-
-Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required.
 
 ---
 
