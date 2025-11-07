@@ -1,6 +1,6 @@
 # RadPro WiFi Bridge (ESP32-S3)
 
-![RadPro WiFi Bridge](PXL_20251102_093211783~3.jpg)
+![RadPro WiFi Bridge](docs/pictures/radpro_wifi_bridge_connected_to_fs-600.jpg)
 
 Wi-Fi/USB bridge firmware for **Bosean RadPro (FS-600) class** Geiger counters.  
 The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides status over the debug UART, keeps a heartbeat on the on-board WS2812, and mirrors telemetry to MQTT. Configuration is handled through a captive portal that stays available as a normal web UI once the device is on the network.
@@ -22,6 +22,18 @@ The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides s
 
 ---
 
+## Hardware Assembly
+
+Need help soldering the ESP32-S3 jumpers or printing the enclosure? Follow the step-by-step guide in [docs/assembly.md](docs/assembly.md).
+
+---
+
+## MQTT & Home Assistant Guide
+
+For a focused walkthrough of MQTT configuration and Home Assistant auto-discovery, see [docs/mqtt-home-assistant.md](docs/mqtt-home-assistant.md).
+
+---
+
 ## Quick Start
 
 1. Install [PlatformIO](https://platformio.org/) and open this project.
@@ -38,7 +50,7 @@ On first boot— or whenever stored credentials fail— the firmware hosts a cap
 
 ## Web Installer (ESP Web Tools)
 
-Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/
+Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/
 
 Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required.
 
@@ -61,78 +73,43 @@ Raw USB logging is invaluable when reverse-engineering RadPro responses; disable
 
 ## Wi-Fi Configuration Portal
 
-`WiFiPortalService` keeps the setup UI reachable at each stage:
+`WiFiPortalService` keeps the setup UI reachable whether the bridge is broadcasting a captive portal (`<deviceName> Setup`) or already joined to your LAN (`http://<device-ip>/`). Use it to edit Wi-Fi credentials, toggle MQTT/OpenSenseMap/GMCMap/Radmon publishers, or trigger a remote restart (`/restart`). All changes are persisted to NVS immediately and the console logs SSID/IP/RSSI updates for quick troubleshooting.
 
-- **Captive portal:** if auto-connect fails (or no credentials exist) an AP named `<deviceName> Setup` opens until valid settings are entered.
-- **Station portal:** once connected, the same UI is hosted at `http://<device-ip>/`. The built-in **Configure WiFi** page handles SSID/password and the device name (with a “Main menu” button to return). Dedicated pages let you manage **Configure MQTT**, **Configure OpenSenseMap**, **Configure GMCMap**, and **Configure Radmon** settings, complete with enable/disable toggles, service credentials, and the RadPro polling interval. A `Restart Device` button (served at `/restart`) lets you reboot the ESP remotely from the main menu.
-- **Editable fields:** Wi-Fi SSID/password plus device name on the Wi-Fi page; MQTT host/port/client/user/password, base topic, full topic pattern, and RadPro polling interval on the MQTT page. Values are trimmed; `readIntervalMs` is clamped to a minimum of 500 ms.
-- **Persistence:** saving the form flushes settings to NVS and reboots the station interface so new credentials take effect immediately.
-- **Status logging:** after `Starting RadPro WiFi Bridge…` the service announces SSID, IP, gateway, mask, RSSI, and disconnect reasons.
+![Wi-Fi portal main menu](docs/pictures/radpro_wifi_bridge_screens/Main_Menu.png)
+
+![Wi-Fi setup form](docs/pictures/radpro_wifi_bridge_screens/WiFi_Setup.png)
 
 ---
 
 ## MQTT Publishing
 
-The `MqttPublisher` bridges every RadPro response to MQTT when a broker is configured:
+Need a step-by-step walkthrough? See [docs/mqtt-home-assistant.md](docs/mqtt-home-assistant.md) for detailed MQTT broker setup and Home Assistant discovery notes.
 
-- **Configuration fields:** host, port (default 1883), client ID suffix, username/password, topic template, and full topic template (all editable from the portal).
-- **Enablement:** MQTT is disabled by default; open the portal’s **Configure MQTT** page and tick *Enable MQTT publishing* once your broker details are set.
-- **Topic templating:** `%deviceid%` (lowercase slug of the reported device ID) and `%DeviceId%` are replaced in the base topic. `%prefix%` and `%topic%` are substituted inside the full topic template. Defaults yield `stat/radpro/<deviceid>/<leaf>`.
-- **Published leaves:** `bridgeVersion`, `deviceId`, `devicePower`, `deviceBatteryVoltage`, `deviceBatteryPercent`, `deviceTime`, `deviceTimeZone`, `tubeSensitivity`, `tubeLifetime`, `tubePulseCount`, `tubeRate`, `tubeDoseRate`, `tubeDeadTime`, `tubeDeadTimeCompensation`, `tubeHvFrequency`, `tubeHvDutyCycle`, plus `randomData` and `dataLog` when requested.
-- **Bridge metadata:** the `bridgeVersion` topic is retained and surfaced as a diagnostic sensor so Home Assistant shows which RadPro WiFi Bridge firmware is running.
-- **Retain policy:** all telemetry is retained except `randomData` and `dataLog`. `devicePower` is normalised to `ON`/`OFF`.
-- **Connectivity behaviour:** publishing is skipped (with a console note) while Wi-Fi or MQTT is down. Successful publishes trigger a bright green LED pulse; failures trigger a red pulse and an explicit log message.
-
-As soon as the bridge learns the RadPro device ID it emits Home Assistant MQTT Discovery payloads under `homeassistant/<component>/…/config`, creating sensors such as tube rate, pulse count, battery voltage/percentage, and power state automatically. Entities update in place whenever you rename the device in the portal.
-
-> **Home Assistant / Mosquitto tip:** the default add-on configuration disables anonymous clients. Either enable anonymous mode (`anonymous: true`) or create a dedicated MQTT user and enter those credentials in the portal. A `MQTT connect failed: 5` log means the broker rejected the connection as unauthorised.
+The `MqttPublisher` mirrors every RadPro response to MQTT once you enable it in the portal. Topics are templated (`stat/radpro/<deviceid>/<leaf>` by default), retained, and paired with Home Assistant discovery payloads so entities appear automatically. Successful publishes pulse the LED green; failures pulse red and are logged to the console.
 
 ---
 
 ## OpenSenseMap Publishing
 
-If you use [OpenSenseMap](https://opensensemap.org/) you can push RadPro telemetry directly to your box:
+For screenshots and a full walkthrough see [docs/opensensemap.md](docs/opensensemap.md).
 
-- Toggle publishing on from the portal’s **Configure OpenSenseMap** page (disabled by default).
-- Enter your **Box ID**, **API key**, and the sensor IDs that should receive tube rate (cpm) and dose rate (µSv/h).
-- The bridge sends HTTPS requests to `api.opensensemap.org` as new readings arrive. Each value is queued and retried with a short back-off whenever Wi-Fi or the API is temporarily unavailable.
-- Tube rate and dose rate are uploaded together in a single HTTPS request (about every 4 s) to stay under openSenseMap’s API rate limits—both sensors must have valid IDs for data to appear.
-- Creating a box: pick any station name, choose the exposure that matches your installation (indoor/outdoor/mobile), set the location on the map, then select **Manual configuration** under *Hardware* and add two sensors (tube rate in cpm, dose rate in µSv/h). Save the box to get the generated sensor IDs.
-- Manual sensor entries:
-- **Tube Rate** - icon: radiation symbol, phenomenon "Tube Rate (cpm) - RadPro FS-600 Geiger", unit `cpm`, type "RadPro FS-600 Geiger".
-- **Dose Rate** - icon: radiation symbol, phenomenon "Dose Rate (uSv/h) - RadPro FS-600 Dose", unit `µSv/h`, type "RadPro FS-600 Dose".
-  - After saving you’ll see the summary screen with your **senseBox ID**, **Access Token**, and the generated sensor IDs (e.g. `69040c394b6e60008c9a770` for tube rate, `69040c394b6e60008c9a771` for dose rate). Copy the relevant IDs into the bridge’s OpenSenseMap settings.
-- Need the sensor IDs?
-  - In the OpenSenseMap dashboard: log in → *My senseBoxes* → pick your RadPro box → the **Equipment** tab lists each sensor with its `Sensor ID`.
-  - From the public box page: use **Download data → senseBox JSON** and copy the `_id` values from the `sensors` array (match by `title`).
-  - Through the API: `GET https://api.opensensemap.org/boxes/<box-id>` returns the same JSON; the `_id` fields under `sensors` are the IDs to paste into the portal.
-
-Leave the feature disabled if you don’t use OpenSenseMap—no requests will be made until you supply IDs and flip the toggle on.
+Toggle the feature on via **Configure OpenSenseMap**, paste in your box/token/sensor IDs, and the bridge will bundle tube rate + dose rate readings into HTTPS posts every few seconds. Nothing is transmitted while the toggle is off or IDs are blank.
 
 ---
 
 ## GMCMap Publishing
 
-The bridge can also submit measurements to [GMCMap](https://www.gmcmap.com/):
+Need screenshots and credentials pointers? See [docs/gmcmap.md](docs/gmcmap.md).
 
-- Enable publishing from **Configure GMCMap** in the portal and provide your Account ID, Device ID, and optional device password from the GMCMap dashboard.
-- Every time a new tube rate and dose rate pair is available the bridge issues a single HTTP GET request to `www.gmcmap.com/log2.asp` with both CPM and µSv/h values (roughly once per minute to respect GMCMap’s API limits).
-- Check the serial console for `GMCMap: GET ...` entries if you need to debug submissions.
-
-Disable the feature if you don’t use GMCMap; no HTTP requests are made unless valid credentials are stored.
+Enable GMCMap support, enter your Account ID/Device ID, and the bridge posts CPM + µSv/h pairs to `log2.asp` roughly once per minute. Leave it disabled if you don’t use GMCMap—no traffic is generated unless credentials are populated.
 
 ---
 
 ## Radmon Publishing
 
-Submissions to [radmon.org](https://radmon.org/) are handled in much the same way:
+For screenshots and the full walk-through see [docs/radmon.md](docs/radmon.md).
 
-- Open the portal’s **Configure Radmon** page, enable the toggle, and supply your radmon.org username and data-sending password (from the station control panel).
-- Once both a tube rate and dose rate arrive from the RadPro the bridge sends a GET request to `radmon.org/radmon.php?function=submit` containing the CPM value (`unit=CPM`). When dose rate is available it is forwarded as `value2` in µSv/h. Requests are spaced at least 60 s apart to stay friendly to the service.
-- Watch for `Radmon: GET ...` entries on the serial console if you need to confirm payloads or troubleshoot credentials.
-- When creating the station on radmon.org you choose the **Data sending password** and **Conversion factor**. Enter the same password in the bridge portal. For a stock RadPro FS-600 the conversion factor is roughly `0.0167` µSv/h per CPM (60 CPM ≈ 1 µSv/h); adjust if you have a calibration for your tube.
-
-As with other integrations, nothing is transmitted unless the feature is enabled and credentials are present.
+Enable the Radmon toggle, enter your station username plus data-sending password, and the bridge submits CPM (and µSv/h when available) once per minute. Disable the feature if you don’t use radmon.org; no HTTP requests are made until valid credentials exist.
 
 ---
 
