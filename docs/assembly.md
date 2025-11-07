@@ -14,7 +14,15 @@ The RadPro WiFi Bridge is an ESP32‑S3 DevKitC‑1‑N16R8V running the RadPro 
 
 ## Assembly Checklist
 
-To enable USB host mode and the WS2812 LED you must close three solder jumpers on the DevKitC. Use a fine tip iron, plenty of flux, and verify continuity with a multimeter before powering the board.
+To enable USB host mode and the WS2812 LED you must close three solder jumpers on the DevKitC. Use a fine tip iron, plenty of flux, and verify continuity with a multimeter before powering the board. If you can’t solder the bridges yourself, check the nearest makerspace or FabLab—community workshops often have the right tools and volunteers who can help. Useful directories:
+
+- [FabLabs.io](https://www.fablabs.io/labs) – official Fab Lab network map (list + JSON export).
+- [Hackerspaces.org](https://wiki.hackerspaces.org/List_of_Hacker_Spaces) – global hacker/maker space directory.
+- [MapComplete “Hackerspaces & Makerspaces”](https://mapcomplete.osm.be/hackerspaces.html) – OpenStreetMap-based map maintained by the community.
+- [Make Magazin (Germany)](https://www.make.de/makerspaces) – German-language makerspace overview (submit your space via make.de).
+- [Makers United – Sachsen](https://makers-united.de/makerspaces/) – regional map covering Saxony (handy for Vogtland & surroundings).
+- [MapAll.Space](https://mapall.space/) – aggregates SpaceAPI, FabLabs, hackerspaces.org into a single heatmap.
+- [CyberLab Makerspace Map](https://www.cyberlab.de/makerspace-map) – curated list of German makerspaces accessible to startups.
 
 ### 1. Top-side bridges (RGB + USB data)
 
