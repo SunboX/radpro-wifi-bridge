@@ -36,9 +36,7 @@ Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no loc
 
 ---
 
-## Quick Start
-
-### PlatformIO Install
+## PlatformIO Install
 
 1. Install [PlatformIO](https://platformio.org/) and open this project.
 2. The default environment targets **ESP32-S3 DevKitC-1 (N16R8)** with TinyUSB host support (`platformio.ini`) and a custom `partitions.csv` that provides a 6 MB application slot (make sure that file is present when building).
@@ -47,7 +45,7 @@ Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no loc
    - Native USB-OTG port → leave free for the RadPro sensor.
 4. Flash with `platformio run --target upload` (or `--target upload --target monitor` to auto-open the serial monitor).
 
-### First Boot & Portal
+## First Boot & Portal
 
 1. Watch the countdown on the UART. Enter `start` to skip the delay or adjust it with `delay <ms>`.
 2. On first boot— or whenever stored credentials fail— the firmware hosts a captive portal named `<device name> Setup`. After Wi-Fi joins successfully the same configuration UI is served at `http://<device-ip>/`.
