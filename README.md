@@ -28,12 +28,6 @@ Need help soldering the ESP32-S3 jumpers or printing the enclosure? Follow the s
 
 ---
 
-## MQTT & Home Assistant Guide
-
-For a focused walkthrough of MQTT configuration and Home Assistant auto-discovery, see [docs/mqtt-home-assistant.md](docs/mqtt-home-assistant.md).
-
----
-
 ## Quick Start
 
 1. Install [PlatformIO](https://platformio.org/) and open this project.
