@@ -54,21 +54,6 @@ Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no loc
 
 ---
 
-## Serial Console Commands (`Serial0`)
-
-| Command      | Description                                                   |
-|--------------|---------------------------------------------------------------|
-| `start`      | Skip the remaining startup delay and begin immediately.       |
-| `delay <ms>` | Set a new startup delay (milliseconds) and restart the timer. |
-| `raw on/off` | Enable or disable raw USB frame logging.                      |
-| `raw toggle` | Toggle raw USB logging.                                       |
-
-While waiting for the boot delay the console prints `Starting in …` once per second. After the bridge starts, only device data, Wi-Fi status changes, and MQTT diagnostics are logged— the old “Main loop is running.” chatter is gone.
-
-Raw USB logging is invaluable when reverse-engineering RadPro responses; disable it once finished to minimise serial traffic.
-
----
-
 ## Wi-Fi Configuration Portal
 
 `WiFiPortalService` keeps the setup UI reachable whether the bridge is broadcasting a captive portal (`<deviceName> Setup`) or already joined to your LAN (`http://<device-ip>/`). Use it to edit Wi-Fi credentials, toggle MQTT/OpenSenseMap/GMCMap/Radmon publishers, or trigger a remote restart (`/restart`). All changes are persisted to NVS immediately and the console logs SSID/IP/RSSI updates for quick troubleshooting.
@@ -161,6 +146,21 @@ Certain faults latch a repeating red/orange sequence so you can diagnose issues 
 | 24 | Last reset caused by watchdog | red ×1 → orange ×24 |
 
 The lowest-numbered active fault is displayed. Resolving the root cause (for example, restoring Wi‑Fi credentials or saving NVS successfully) clears that code and reveals any higher-numbered faults that remain. Some codes are reserved for diagnostic scenarios outside normal runtime, but the blink language stays consistent if you raise them manually.
+
+---
+
+## Serial Console Commands (`Serial0`)
+
+| Command      | Description                                                   |
+|--------------|---------------------------------------------------------------|
+| `start`      | Skip the remaining startup delay and begin immediately.       |
+| `delay <ms>` | Set a new startup delay (milliseconds) and restart the timer. |
+| `raw on/off` | Enable or disable raw USB frame logging.                      |
+| `raw toggle` | Toggle raw USB logging.                                       |
+
+While waiting for the boot delay the console prints `Starting in …` once per second. After the bridge starts, only device data, Wi-Fi status changes, and MQTT diagnostics are logged— the old “Main loop is running.” chatter is gone.
+
+Raw USB logging is invaluable when reverse-engineering RadPro responses; disable it once finished to minimise serial traffic.
 
 ---
 
