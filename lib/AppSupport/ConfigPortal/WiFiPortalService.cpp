@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cstring>
 #include <vector>
-#include <esp_wifi_types.h>
+#include <esp_wifi.h>
 
 WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, Print &logPort, LedController &led)
     : config_(config),
@@ -33,7 +33,9 @@ WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, P
       loggingEnabled_(false),
       pendingReconnect_(false),
       lastReconnectAttemptMs_(0),
-      waitingForIpSinceMs_(0)
+      waitingForIpSinceMs_(0),
+      portalPsDisabled_(false),
+      previousPsType_(WIFI_PS_MIN_MODEM)
 {
 }
 
@@ -395,6 +397,12 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
         led_.clearFault(FaultCode::WifiAuthFailure);
         break;
     }
+    case ARDUINO_EVENT_WIFI_AP_START:
+        disablePortalPowerSave();
+        break;
+    case ARDUINO_EVENT_WIFI_AP_STOP:
+        restorePortalPowerSave();
+        break;
     case ARDUINO_EVENT_WIFI_STA_CONNECTED:
     {
         char ssid[33] = {0};
@@ -524,6 +532,34 @@ void WiFiPortalService::logStatus()
     {
         log_.println("Wi-Fi not connected.");
     }
+}
+
+void WiFiPortalService::disablePortalPowerSave()
+{
+    if (portalPsDisabled_)
+        return;
+
+    wifi_ps_type_t current;
+    if (esp_wifi_get_ps(&current) == ESP_OK)
+        previousPsType_ = current;
+
+    if (esp_wifi_set_ps(WIFI_PS_NONE) == ESP_OK)
+    {
+        portalPsDisabled_ = true;
+        log_.println("Wi-Fi power save disabled for captive portal.");
+    }
+}
+
+void WiFiPortalService::restorePortalPowerSave()
+{
+    if (!portalPsDisabled_)
+        return;
+
+    if (esp_wifi_set_ps(previousPsType_) == ESP_OK)
+    {
+        log_.println("Wi-Fi power save restored.");
+    }
+    portalPsDisabled_ = false;
 }
 
 void WiFiPortalService::attemptReconnect()

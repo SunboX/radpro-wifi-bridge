@@ -2,6 +2,7 @@
 
 #include <WiFi.h>
 #include <WiFiManager.h>
+#include <esp_wifi_types.h>
 #include "AppConfig/AppConfig.h"
 #include "Led/LedController.h"
 
@@ -36,6 +37,8 @@ private:
     void handleRadmonPost();
     void handleGmcMapPost();
     static String htmlEscape(const String &value);
+    void disablePortalPowerSave();
+    void restorePortalPowerSave();
 
     AppConfig &config_;
     AppConfigStore &store_;
@@ -67,4 +70,6 @@ private:
     unsigned long waitingForIpSinceMs_ = 0;
     String lastKnownSsid_;
     String lastKnownPass_;
+    bool portalPsDisabled_ = false;
+    wifi_ps_type_t previousPsType_ = WIFI_PS_MIN_MODEM;
 };
