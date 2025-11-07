@@ -3,7 +3,7 @@ PlatformIO post-build helper that copies generated binaries into the
 GitHub Pages bundle consumed by ESP Web Tools.
 
 The script runs after each successful build and updates
-`docs/firmware/latest/` with the current bootloader, partition table,
+`docs/web-install/firmware/latest/` with the current bootloader, partition table,
 and application image so the web installer always serves the latest
 artifacts.
 """
@@ -31,7 +31,7 @@ def copy_firmware_bundle(source, target, env) -> None:
     """
     project_dir = Path(env["PROJECT_DIR"])
     build_dir = Path(env.subst("$BUILD_DIR"))
-    dest_dir = project_dir / "docs" / "firmware" / "latest"
+    dest_dir = project_dir / "docs" / "web-install" / "firmware" / "latest"
 
     progname = env.subst("$PROGNAME") or "firmware"
 
