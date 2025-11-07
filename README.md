@@ -178,24 +178,31 @@ Retries, back-off, and duplicate suppression are handled inside `DeviceManager`.
 
 ## Project Structure
 
-| Path                                   | Purpose |
-|----------------------------------------|---------|
-| `src/main.cpp`                         | Arduino entry point: startup state machine, Wi-Fi orchestration, LED updates, telemetry loop. |
-| `lib/UsbCdcHost`                       | TinyUSB host wrapper plus CH34x helper for the vendor CDC transport. |
-| `lib/DeviceManager`                    | RadPro command queue, response parsing, publish callbacks, retry/back-off logic. |
-| `lib/AppSupport/AppConfig`             | NVS-backed configuration storage and parameter helpers. |
-| `lib/AppSupport/ConfigPortal`          | WiFiManager integration, captive/station portal, restart endpoint, Wi-Fi logging. |
-| `lib/AppSupport/Mqtt`                  | PubSubClient-based MQTT publisher with topic templating and slug generation. |
-| `lib/AppSupport/Led`                   | WS2812 status controller and LED pulse handling. |
-| `platformio.ini`                       | PlatformIO configuration for ESP32-S3 DevKitC-1 with TinyUSB host. |
+| Path | Purpose |
+|------|---------|
+| `src/main.cpp` | Arduino entry point: startup sequencing, Wi-Fi orchestration, LED updates, telemetry loop. |
+| `components/usb_host_vcp` | ESP-IDF component that wraps TinyUSB + vendor CH34x handling so the RadPro enumerates reliably. |
+| `lib/UsbCdcHost` | High-level USB CDC host wrapper used by `DeviceManager`. |
+| `lib/DeviceManager` | Command queue, response parsing, retries/back-off, publish callbacks. |
+| `lib/AppSupport/*` | Support modules (AppConfig, ConfigPortal, Mqtt, Led, diagnostics helpers). |
+| `docs/assembly.md` | Hardware assembly guide (solder bridges, enclosure, flashing). |
+| `docs/mqtt-home-assistant.md` | Detailed MQTT/Home Assistant setup guide. |
+| `docs/opensensemap.md`, `docs/gmcmap.md`, `docs/radmon.md` | Service-specific publishing guides with screenshots. |
+| `docs/web-install/` | Browser-based installer (ESP Web Tools) plus staged firmware bundle (`firmware/latest`). |
+| `tools/copy_firmware.py` | PlatformIO post-build hook that refreshes the `docs/web-install/firmware/latest/` artifacts. |
+| `platformio.ini` | PlatformIO configuration targeting the ESP32-S3 DevKitC-1 with TinyUSB host support. |
 
 ---
 
 ## Roadmap
 
-- Push CPM / pulse counts to cloud services such as **OpenSenseMap**, **GMCMap**, and **Radmon.org**.
 - Add configurable reporting thresholds / batching beyond the global interval.
 - Integrate OTA firmware updates.
+- Investigate additional publisher targets:
+  - **Safecast** – large citizen-science network (bGeigie, Safecast:Drive). They provide JSON-based upload flows if you stick to their schema; requires coordination with the Safecast community.
+  - **OpenRadiation** – IRSN/CEA-backed project with a documented REST API (API key required) for user contributors.
+  - **uRADMonitor** – global network with proprietary + DIY kits; includes API protocols for feeding third-party data once a device is registered.
+  - **GammaSense** – Waag/RIVM citizen sensing initiative; API access may require project partnership depending on phase/status.
 
 ---
 
