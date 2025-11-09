@@ -5,6 +5,7 @@
 #include <esp_wifi_types.h>
 #include "DeviceInfo/DeviceInfoStore.h"
 #include "DeviceInfo/DeviceInfoPage.h"
+#include "DeviceInfo/BridgeInfoPage.h"
 #include "AppConfig/AppConfig.h"
 #include "Led/LedController.h"
 
@@ -46,6 +47,7 @@ private:
     AppConfigStore &store_;
     DeviceInfoStore &deviceInfo_;
     DeviceInfoPage deviceInfoPage_;
+    BridgeInfoPage bridgeInfoPage_;
     WiFiManager manager_;
     Print &log_;
     LedController &led_;
