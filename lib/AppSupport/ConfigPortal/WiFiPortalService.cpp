@@ -6,9 +6,11 @@
 #include <vector>
 #include <esp_wifi.h>
 
-WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, Print &logPort, LedController &led)
+WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, DeviceInfoStore &info, Print &logPort, LedController &led)
     : config_(config),
       store_(store),
+      deviceInfo_(info),
+      deviceInfoPage_(info),
       manager_(),
       log_(logPort),
       led_(led),
@@ -242,7 +244,8 @@ void WiFiPortalService::attachParameters()
                                "<form action='/osem' method='get'><button class='btn btn-primary' type='submit'>Configure OpenSenseMap</button></form>"
                                "<form action='/radmon' method='get'><button class='btn btn-primary' type='submit'>Configure Radmon</button></form>"
                                "<form action='/gmc' method='get'><button class='btn btn-primary' type='submit'>Configure GMCMap</button></form>"
-                               "<form action='/restart' method='get'><button class='btn btn-primary' type='submit'>Restart Device</button></form>"
+                               "<form action='/device' method='get'><button class='btn btn-primary' type='submit'>RadPro Device Info</button></form>"
+                               "<form action='/restart' method='get'><button class='btn btn-primary' type='submit'>Restart WiFi Bridge</button></form>"
                                "</div>");
 
     manager_.setWebServerCallback([this]() {
@@ -279,6 +282,14 @@ void WiFiPortalService::attachParameters()
 
         manager_.server->on("/gmc", HTTP_POST, [this]() {
             handleGmcMapPost();
+        });
+
+        manager_.server->on("/device", HTTP_GET, [this]() {
+            deviceInfoPage_.handlePage(&manager_);
+        });
+
+        manager_.server->on("/device.json", HTTP_GET, [this]() {
+            deviceInfoPage_.handleJson(&manager_);
         });
 
         manager_.server->on("/restart", HTTP_GET, [this]() {
