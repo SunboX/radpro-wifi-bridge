@@ -30,7 +30,7 @@ String DeviceInfoPage::buildHtml() const
               "<style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}"
               ".wrap{max-width:620px;width:100%;}"
               "h1{margin-top:0;}section{background:#1e1e1e;border-radius:8px;padding:16px;margin-bottom:20px;box-shadow:0 4px 18px rgba(0,0,0,0.35);}"
-              "dl{display:grid;grid-template-columns:minmax(140px,1fr) minmax(180px,2fr);grid-row-gap:8px;margin:0;}"
+              "dl{display:grid;grid-template-columns:minmax(100px,1fr) minmax(180px,2fr);gap:8px;margin:0;}"
               "dt{font-weight:bold;color:#9ecfff;}dd{margin:0;}"
               ".measurements{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:12px;}"
               ".card{background:#222;padding:12px;border-radius:6px;text-align:center;border:1px solid #333;}"
