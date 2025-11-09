@@ -11,6 +11,7 @@ WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, D
       store_(store),
       deviceInfo_(info),
       deviceInfoPage_(info),
+      bridgeInfoPage_(),
       manager_(),
       log_(logPort),
       led_(led),
@@ -245,6 +246,7 @@ void WiFiPortalService::attachParameters()
                                "<form action='/radmon' method='get'><button class='btn btn-primary' type='submit'>Configure Radmon</button></form>"
                                "<form action='/gmc' method='get'><button class='btn btn-primary' type='submit'>Configure GMCMap</button></form>"
                                "<form action='/device' method='get'><button class='btn btn-primary' type='submit'>RadPro Device Info</button></form>"
+                               "<form action='/bridge' method='get'><button class='btn btn-primary' type='submit'>WiFi Bridge Info</button></form>"
                                "<form action='/restart' method='get'><button class='btn btn-primary' type='submit'>Restart WiFi Bridge</button></form>"
                                "</div>");
 
@@ -290,6 +292,14 @@ void WiFiPortalService::attachParameters()
 
         manager_.server->on("/device.json", HTTP_GET, [this]() {
             deviceInfoPage_.handleJson(&manager_);
+        });
+
+        manager_.server->on("/bridge", HTTP_GET, [this]() {
+            bridgeInfoPage_.handlePage(&manager_);
+        });
+
+        manager_.server->on("/bridge.json", HTTP_GET, [this]() {
+            bridgeInfoPage_.handleJson(&manager_);
         });
 
         manager_.server->on("/restart", HTTP_GET, [this]() {
@@ -679,7 +689,7 @@ void WiFiPortalService::sendMqttForm(const String &message)
     html += F("'/>");
 
     html += F("<button type='submit'>Save MQTT Settings</button></form>"
-              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Main menu</button></form>"
+              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Back to Main Menu</button></form>"
               "</div></body></html>");
 
     manager_.server->send(200, "text/html", html);
@@ -814,7 +824,7 @@ void WiFiPortalService::sendOpenSenseForm(const String &message)
     html += F("'/>");
 
     html += F("<button type='submit'>Save OpenSenseMap Settings</button></form>"
-              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Main menu</button></form>"
+              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Back to Main Menu</button></form>"
               "</div></body></html>");
 
     manager_.server->send(200, "text/html", html);
@@ -906,7 +916,7 @@ void WiFiPortalService::sendRadmonForm(const String &message)
     html += F("'/>");
 
     html += F("<button type='submit'>Save Radmon Settings</button></form>"
-              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Main menu</button></form>"
+              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Back to Main Menu</button></form>"
               "</div></body></html>");
 
     manager_.server->send(200, "text/html", html);
@@ -997,7 +1007,7 @@ void WiFiPortalService::sendGmcMapForm(const String &message)
     html += F("'/>");
 
     html += F("<button type='submit'>Save GMCMap Settings</button></form>"
-              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Main menu</button></form>"
+              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Back to Main Menu</button></form>"
               "</div></body></html>");
 
     manager_.server->send(200, "text/html", html);
