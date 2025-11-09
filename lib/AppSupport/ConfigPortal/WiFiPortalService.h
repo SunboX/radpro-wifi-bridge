@@ -3,13 +3,15 @@
 #include <WiFi.h>
 #include <WiFiManager.h>
 #include <esp_wifi_types.h>
+#include "DeviceInfo/DeviceInfoStore.h"
+#include "DeviceInfo/DeviceInfoPage.h"
 #include "AppConfig/AppConfig.h"
 #include "Led/LedController.h"
 
 class WiFiPortalService
 {
 public:
-    WiFiPortalService(AppConfig &config, AppConfigStore &store, Print &logPort, LedController &led);
+    WiFiPortalService(AppConfig &config, AppConfigStore &store, DeviceInfoStore &info, Print &logPort, LedController &led);
 
     void begin();
     bool connect(bool forcePortal);
@@ -42,6 +44,8 @@ private:
 
     AppConfig &config_;
     AppConfigStore &store_;
+    DeviceInfoStore &deviceInfo_;
+    DeviceInfoPage deviceInfoPage_;
     WiFiManager manager_;
     Print &log_;
     LedController &led_;

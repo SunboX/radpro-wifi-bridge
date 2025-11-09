@@ -15,6 +15,7 @@
 #include "GmcMap/GmcMapPublisher.h"
 #include "Radmon/RadmonPublisher.h"
 #include "BridgeDiagnostics.h"
+#include "DeviceInfo/DeviceInfoStore.h"
 
 #ifndef BRIDGE_FIRMWARE_VERSION
 #define BRIDGE_FIRMWARE_VERSION "0.0.0"
@@ -56,10 +57,11 @@ static DeviceManager device_manager(usb);
 
 static LedController ledController;
 static BridgeDiagnostics diagnostics(DBG, ledController);
+static DeviceInfoStore deviceInfoStore;
 
 static AppConfig appConfig;
 static AppConfigStore configStore;
-static WiFiPortalService portalService(appConfig, configStore, DBG, ledController);
+static WiFiPortalService portalService(appConfig, configStore, deviceInfoStore, DBG, ledController);
 static MqttPublisher mqttPublisher(appConfig, DBG, ledController);
 static OpenSenseMapPublisher openSenseMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
 static GmcMapPublisher gmcMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
@@ -79,6 +81,8 @@ void setup()
     delay(300);
 
     DBG.println("Initializing RadPro WiFi Bridge…");
+
+    deviceInfoStore.setBridgeFirmware(BRIDGE_FIRMWARE_VERSION);
 
     esp_reset_reason_t resetReason = esp_reset_reason();
     if (resetReason == ESP_RST_BROWNOUT)
@@ -147,6 +151,7 @@ void setup()
 
         ledController.clearFault(FaultCode::CommandTimeout);
 
+        deviceInfoStore.update(type, value);
         mqttPublisher.onCommandResult(type, value);
         openSenseMapPublisher.onCommandResult(type, value);
         gmcMapPublisher.onCommandResult(type, value);
