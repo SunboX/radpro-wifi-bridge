@@ -57,7 +57,7 @@ String DeviceInfoPage::buildHtml() const
               "<div class='card'><span class='label'>Battery %</span><span class='value' id='batteryPercent'>—</span></div>"
               "<div class='card'><span class='label'>Last Update</span><span class='value' id='measurementAge'>—</span></div>"
               "</div></section>"
-              "<form action='/' method='get'><button type='submit'>Back to main menu</button></form>");
+              "<form action='/' method='get'><button type='submit'>Back to Main Menu</button></form>");
     html += F("</div>");
     return html;
 }
