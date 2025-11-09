@@ -48,7 +48,7 @@ String DeviceInfoPage::buildHtml() const
               "<dt>Locale</dt><dd id='locale'>—</dd>"
               "<dt>Power</dt><dd id='devicePower'>—</dd>"
               "</dl></section>");
-    html += F("<section><h2>Live measurements</h2>"
+    html += F("<section><h2>Live Measurements</h2>"
               "<div class='measurements'>"
               "<div class='card'><span class='label'>Tube Rate (cpm)</span><span class='value' id='tubeRate'>—</span></div>"
               "<div class='card'><span class='label'>Dose Rate (&micro;Sv/h)</span><span class='value' id='tubeDoseRate'>—</span></div>"
@@ -82,6 +82,6 @@ String DeviceInfoPage::buildScript() const
                 "if(data.measurementAgeMs!==null&&data.measurementAgeMs!==undefined){const seconds=(data.measurementAgeMs/1000).toFixed(1);setField('measurementAge',seconds+' s ago');}"
                 "else{setField('measurementAge','—');}"
                 "}catch(err){console.warn('Device info refresh failed',err);}}"
-                "refreshDeviceInfo();setInterval(refreshDeviceInfo,4000);</script>");
+                "refreshDeviceInfo();setInterval(refreshDeviceInfo,10000);</script>");
     return script;
 }

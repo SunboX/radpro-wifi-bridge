@@ -624,7 +624,7 @@ void WiFiPortalService::sendMqttForm(const String &message)
               "<title>Configure MQTT</title>"
               "<style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}"
               "h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}"
-              "label{font-weight:bold;}input,select{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;}"
+              "label{font-weight:bold;}input,select{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;box-sizing:border-box;}"
               "button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}"
               "button:hover{background:#1976D2;}a{color:#03A9F4;} .wrap{display:inline-block;min-width:260px;max-width:500px;width:100%;text-align:left;}"
               "p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;}"
@@ -778,7 +778,7 @@ void WiFiPortalService::sendOpenSenseForm(const String &message)
               "<title>Configure OpenSenseMap</title>"
               "<style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}"
               "h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}"
-              "label{font-weight:bold;}input{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;}"
+              "label{font-weight:bold;}input{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;box-sizing:border-box;}"
               "button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}"
               "button:hover{background:#1976D2;} .wrap{display:inline-block;min-width:260px;max-width:500px;width:100%;text-align:left;}"
               "p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;}"
@@ -880,7 +880,7 @@ void WiFiPortalService::sendRadmonForm(const String &message)
     html.reserve(2048);
     html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>");
     html += F("<title>Configure Radmon</title><style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}");
-    html += F("h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}label{font-weight:bold;}input{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;}");
+    html += F("h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}label{font-weight:bold;}input{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;box-sizing:border-box;}");
     html += F("button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}button:hover{background:#1976D2;}");
     html += F(".wrap{display:inline-block;min-width:260px;max-width:500px;width:100%;text-align:left;}p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;} .toggle input{width:auto;}</style></head><body class='invert'><div class='wrap'><h1>Radmon Settings</h1>");
 
@@ -971,7 +971,7 @@ void WiFiPortalService::sendGmcMapForm(const String &message)
     html.reserve(2048);
     html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>");
     html += F("<title>Configure GMCMap</title><style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}");
-    html += F("h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}label{font-weight:bold;}input{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;}");
+    html += F("h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}label{font-weight:bold;}input{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;box-sizing:border-box;}");
     html += F("button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}button:hover{background:#1976D2;}");
     html += F(".wrap{display:inline-block;min-width:260px;max-width:500px;width:100%;text-align:left;}p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;} .toggle input{width:auto;}</style></head><body class='invert'><div class='wrap'><h1>GMCMap Settings</h1>");
 
