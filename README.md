@@ -58,7 +58,7 @@ Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no loc
 
 `WiFiPortalService` keeps the setup UI reachable whether the bridge is broadcasting a captive portal (`<deviceName> Setup`) or already joined to your LAN (`http://<device-ip>/`). Use it to edit Wi-Fi credentials, toggle MQTT/OpenSenseMap/GMCMap/Radmon publishers, or trigger a remote restart (`/restart`). All changes are persisted to NVS immediately and the console logs SSID/IP/RSSI updates for quick troubleshooting.
 
-![Wi-Fi portal main menu](docs/pictures/radpro_wifi_bridge_screens/Main_Menu.png)
+![Wi-Fi portal Main Menu](docs/pictures/radpro_wifi_bridge_screens/Main_Menu.png)
 
 ![Wi-Fi setup form](docs/pictures/radpro_wifi_bridge_screens/WiFi_Setup.png)
 
