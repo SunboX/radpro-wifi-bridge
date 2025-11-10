@@ -39,6 +39,11 @@ private:
     void handleOpenSensePost();
     void handleRadmonPost();
     void handleGmcMapPost();
+    void sendConfigBackupPage(const String &message = String());
+    void handleConfigDownload();
+    void handleConfigRestore();
+    String exportConfigJson() const;
+    bool importConfigJson(const String &body, String &errorMessage);
     static String htmlEscape(const String &value);
     void disablePortalPowerSave();
     void restorePortalPowerSave();
