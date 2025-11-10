@@ -5,6 +5,7 @@
 #include <cstring>
 #include <vector>
 #include <esp_wifi.h>
+#include <ArduinoJson.h>
 
 WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, DeviceInfoStore &info, Print &logPort, LedController &led)
     : config_(config),
@@ -53,10 +54,10 @@ void WiFiPortalService::begin()
     manager_.setMenu(menuEntries);
     manager_.setSaveConfigCallback([this]()
                                    { store_.requestSave(); });
-    manager_.setSaveParamsCallback([this]() {
+    manager_.setSaveParamsCallback([this]()
+                                   {
         applyFromParameters(false, true);
-        store_.requestSave();
-    });
+        store_.requestSave(); });
     wifiEventId_ = WiFi.onEvent([this](WiFiEvent_t event, WiFiEventInfo_t info)
                                 { handleWiFiEvent(event, info); });
     attachParameters();
@@ -241,16 +242,18 @@ void WiFiPortalService::attachParameters()
     manager_.addParameter(&paramDeviceName_);
 
     manager_.setCustomMenuHTML("<div style='margin:-5px;display:flex;flex-direction:column;gap:20px;'>"
+                               "<form action='/device' method='get'><button class='btn btn-primary' type='submit'>RadPro Device Info</button></form>"
+                               "<form action='/bridge' method='get'><button class='btn btn-primary' type='submit'>WiFi Bridge Info</button></form>"
                                "<form action='/mqtt' method='get'><button class='btn btn-primary' type='submit'>Configure MQTT</button></form>"
                                "<form action='/osem' method='get'><button class='btn btn-primary' type='submit'>Configure OpenSenseMap</button></form>"
                                "<form action='/radmon' method='get'><button class='btn btn-primary' type='submit'>Configure Radmon</button></form>"
                                "<form action='/gmc' method='get'><button class='btn btn-primary' type='submit'>Configure GMCMap</button></form>"
-                               "<form action='/device' method='get'><button class='btn btn-primary' type='submit'>RadPro Device Info</button></form>"
-                               "<form action='/bridge' method='get'><button class='btn btn-primary' type='submit'>WiFi Bridge Info</button></form>"
+                               "<form action='/backup' method='get'><button class='btn btn-primary' type='submit'>Configuration Backup &amp; Restore</button></form>"
                                "<form action='/restart' method='get'><button class='btn btn-primary' type='submit'>Restart WiFi Bridge</button></form>"
                                "</div>");
 
-    manager_.setWebServerCallback([this]() {
+    manager_.setWebServerCallback([this]()
+                                  {
         if (!manager_.server)
             return;
 
@@ -302,20 +305,32 @@ void WiFiPortalService::attachParameters()
             bridgeInfoPage_.handleJson(&manager_);
         });
 
+        manager_.server->on("/backup", HTTP_GET, [this]() {
+            sendConfigBackupPage();
+        });
+
+        manager_.server->on("/backup.json", HTTP_GET, [this]() {
+            handleConfigDownload();
+        });
+
+        manager_.server->on("/backup/restore", HTTP_POST, [this]() {
+            handleConfigRestore();
+        });
+
         manager_.server->on("/restart", HTTP_GET, [this]() {
             manager_.server->send(200, "text/plain", "Restarting...\n");
             log_.println("Restart requested from Wi-Fi portal.");
             delay(200);
             ESP.restart();
-        });
-    });
+        }); });
 
     paramsAttached_ = true;
 }
 
 bool WiFiPortalService::applyFromParameters(bool persist, bool forceSave)
 {
-    auto readTrimmed = [](const char *value) -> String {
+    auto readTrimmed = [](const char *value) -> String
+    {
         String result = value ? String(value) : String();
         result.trim();
         return result;
@@ -1057,6 +1072,229 @@ void WiFiPortalService::handleGmcMapPost()
     }
 
     sendGmcMapForm(message);
+}
+
+void WiFiPortalService::sendConfigBackupPage(const String &message)
+{
+    if (!manager_.server)
+        return;
+
+    bool isError = message.startsWith(F("ERROR:"));
+    String displayMessage = isError ? message.substring(6) : message;
+    displayMessage.trim();
+
+    String html;
+    html.reserve(5000);
+    html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>");
+    html += F("<title>Configuration Backup &amp; Restore</title><style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}"
+              ".wrap{max-width:620px;width:100%;}section{background:#1e1e1e;border-radius:8px;padding:16px;margin-bottom:20px;box-shadow:0 4px 18px rgba(0,0,0,0.35);}"
+              "h1{margin-top:0;}button{padding:10px;width:100%;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;}"
+              "button:hover{background:#1976D2;}p.notice{margin:0 0 16px;color:#8bc34a;}p.notice.error{color:#ff7676;}"
+              ".client-msg{margin-top:10px;color:#ffca28;} .client-msg.error{color:#ff7676;}input[type=file]{width:100%;}");
+    html += F("</style></head><body class='invert'><div class='wrap'><h1>Configuration Backup &amp; Restore</h1>");
+
+    if (displayMessage.length())
+    {
+        html += isError ? F("<p class='notice error'>") : F("<p class='notice'>");
+        html += htmlEscape(displayMessage);
+        html += F("</p>");
+    }
+
+    html += F("<section><h2>Download Backup</h2><p>Grab a JSON snapshot of the current configuration for safekeeping.</p>"
+              "<form action='/backup.json' method='get'><button type='submit'>Download JSON Backup</button></form></section>");
+
+    html += F("<section><h2>Restore From Backup</h2><p>Select a previously exported JSON file. The device will apply the settings immediately.</p>"
+              "<input type='file' id='restoreFile' accept='application/json' style='margin-bottom:12px;'/>"
+              "<form id='restoreForm' action='/backup/restore' method='post'>"
+              "<textarea id='configJsonField' name='configJson' style='display:none;'></textarea>"
+              "<button type='button' id='restoreSubmit'>Restore Configuration</button>"
+              "</form><p id='restoreClientMessage' class='client-msg'></p></section>");
+
+    html += F("<form action='/' method='get'><button type='submit'>Back to Main Menu</button></form>");
+
+    html += F("</div><script>const fileInput=document.getElementById('restoreFile');const hiddenField=document.getElementById('configJsonField');"
+              "const clientMsg=document.getElementById('restoreClientMessage');const form=document.getElementById('restoreForm');"
+              "const submitBtn=document.getElementById('restoreSubmit');"
+              "submitBtn.addEventListener('click',async()=>{clientMsg.textContent='';clientMsg.classList.remove('error');"
+              "if(!fileInput.files.length){clientMsg.textContent='Please choose a backup file first.';clientMsg.classList.add('error');return;}"
+              "try{const text=await fileInput.files[0].text();hiddenField.value=text;form.submit();}catch(err){clientMsg.textContent='Could not read file: '+err.message;clientMsg.classList.add('error');}});"
+              "</script></body></html>");
+
+    manager_.server->send(200, "text/html", html);
+}
+
+void WiFiPortalService::handleConfigDownload()
+{
+    if (!manager_.server)
+        return;
+
+    auto &server = *manager_.server;
+    String json = exportConfigJson();
+    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    server.sendHeader("Pragma", "no-cache");
+    server.sendHeader("Expires", "0");
+    server.sendHeader("Content-Disposition", "attachment; filename=\"radpro-wifi-bridge-config.json\"");
+    server.send(200, "application/json", json);
+}
+
+void WiFiPortalService::handleConfigRestore()
+{
+    if (!manager_.server)
+        return;
+
+    auto &server = *manager_.server;
+    String body;
+    if (server.hasArg("configJson"))
+        body = server.arg("configJson");
+    else if (server.hasArg("plain"))
+        body = server.arg("plain");
+
+    body.trim();
+    if (!body.length())
+    {
+        sendConfigBackupPage(F("ERROR: No configuration data received."));
+        return;
+    }
+
+    String error;
+    if (importConfigJson(body, error))
+    {
+        sendConfigBackupPage(F("Configuration restored. The bridge will reconnect with the imported settings."));
+    }
+    else
+    {
+        sendConfigBackupPage(String(F("ERROR: ")) + error);
+    }
+}
+
+String WiFiPortalService::exportConfigJson() const
+{
+    JsonDocument doc;
+    doc["schema"] = "radpro-wifi-bridge-config";
+    doc["bridgeFirmware"] = BRIDGE_FIRMWARE_VERSION;
+    doc["generatedMs"] = millis();
+    doc["deviceName"] = config_.deviceName;
+    doc["mqttEnabled"] = config_.mqttEnabled;
+    doc["mqttHost"] = config_.mqttHost;
+    doc["mqttPort"] = config_.mqttPort;
+    doc["mqttClient"] = config_.mqttClient;
+    doc["mqttUser"] = config_.mqttUser;
+    doc["mqttPassword"] = config_.mqttPassword;
+    doc["mqttTopic"] = config_.mqttTopic;
+    doc["mqttFullTopic"] = config_.mqttFullTopic;
+    doc["readIntervalMs"] = config_.readIntervalMs;
+    doc["openSenseMapEnabled"] = config_.openSenseMapEnabled;
+    doc["openSenseBoxId"] = config_.openSenseBoxId;
+    doc["openSenseApiKey"] = config_.openSenseApiKey;
+    doc["openSenseTubeRateSensorId"] = config_.openSenseTubeRateSensorId;
+    doc["openSenseDoseRateSensorId"] = config_.openSenseDoseRateSensorId;
+    doc["gmcMapEnabled"] = config_.gmcMapEnabled;
+    doc["gmcMapAccountId"] = config_.gmcMapAccountId;
+    doc["gmcMapDeviceId"] = config_.gmcMapDeviceId;
+    doc["radmonEnabled"] = config_.radmonEnabled;
+    doc["radmonUser"] = config_.radmonUser;
+    doc["radmonPassword"] = config_.radmonPassword;
+
+    String json;
+    serializeJsonPretty(doc, json);
+    return json;
+}
+
+bool WiFiPortalService::importConfigJson(const String &body, String &errorMessage)
+{
+    errorMessage = String();
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, body);
+    if (err)
+    {
+        errorMessage = String(F("Invalid JSON: ")) + err.c_str();
+        return false;
+    }
+
+    AppConfig updated = config_;
+
+    auto setString = [](String &target, JsonVariantConst value)
+    {
+        if (value.isNull())
+            return;
+        if (value.is<const char *>())
+        {
+            String s(value.as<const char *>());
+            s.trim();
+            target = s;
+        }
+        else if (value.is<String>())
+        {
+            String s = value.as<String>();
+            s.trim();
+            target = s;
+        }
+    };
+
+    auto setBool = [](bool &target, JsonVariantConst value)
+    {
+        if (!value.isNull())
+            target = value.as<bool>();
+    };
+
+    auto setUint16 = [](uint16_t &target, JsonVariantConst value)
+    {
+        if (value.isNull())
+            return;
+        uint32_t temp = value.as<uint32_t>();
+        if (temp == 0 || temp > 65535)
+            return;
+        target = static_cast<uint16_t>(temp);
+    };
+
+    auto setUint32 = [](uint32_t &target, JsonVariantConst value)
+    {
+        if (value.isNull())
+            return;
+        uint32_t temp = value.as<uint32_t>();
+        target = temp;
+    };
+
+    setString(updated.deviceName, doc["deviceName"]);
+    setBool(updated.mqttEnabled, doc["mqttEnabled"]);
+    setString(updated.mqttHost, doc["mqttHost"]);
+    setUint16(updated.mqttPort, doc["mqttPort"]);
+    setString(updated.mqttClient, doc["mqttClient"]);
+    setString(updated.mqttUser, doc["mqttUser"]);
+    setString(updated.mqttPassword, doc["mqttPassword"]);
+    setString(updated.mqttTopic, doc["mqttTopic"]);
+    setString(updated.mqttFullTopic, doc["mqttFullTopic"]);
+    setUint32(updated.readIntervalMs, doc["readIntervalMs"]);
+    setBool(updated.openSenseMapEnabled, doc["openSenseMapEnabled"]);
+    setString(updated.openSenseBoxId, doc["openSenseBoxId"]);
+    setString(updated.openSenseApiKey, doc["openSenseApiKey"]);
+    setString(updated.openSenseTubeRateSensorId, doc["openSenseTubeRateSensorId"]);
+    setString(updated.openSenseDoseRateSensorId, doc["openSenseDoseRateSensorId"]);
+    setBool(updated.gmcMapEnabled, doc["gmcMapEnabled"]);
+    setString(updated.gmcMapAccountId, doc["gmcMapAccountId"]);
+    setString(updated.gmcMapDeviceId, doc["gmcMapDeviceId"]);
+    setBool(updated.radmonEnabled, doc["radmonEnabled"]);
+    setString(updated.radmonUser, doc["radmonUser"]);
+    setString(updated.radmonPassword, doc["radmonPassword"]);
+
+    if (updated.readIntervalMs < kMinReadIntervalMs)
+        updated.readIntervalMs = kMinReadIntervalMs;
+
+    if (!store_.save(updated))
+    {
+        errorMessage = F("Failed to save configuration to NVS.");
+        led_.activateFault(FaultCode::NvsWriteFailure);
+        return false;
+    }
+
+    config_ = updated;
+    refreshParameters();
+    led_.clearFault(FaultCode::NvsWriteFailure);
+    pendingReconnect_ = true;
+    lastReconnectAttemptMs_ = 0;
+    hasLoggedIp_ = false;
+    log_.println(F("Configuration restored from backup."));
+    return true;
 }
 
 String WiFiPortalService::htmlEscape(const String &value)

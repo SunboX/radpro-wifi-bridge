@@ -1,4 +1,5 @@
 #include "BridgeInfoPage.h"
+#include <ArduinoJson.h>
 
 BridgeInfoPage::BridgeInfoPage() {}
 
@@ -53,86 +54,14 @@ void BridgeInfoPage::handleJson(WiFiManager *manager)
     manager->server->send(200, "application/json", collectJson());
 }
 
-static String escapeJson(const String &value)
-{
-    String out;
-    out.reserve(value.length() + 8);
-    for (size_t i = 0; i < value.length(); ++i)
-    {
-        char c = value[i];
-        switch (c)
-        {
-        case '\"':
-        case '\\':
-            out += '\\';
-            out += c;
-            break;
-        case '\n':
-            out += "\\n";
-            break;
-        case '\r':
-            out += "\\r";
-            break;
-        case '\t':
-            out += "\\t";
-            break;
-        default:
-            if (static_cast<unsigned char>(c) < 0x20)
-            {
-                char buf[7];
-                snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-                out += buf;
-            }
-            else
-            {
-                out += c;
-            }
-            break;
-        }
-    }
-    return out;
-}
-
 String BridgeInfoPage::collectJson() const
 {
-    auto appendStringField = [](String &json, const char *key, const String &value) {
-        json += '\"';
-        json += key;
-        json += '\"';
-        json += ':';
-        if (value.length())
-        {
-            json += '\"';
-            json += escapeJson(value);
-            json += '\"';
-        }
-        else
-        {
-            json += "null";
-        }
-        json += ',';
-    };
-
-    auto appendNumberField = [](String &json, const char *key, long value, bool valid = true) {
-        json += '\"';
-        json += key;
-        json += '\"';
-        json += ':';
-        if (valid)
-            json += String(value);
-        else
-            json += "null";
-        json += ',';
-    };
-
-    String json;
-    json.reserve(512);
-    json += '{';
-    appendNumberField(json, "chipRevision", ESP.getChipRevision());
-    appendStringField(json, "sdkVersion", String(ESP.getSdkVersion()));
-    appendStringField(json, "bridgeFirmware", String(BRIDGE_FIRMWARE_VERSION));
-    appendNumberField(json, "heapFree", ESP.getFreeHeap());
-    appendNumberField(json, "heapMax", ESP.getMaxAllocHeap());
+    JsonDocument doc;
+    doc["chipRevision"] = ESP.getChipRevision();
+    doc["sdkVersion"] = ESP.getSdkVersion();
+    doc["bridgeFirmware"] = BRIDGE_FIRMWARE_VERSION;
+    doc["heapFree"] = ESP.getFreeHeap();
+    doc["heapMax"] = ESP.getMaxAllocHeap();
 
     wifi_mode_t mode;
     esp_wifi_get_mode(&mode);
@@ -152,19 +81,23 @@ String BridgeInfoPage::collectJson() const
         modeStr = "Unknown";
         break;
     }
-    appendStringField(json, "wifiMode", modeStr);
+    doc["wifiMode"] = modeStr;
 
     IPAddress ip = WiFi.localIP();
-    appendStringField(json, "ipAddress", (ip != IPAddress(0, 0, 0, 0)) ? ip.toString() : String());
+    if (ip != IPAddress(0, 0, 0, 0))
+        doc["ipAddress"] = ip.toString();
+    else
+        doc["ipAddress"] = nullptr;
 
     bool wifiConnected = WiFi.status() == WL_CONNECTED;
-    appendNumberField(json, "wifiRSSI", wifiConnected ? WiFi.RSSI() : 0, wifiConnected);
-
-    appendStringField(json, "macAddress", WiFi.macAddress());
-
-    if (!json.isEmpty() && json[json.length() - 1] == ',')
-        json.setCharAt(json.length() - 1, '}');
+    if (wifiConnected)
+        doc["wifiRSSI"] = WiFi.RSSI();
     else
-        json += '}';
+        doc["wifiRSSI"] = nullptr;
+
+    doc["macAddress"] = WiFi.macAddress();
+
+    String json;
+    serializeJson(doc, json);
     return json;
 }
