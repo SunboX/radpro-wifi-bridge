@@ -1,4 +1,5 @@
 #include "DeviceInfoStore.h"
+#include <ArduinoJson.h>
 
 DeviceInfoStore::DeviceInfoStore()
     : mux_(portMUX_INITIALIZER_UNLOCKED),
@@ -96,90 +97,28 @@ DeviceInfoSnapshot DeviceInfoStore::snapshot() const
     return snap;
 }
 
-String DeviceInfoStore::escapeJson(const String &value)
-{
-    String out;
-    out.reserve(value.length() + 8);
-    for (size_t i = 0; i < value.length(); ++i)
-    {
-        char c = value[i];
-        switch (c)
-        {
-        case '"':
-        case '\\':
-            out += '\\';
-            out += c;
-            break;
-        case '\n':
-            out += "\\n";
-            break;
-        case '\r':
-            out += "\\r";
-            break;
-        case '\t':
-            out += "\\t";
-            break;
-        default:
-            if (static_cast<unsigned char>(c) < 0x20)
-            {
-                char buf[7];
-                snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-                out += buf;
-            }
-            else
-            {
-                out += c;
-            }
-            break;
-        }
-    }
-    return out;
-}
-
 String DeviceInfoStore::toJson() const
 {
     DeviceInfoSnapshot snap = snapshot();
-    String json;
-    json.reserve(512);
-    json += '{';
-    auto appendField = [&json](const char *key, const String &value) {
-        json += '\"';
-        json += key;
-        json += '\"';
-        json += ':';
-        if (value.length())
-        {
-            json += '\"';
-            json += DeviceInfoStore::escapeJson(value);
-            json += '\"';
-        }
-        else
-        {
-            json += "null";
-        }
-        json += ',';
-    };
-
-    appendField("manufacturer", snap.manufacturer);
-    appendField("model", snap.model);
-    appendField("firmware", snap.firmware);
-    appendField("bridgeFirmware", snap.bridgeFirmware);
-    appendField("deviceId", snap.deviceId);
-    appendField("locale", snap.locale);
-    appendField("devicePower", snap.devicePower);
-    appendField("batteryVoltage", snap.batteryVoltage);
-    appendField("batteryPercent", snap.batteryPercent);
-    appendField("tubeRate", snap.tubeRate);
-    appendField("tubeDoseRate", snap.tubeDoseRate);
-    appendField("tubePulseCount", snap.tubePulseCount);
-    json += '\"';
-    json += "measurementAgeMs";
-    json += '\"';
-    json += ':';
+    JsonDocument doc;
+    doc["manufacturer"] = snap.manufacturer;
+    doc["model"] = snap.model;
+    doc["firmware"] = snap.firmware;
+    doc["bridgeFirmware"] = snap.bridgeFirmware;
+    doc["deviceId"] = snap.deviceId;
+    doc["locale"] = snap.locale;
+    doc["devicePower"] = snap.devicePower.length() ? snap.devicePower.c_str() : nullptr;
+    doc["batteryVoltage"] = snap.batteryVoltage.length() ? snap.batteryVoltage.c_str() : nullptr;
+    doc["batteryPercent"] = snap.batteryPercent.length() ? snap.batteryPercent.c_str() : nullptr;
+    doc["tubeRate"] = snap.tubeRate.length() ? snap.tubeRate.c_str() : nullptr;
+    doc["tubeDoseRate"] = snap.tubeDoseRate.length() ? snap.tubeDoseRate.c_str() : nullptr;
+    doc["tubePulseCount"] = snap.tubePulseCount.length() ? snap.tubePulseCount.c_str() : nullptr;
     if (snap.measurementAgeMs > 0)
-        json += String(snap.measurementAgeMs);
+        doc["measurementAgeMs"] = snap.measurementAgeMs;
     else
-        json += "null";
-    json += '}';
+        doc["measurementAgeMs"] = nullptr;
+
+    String json;
+    serializeJson(doc, json);
     return json;
 }

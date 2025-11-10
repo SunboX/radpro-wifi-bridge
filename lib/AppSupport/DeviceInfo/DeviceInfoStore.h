@@ -34,7 +34,6 @@ public:
 
 private:
     void setManufacturerFromModel(const String &model);
-    static String escapeJson(const String &value);
 
     mutable portMUX_TYPE mux_;
     String manufacturer_;
