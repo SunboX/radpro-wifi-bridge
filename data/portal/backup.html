@@ -1,58 +1,37 @@
 <!DOCTYPE html>
-<html>
+<html lang="{{LOCALE}}">
     <head>
+        <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <title>Configuration Backup &amp; Restore</title>
         <link rel="stylesheet" href="/portal/portal.css" />
     </head>
-    <body class="invert">
+    <body class="invert" data-i18n-title="T_PAGE_CONFIGURE_BACKUP" data-portal-locale-value="{{LOCALE}}">
         <div class="wrap">
-            <h1>Configuration Backup &amp; Restore</h1>
+            <h1 data-i18n="T_PAGE_CONFIGURE_BACKUP">Configuration Backup &amp; Restore</h1>
             <p class="notice {{NOTICE_CLASS}}">{{NOTICE_TEXT}}</p>
             <section>
-                <h2>Download Backup</h2>
-                <p>Grab a JSON snapshot of the current configuration for safekeeping.</p>
+                <h2 data-i18n="T_SECTION_DOWNLOAD_BACKUP">Download Backup</h2>
+                <p data-i18n="T_TEXT_DOWNLOAD_BACKUP">Grab a JSON snapshot of the current configuration for safekeeping.</p>
                 <form action="/backup.json" method="get">
-                    <button type="submit">Download JSON Backup</button>
+                    <button type="submit" data-i18n="T_BUTTON_DOWNLOAD_JSON">Download JSON Backup</button>
                 </form>
             </section>
             <section>
-                <h2>Restore From Backup</h2>
-                <p>Select a previously exported JSON file. The device will apply the settings immediately.</p>
+                <h2 data-i18n="T_SECTION_RESTORE_BACKUP">Restore From Backup</h2>
+                <p data-i18n="T_TEXT_RESTORE_BACKUP">Select a previously exported JSON file. The device will apply the settings immediately.</p>
                 <input type="file" id="restoreFile" accept="application/json" />
                 <form id="restoreForm" action="/backup/restore" method="post">
                     <textarea id="configJsonField" name="configJson" class="hidden-field"></textarea>
-                    <button type="button" id="restoreSubmit">Restore Configuration</button>
+                    <button type="button" id="restoreSubmit" data-i18n="T_BUTTON_RESTORE">Restore Configuration</button>
                 </form>
                 <p id="restoreClientMessage" class="client-msg"></p>
             </section>
             <form action="/" method="get" class="back-form">
-                <button type="submit">Back to Main Menu</button>
+                <button type="submit" data-i18n="T_BUTTON_BACK">Back to Main Menu</button>
             </form>
         </div>
-        <script>
-            const fileInput = document.getElementById('restoreFile')
-            const hiddenField = document.getElementById('configJsonField')
-            const clientMsg = document.getElementById('restoreClientMessage')
-            const form = document.getElementById('restoreForm')
-            const submitBtn = document.getElementById('restoreSubmit')
-            submitBtn.addEventListener('click', async () => {
-                clientMsg.textContent = ''
-                clientMsg.classList.remove('error')
-                if (!fileInput.files.length) {
-                    clientMsg.textContent = 'Please choose a backup file first.'
-                    clientMsg.classList.add('error')
-                    return
-                }
-                try {
-                    const text = await fileInput.files[0].text()
-                    hiddenField.value = text
-                    form.submit()
-                } catch (err) {
-                    clientMsg.textContent = 'Could not read file: ' + err.message
-                    clientMsg.classList.add('error')
-                }
-            })
-        </script>
+        <script src="/portal/portal-locale.js"></script>
+        <script src="/portal/js/backup-page.js"></script>
     </body>
 </html>

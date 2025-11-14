@@ -1,70 +1,42 @@
 <!DOCTYPE html>
-<html>
+<html lang="{{LOCALE}}">
     <head>
+        <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <title>WiFi Bridge Info</title>
         <link rel="stylesheet" href="/portal/portal.css" />
     </head>
-    <body class="invert">
+    <body class="invert" data-i18n-title="T_PAGE_BRIDGE_INFO" data-portal-locale-value="{{LOCALE}}">
         <div class="wrap">
-            <h1>WiFi Bridge Info</h1>
+            <h1 data-i18n="T_PAGE_BRIDGE_INFO">WiFi Bridge Info</h1>
             <section>
-                <h2>ESP32-S3</h2>
+                <h2 data-i18n="T_SECTION_BRIDGE">ESP32-S3</h2>
                 <dl>
-                    <dt>Chip revision</dt>
+                    <dt data-i18n="T_FIELD_CHIP_REV">Chip revision</dt>
                     <dd id="chipRev">—</dd>
-                    <dt>SDK version</dt>
+                    <dt data-i18n="T_FIELD_SDK_VERSION">SDK version</dt>
                     <dd id="sdkVersion">—</dd>
-                    <dt>Bridge firmware</dt>
+                    <dt data-i18n="T_FIELD_BRIDGE_FW">Bridge firmware</dt>
                     <dd id="bridgeFirmware">—</dd>
-                    <dt>Heap (free)</dt>
+                    <dt data-i18n="T_FIELD_HEAP_FREE">Heap (free)</dt>
                     <dd id="heapFree">—</dd>
-                    <dt>Heap (max)</dt>
+                    <dt data-i18n="T_FIELD_HEAP_MAX">Heap (max)</dt>
                     <dd id="heapMax">—</dd>
-                    <dt>Wi-Fi mode</dt>
+                    <dt data-i18n="T_FIELD_WIFI_MODE">Wi-Fi mode</dt>
                     <dd id="wifiMode">—</dd>
-                    <dt>IPv4</dt>
+                    <dt data-i18n="T_FIELD_IPV4">IPv4</dt>
                     <dd id="ipAddress">—</dd>
-                    <dt>RSSI</dt>
+                    <dt data-i18n="T_FIELD_RSSI">RSSI</dt>
                     <dd id="wifiRSSI">—</dd>
-                    <dt>MAC address</dt>
+                    <dt data-i18n="T_FIELD_MAC">MAC address</dt>
                     <dd id="macAddress">—</dd>
                 </dl>
             </section>
             <form action="/" method="get">
-                <button type="submit">Back to Main Menu</button>
+                <button type="submit" data-i18n="T_BUTTON_BACK">Back to Main Menu</button>
             </form>
         </div>
-        <script>
-            const setField = (id, val) => {
-                const el = document.getElementById(id)
-                if (!el) return
-                if (val === null || val === undefined || val === '') {
-                    el.textContent = '—'
-                    return
-                }
-                el.textContent = val
-            }
-            async function refreshBridgeInfo() {
-                try {
-                    const resp = await fetch('/bridge.json', { cache: 'no-store' })
-                    if (!resp.ok) throw new Error('bad status')
-                    const data = await resp.json()
-                    setField('chipRev', data.chipRevision)
-                    setField('sdkVersion', data.sdkVersion)
-                    setField('bridgeFirmware', data.bridgeFirmware)
-                    setField('heapFree', data.heapFree ? `${(data.heapFree / 1024).toFixed(1)} kB` : null)
-                    setField('heapMax', data.heapMax ? `${(data.heapMax / 1024).toFixed(1)} kB` : null)
-                    setField('wifiMode', data.wifiMode)
-                    setField('ipAddress', data.ipAddress)
-                    setField('wifiRSSI', data.wifiRSSI)
-                    setField('macAddress', data.macAddress)
-                } catch (err) {
-                    console.warn('Bridge info refresh failed', err)
-                }
-            }
-            refreshBridgeInfo()
-            setInterval(refreshBridgeInfo, 4000)
-        </script>
+        <script src="/portal/portal-locale.js"></script>
+        <script src="/portal/js/bridge-info.js"></script>
     </body>
 </html>
