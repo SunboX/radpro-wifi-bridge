@@ -11,6 +11,8 @@ artifacts.
 import shutil
 from pathlib import Path
 
+from fs_partition import resolve_fs_partition
+
 Import("env")  # Provided by PlatformIO
 
 
@@ -69,6 +71,17 @@ def copy_filesystem_bundle(source, target, env) -> None:
     if not fs_image.exists():
         print(f"[copy_firmware] WARNING: filesystem image missing: {fs_image}")
         return
+
+    fs_partition = resolve_fs_partition(env)
+    if not fs_partition:
+        print("[copy_firmware] WARNING: filesystem partition not found; skipping copy.")
+        return
+
+    image_size = fs_image.stat().st_size
+    if image_size > fs_partition["size"]:
+        raise RuntimeError(
+            f"[copy_firmware] Filesystem image {image_size} bytes exceeds partition size {fs_partition['size']} bytes"
+        )
 
     dest_path = dest_dir / "littlefs.bin"
     _copy_with_log(fs_image, dest_path)
