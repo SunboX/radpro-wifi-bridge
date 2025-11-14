@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>Configure OpenSenseMap</title>
+        <link rel="stylesheet" href="/portal/portal.css" />
+    </head>
+    <body class="invert">
+        <div class="wrap wrap--compact">
+            <h1>OpenSenseMap Settings</h1>
+            <p class="notice {{NOTICE_CLASS}}">{{NOTICE_TEXT}}</p>
+            <form method="POST" action="/osem">
+                <label class="toggle"
+                    ><input id="osemEnabled" name="osemEnabled" type="checkbox" value="1" {{OSEM_ENABLED_CHECKED}} /> Enable OpenSenseMap
+                    publishing</label
+                >
+                <label for="osemBoxId">Box ID</label>
+                <input id="osemBoxId" name="osemBoxId" type="text" value="{{OSEM_BOX_ID}}" />
+                <label for="osemApiKey">Access Token</label>
+                <input id="osemApiKey" name="osemApiKey" type="text" value="{{OSEM_API_KEY}}" />
+                <label for="osemRate">Tube Rate (cpm) - Geiger Sensor ID</label>
+                <input id="osemRate" name="osemRate" type="text" value="{{OSEM_RATE_ID}}" />
+                <label for="osemDose">Dose Rate (µSv/h) - Dose Sensor ID</label>
+                <input id="osemDose" name="osemDose" type="text" value="{{OSEM_DOSE_ID}}" />
+                <button type="submit">Save OpenSenseMap Settings</button>
+            </form>
+            <form action="/" method="get" class="back-form">
+                <button type="submit">Back to Main Menu</button>
+            </form>
+        </div>
+    </body>
+</html>

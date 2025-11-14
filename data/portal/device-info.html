@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>RadPro Device Info</title>
+        <link rel="stylesheet" href="/portal/portal.css" />
+    </head>
+    <body class="invert">
+        <div class="wrap">
+            <h1>RadPro Device Info</h1>
+            <section>
+                <h2>Identity</h2>
+                <dl>
+                    <dt>Manufacturer</dt>
+                    <dd id="manufacturer">—</dd>
+                    <dt>Model</dt>
+                    <dd id="model">—</dd>
+                    <dt>Firmware</dt>
+                    <dd id="firmware">—</dd>
+                    <dt>Device ID</dt>
+                    <dd id="deviceId">—</dd>
+                    <dt>Locale</dt>
+                    <dd id="locale">—</dd>
+                    <dt>Power</dt>
+                    <dd id="devicePower">—</dd>
+                </dl>
+            </section>
+            <section>
+                <h2>Live Measurements</h2>
+                <div class="measurements">
+                    <div class="card"><span class="label">Tube Rate (cpm)</span><span class="value" id="tubeRate">—</span></div>
+                    <div class="card"><span class="label">Dose Rate (µSv/h)</span><span class="value" id="tubeDoseRate">—</span></div>
+                    <div class="card"><span class="label">Pulse Count</span><span class="value" id="tubePulseCount">—</span></div>
+                    <div class="card"><span class="label">Battery Voltage (V)</span><span class="value" id="batteryVoltage">—</span></div>
+                    <div class="card"><span class="label">Battery %</span><span class="value" id="batteryPercent">—</span></div>
+                    <div class="card"><span class="label">Last Update</span><span class="value" id="measurementAge">—</span></div>
+                </div>
+            </section>
+            <form action="/" method="get">
+                <button type="submit">Back to Main Menu</button>
+            </form>
+        </div>
+        <script>
+            const setField = (id, val, unit = '') => {
+                const el = document.getElementById(id)
+                if (!el) return
+                if (val === null || val === undefined || val === '') {
+                    el.textContent = '—'
+                    return
+                }
+                el.textContent = unit ? `${val} ${unit}`.trim() : val
+            }
+            async function refreshDeviceInfo() {
+                try {
+                    const resp = await fetch('/device.json', { cache: 'no-store' })
+                    if (!resp.ok) throw new Error('bad status')
+                    const data = await resp.json()
+                    setField('manufacturer', data.manufacturer)
+                    setField('model', data.model)
+                    setField('firmware', data.firmware)
+                    setField('deviceId', data.deviceId)
+                    setField('locale', data.locale)
+                    setField('devicePower', data.devicePower === '1' ? 'ON' : data.devicePower === '0' ? 'OFF' : data.devicePower)
+                    setField('batteryVoltage', data.batteryVoltage)
+                    setField('batteryPercent', data.batteryPercent ? `${data.batteryPercent} %` : data.batteryPercent)
+                    setField('tubeRate', data.tubeRate)
+                    setField('tubeDoseRate', data.tubeDoseRate)
+                    setField('tubePulseCount', data.tubePulseCount)
+                    if (data.measurementAgeMs !== null && data.measurementAgeMs !== undefined) {
+                        const seconds = (data.measurementAgeMs / 1000).toFixed(1)
+                        setField('measurementAge', seconds + ' s ago')
+                    } else {
+                        setField('measurementAge', '—')
+                    }
+                } catch (err) {
+                    console.warn('Device info refresh failed', err)
+                }
+            }
+            refreshDeviceInfo()
+            setInterval(refreshDeviceInfo, 10000)
+        </script>
+    </body>
+</html>
