@@ -8,7 +8,7 @@
                 { "path": "firmware/latest/bootloader.bin", "offset": 0 },
                 { "path": "firmware/latest/partitions.bin", "offset": 32768 },
                 { "path": "firmware/latest/radpro-wifi-bridge.bin", "offset": 65536 },
-                { "path": "firmware/latest/littlefs.bin", "offset": 1441792 }
+                { "path": "firmware/latest/littlefs.bin", "offset": 14680064 }
             ]
         }
     ]
