@@ -8,6 +8,10 @@ body {
     justify-content: center;
 }
 
+.portal-locale-marker {
+    display: none;
+}
+
 .wrap {
     width: 100%;
     max-width: 640px;
@@ -74,6 +78,7 @@ button {
     background: #2196f3;
     color: #fff;
     font-size: 15px;
+    line-height: normal;
     cursor: pointer;
     width: 100%;
 }

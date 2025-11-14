@@ -12,9 +12,10 @@
 
 namespace
 {
-constexpr const char *kPortalLittleFsBasePath = "/littlefs";
-constexpr const char *kPortalLittleFsLabel = "spiffs";
-constexpr uint8_t kPortalLittleFsMaxFiles = 10;
+    constexpr const char *kPortalLittleFsBasePath = "/littlefs";
+    constexpr const char *kPortalLittleFsLabel = "spiffs";
+    constexpr uint8_t kPortalLittleFsMaxFiles = 10;
+
 }
 
 WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, DeviceInfoStore &info, Print &logPort, LedController &led)
@@ -317,13 +318,13 @@ void WiFiPortalService::attachParameters()
         log_.print(F("Applying custom menu HTML ("));
         log_.print(menuHtml_.length());
         log_.println(F(" bytes)."));
-        manager_.setCustomMenuHTML(menuHtml_.c_str());
+        applyMenuHtmlForLocale(resolvePortalLocale());
     }
     else
     {
         log_.println(F("Custom menu HTML missing; Wi-Fi portal menu will only show default entries."));
     }
-    
+
     manager_.setWebServerCallback([this]()
                                   {
         log_.println(F("Web server callback invoked; registering custom portal routes."));
@@ -344,6 +345,42 @@ void WiFiPortalService::attachParameters()
             log_.println(F("HTTP GET /portal/portal.css"));
             if (!sendStaticFile("/portal/portal.css", "text/css"))
                 sendTemplateError("/portal/portal.css");
+        });
+
+        manager_.server->on("/portal/js/device-info.js", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /portal/js/device-info.js"));
+            if (!sendStaticFile("/portal/js/device-info.js", "application/javascript"))
+                sendTemplateError("/portal/js/device-info.js");
+        });
+
+        manager_.server->on("/portal/js/bridge-info.js", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /portal/js/bridge-info.js"));
+            if (!sendStaticFile("/portal/js/bridge-info.js", "application/javascript"))
+                sendTemplateError("/portal/js/bridge-info.js");
+        });
+
+        manager_.server->on("/portal/js/backup-page.js", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /portal/js/backup-page.js"));
+            if (!sendStaticFile("/portal/js/backup-page.js", "application/javascript"))
+                sendTemplateError("/portal/js/backup-page.js");
+        });
+
+        manager_.server->on("/portal/portal-locale.js", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /portal/portal-locale.js"));
+            if (!sendStaticFile("/portal/portal-locale.js", "application/javascript"))
+                sendTemplateError("/portal/portal-locale.js");
+        });
+
+        manager_.server->on("/portal/locales/en.json", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /portal/locales/en.json"));
+            if (!sendStaticFile("/portal/locales/en.json", "application/json"))
+                sendTemplateError("/portal/locales/en.json");
+        });
+
+        manager_.server->on("/portal/locales/de.json", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /portal/locales/de.json"));
+            if (!sendStaticFile("/portal/locales/de.json", "application/json"))
+                sendTemplateError("/portal/locales/de.json");
         });
 
         manager_.server->on("/mqtt", HTTP_POST, [this]() {
@@ -383,7 +420,9 @@ void WiFiPortalService::attachParameters()
 
         manager_.server->on("/device", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /device"));
-            deviceInfoPage_.handlePage(&manager_);
+            TemplateReplacements vars;
+            appendCommonTemplateVars(vars);
+            sendTemplate("/portal/device-info.html", vars);
         });
 
         manager_.server->on("/device.json", HTTP_GET, [this]() {
@@ -393,7 +432,9 @@ void WiFiPortalService::attachParameters()
 
         manager_.server->on("/bridge", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /bridge"));
-            bridgeInfoPage_.handlePage(&manager_);
+            TemplateReplacements vars;
+            appendCommonTemplateVars(vars);
+            sendTemplate("/portal/bridge-info.html", vars);
         });
 
         manager_.server->on("/bridge.json", HTTP_GET, [this]() {
@@ -873,9 +914,9 @@ void WiFiPortalService::sendMqttForm(const String &message)
         {"{{MQTT_TOPIC}}", htmlEscape(config_.mqttTopic)},
         {"{{MQTT_FULL_TOPIC}}", htmlEscape(config_.mqttFullTopic)},
         {"{{READ_INTERVAL_MIN}}", String(kMinReadIntervalMs)},
-        {"{{READ_INTERVAL}}", String(config_.readIntervalMs)}
-    };
+        {"{{READ_INTERVAL}}", String(config_.readIntervalMs)}};
 
+    appendCommonTemplateVars(vars);
     sendTemplate("/portal/mqtt.html", vars);
 }
 
@@ -974,9 +1015,9 @@ void WiFiPortalService::sendOpenSenseForm(const String &message)
         {"{{OSEM_BOX_ID}}", htmlEscape(config_.openSenseBoxId)},
         {"{{OSEM_API_KEY}}", htmlEscape(config_.openSenseApiKey)},
         {"{{OSEM_RATE_ID}}", htmlEscape(config_.openSenseTubeRateSensorId)},
-        {"{{OSEM_DOSE_ID}}", htmlEscape(config_.openSenseDoseRateSensorId)}
-    };
+        {"{{OSEM_DOSE_ID}}", htmlEscape(config_.openSenseDoseRateSensorId)}};
 
+    appendCommonTemplateVars(vars);
     sendTemplate("/portal/osem.html", vars);
 }
 
@@ -1042,9 +1083,9 @@ void WiFiPortalService::sendRadmonForm(const String &message)
         {"{{NOTICE_TEXT}}", notice},
         {"{{RADMON_ENABLED_CHECKED}}", config_.radmonEnabled ? String("checked") : String()},
         {"{{RADMON_USER}}", htmlEscape(config_.radmonUser)},
-        {"{{RADMON_PASS}}", htmlEscape(config_.radmonPassword)}
-    };
+        {"{{RADMON_PASS}}", htmlEscape(config_.radmonPassword)}};
 
+    appendCommonTemplateVars(vars);
     sendTemplate("/portal/radmon.html", vars);
 }
 
@@ -1109,9 +1150,9 @@ void WiFiPortalService::sendGmcMapForm(const String &message)
         {"{{NOTICE_TEXT}}", notice},
         {"{{GMC_ENABLED_CHECKED}}", config_.gmcMapEnabled ? String("checked") : String()},
         {"{{GMC_ACCOUNT}}", htmlEscape(config_.gmcMapAccountId)},
-        {"{{GMC_DEVICE}}", htmlEscape(config_.gmcMapDeviceId)}
-    };
+        {"{{GMC_DEVICE}}", htmlEscape(config_.gmcMapDeviceId)}};
 
+    appendCommonTemplateVars(vars);
     sendTemplate("/portal/gmc.html", vars);
 }
 
@@ -1182,9 +1223,9 @@ void WiFiPortalService::sendConfigBackupPage(const String &message)
 
     TemplateReplacements vars = {
         {"{{NOTICE_CLASS}}", noticeClass},
-        {"{{NOTICE_TEXT}}", htmlEscape(display)}
-    };
+        {"{{NOTICE_TEXT}}", htmlEscape(display)}};
 
+    appendCommonTemplateVars(vars);
     sendTemplate("/portal/backup.html", vars);
 }
 
@@ -1450,6 +1491,14 @@ bool WiFiPortalService::sendStaticFile(const char *path, const char *contentType
     return true;
 }
 
+void WiFiPortalService::applyTemplateReplacements(String &content, const TemplateReplacements &replacements)
+{
+    for (const auto &entry : replacements)
+    {
+        content.replace(entry.first, entry.second);
+    }
+}
+
 bool WiFiPortalService::sendTemplate(const char *path, const TemplateReplacements &replacements)
 {
     if (!manager_.server)
@@ -1463,7 +1512,8 @@ bool WiFiPortalService::sendTemplate(const char *path, const TemplateReplacement
     String content;
     if (!readFile(path, content))
     {
-        log_.print(F("Retrying template load: ")); log_.println(path);
+        log_.print(F("Retrying template load: "));
+        log_.println(path);
         // Attempt to reload the menu snippet in case LittleFS mounted late.
         if (strcmp(path, "/portal/menu.html") == 0)
         {
@@ -1479,15 +1529,29 @@ bool WiFiPortalService::sendTemplate(const char *path, const TemplateReplacement
         }
     }
 
-    for (const auto &entry : replacements)
-    {
-        content.replace(entry.first, entry.second);
-    }
+    applyTemplateReplacements(content, replacements);
 
     manager_.server->send(200, "text/html", content);
     log_.print(F("Served template OK: "));
     log_.println(path);
     return true;
+}
+
+String WiFiPortalService::resolvePortalLocale() const
+{
+    DeviceInfoSnapshot snap = deviceInfo_.snapshot();
+    String locale = snap.locale;
+    locale.trim();
+    locale.toLowerCase();
+    if (locale.startsWith("de"))
+        return "de";
+    return "en";
+}
+
+void WiFiPortalService::appendCommonTemplateVars(TemplateReplacements &replacements)
+{
+    String locale = resolvePortalLocale();
+    replacements.emplace_back("{{LOCALE}}", locale);
 }
 
 void WiFiPortalService::sendTemplateError(const char *path)
@@ -1531,7 +1595,8 @@ void WiFiPortalService::dumpFilesystemContents(const __FlashStringHelper *reason
         log_.println(F("  <unavailable>"));
         return;
     }
-    std::function<void(const String &, File &)> dumpDir = [&](const String &prefix, File &dir) {
+    std::function<void(const String &, File &)> dumpDir = [&](const String &prefix, File &dir)
+    {
         File entry = dir.openNextFile();
         while (entry)
         {
@@ -1583,7 +1648,25 @@ void WiFiPortalService::ensureMenuHtmlLoaded()
         if (paramsAttached_)
         {
             log_.println(F("Re-applying custom menu HTML to WiFiManager."));
-            manager_.setCustomMenuHTML(menuHtml_.c_str());
+            applyMenuHtmlForLocale(resolvePortalLocale());
         }
     }
+}
+
+void WiFiPortalService::applyMenuHtmlForLocale(const String &locale)
+{
+    if (!menuHtml_.length())
+        return;
+
+    if (menuHtmlLocale_ == locale && menuHtmlRendered_.length())
+    {
+        manager_.setCustomMenuHTML(menuHtmlRendered_.c_str());
+        return;
+    }
+
+    menuHtmlRendered_ = menuHtml_;
+    menuHtmlRendered_.replace("{{PORTAL_LOCALE}}", locale);
+    menuHtmlLocale_ = locale;
+
+    manager_.setCustomMenuHTML(menuHtmlRendered_.c_str());
 }

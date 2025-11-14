@@ -1,40 +1,42 @@
 <!DOCTYPE html>
-<html>
+<html lang="{{LOCALE}}">
     <head>
+        <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <title>Configure MQTT</title>
         <link rel="stylesheet" href="/portal/portal.css" />
     </head>
-    <body class="invert">
+    <body class="invert" data-i18n-title="T_PAGE_CONFIGURE_MQTT" data-portal-locale-value="{{LOCALE}}">
         <div class="wrap wrap--compact">
-            <h1>MQTT Settings</h1>
+            <h1 data-i18n="T_SECTION_MQTT_SETTINGS">MQTT Settings</h1>
             <p class="notice {{NOTICE_CLASS}}">{{NOTICE_TEXT}}</p>
             <form method="POST" action="/mqtt">
-                <label class="toggle"
-                    ><input id="mqttEnabled" name="mqttEnabled" type="checkbox" value="1" {{MQTT_ENABLED_CHECKED}} /> Enable MQTT
-                    publishing</label
-                >
-                <label for="mqttHost">Host</label>
+                <label class="toggle">
+                    <input id="mqttEnabled" name="mqttEnabled" type="checkbox" value="1" {{MQTT_ENABLED_CHECKED}} />
+                    <span data-i18n="T_MQTT_ENABLE">Enable MQTT publishing</span>
+                </label>
+                <label for="mqttHost" data-i18n="T_LABEL_HOST">Host</label>
                 <input id="mqttHost" name="mqttHost" type="text" value="{{MQTT_HOST}}" />
-                <label for="mqttPort">Port</label>
+                <label for="mqttPort" data-i18n="T_LABEL_PORT">Port</label>
                 <input id="mqttPort" name="mqttPort" type="number" min="1" max="65535" value="{{MQTT_PORT}}" />
-                <label for="mqttClient">Client ID Suffix</label>
+                <label for="mqttClient" data-i18n="T_LABEL_CLIENT_SUFFIX">Client ID Suffix</label>
                 <input id="mqttClient" name="mqttClient" type="text" value="{{MQTT_CLIENT}}" />
-                <label for="mqttUser">Username</label>
+                <label for="mqttUser" data-i18n="T_LABEL_USERNAME">Username</label>
                 <input id="mqttUser" name="mqttUser" type="text" value="{{MQTT_USER}}" />
-                <label for="mqttPass">Password</label>
+                <label for="mqttPass" data-i18n="T_LABEL_PASSWORD">Password</label>
                 <input id="mqttPass" name="mqttPass" type="password" value="{{MQTT_PASS}}" />
-                <label for="mqttTopic">Base Topic</label>
+                <label for="mqttTopic" data-i18n="T_LABEL_BASE_TOPIC">Base Topic</label>
                 <input id="mqttTopic" name="mqttTopic" type="text" value="{{MQTT_TOPIC}}" />
-                <label for="mqttFullTopic">Full Topic Template</label>
+                <label for="mqttFullTopic" data-i18n="T_LABEL_FULL_TOPIC">Full Topic Template</label>
                 <input id="mqttFullTopic" name="mqttFullTopic" type="text" value="{{MQTT_FULL_TOPIC}}" />
-                <label for="readInterval">Read Interval (ms)</label>
+                <label for="readInterval" data-i18n="T_LABEL_READ_INTERVAL">Read Interval (ms)</label>
                 <input id="readInterval" name="readInterval" type="number" min="{{READ_INTERVAL_MIN}}" value="{{READ_INTERVAL}}" />
-                <button type="submit">Save MQTT Settings</button>
+                <button type="submit" data-i18n="T_BUTTON_SAVE_MQTT">Save MQTT Settings</button>
             </form>
             <form action="/" method="get" class="back-form">
-                <button type="submit">Back to Main Menu</button>
+                <button type="submit" data-i18n="T_BUTTON_BACK">Back to Main Menu</button>
             </form>
         </div>
+        <script src="/portal/portal-locale.js"></script>
     </body>
 </html>

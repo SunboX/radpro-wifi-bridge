@@ -51,14 +51,18 @@ private:
     bool readFile(const char *path, String &out);
     void sendTemplateError(const char *path);
     void ensureMenuHtmlLoaded();
+    void applyMenuHtmlForLocale(const String &locale);
     bool remountLittleFsIfNeeded(const char *context);
     void dumpFilesystemContents(const __FlashStringHelper *reason);
     bool sendStaticFile(const char *path, const char *contentType);
+    void applyTemplateReplacements(String &content, const TemplateReplacements &replacements);
+    void appendCommonTemplateVars(TemplateReplacements &replacements);
     void disablePortalPowerSave();
     void restorePortalPowerSave();
     void logPortalState(const char *context);
     bool hasStoredCredentials() const;
     void scheduleRestart(const char *reason);
+    String resolvePortalLocale() const;
 
     AppConfig &config_;
     AppConfigStore &store_;
@@ -84,6 +88,8 @@ private:
     WiFiManagerParameter paramRadmonPassword_;
     bool paramsAttached_;
     String menuHtml_;
+    String menuHtmlRendered_;
+    String menuHtmlLocale_;
     wl_status_t lastStatus_;
     WiFiEventId_t wifiEventId_;
     IPAddress lastIp_;
