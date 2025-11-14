@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>Configure GMCMap</title>
+        <link rel="stylesheet" href="/portal/portal.css" />
+    </head>
+    <body class="invert">
+        <div class="wrap wrap--compact">
+            <h1>GMCMap Settings</h1>
+            <p class="notice {{NOTICE_CLASS}}">{{NOTICE_TEXT}}</p>
+            <form method="POST" action="/gmc">
+                <label class="toggle"
+                    ><input id="gmcEnabled" name="gmcEnabled" type="checkbox" value="1" {{GMC_ENABLED_CHECKED}} /> Enable GMCMap
+                    publishing</label
+                >
+                <label for="gmcAccount">Account ID</label>
+                <input id="gmcAccount" name="gmcAccount" type="text" value="{{GMC_ACCOUNT}}" />
+                <label for="gmcDevice">Device ID</label>
+                <input id="gmcDevice" name="gmcDevice" type="text" value="{{GMC_DEVICE}}" />
+                <button type="submit">Save GMCMap Settings</button>
+            </form>
+            <form action="/" method="get" class="back-form">
+                <button type="submit">Back to Main Menu</button>
+            </form>
+        </div>
+    </body>
+</html>

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>WiFi Bridge Info</title>
+        <link rel="stylesheet" href="/portal/portal.css" />
+    </head>
+    <body class="invert">
+        <div class="wrap">
+            <h1>WiFi Bridge Info</h1>
+            <section>
+                <h2>ESP32-S3</h2>
+                <dl>
+                    <dt>Chip revision</dt>
+                    <dd id="chipRev">—</dd>
+                    <dt>SDK version</dt>
+                    <dd id="sdkVersion">—</dd>
+                    <dt>Bridge firmware</dt>
+                    <dd id="bridgeFirmware">—</dd>
+                    <dt>Heap (free)</dt>
+                    <dd id="heapFree">—</dd>
+                    <dt>Heap (max)</dt>
+                    <dd id="heapMax">—</dd>
+                    <dt>Wi-Fi mode</dt>
+                    <dd id="wifiMode">—</dd>
+                    <dt>IPv4</dt>
+                    <dd id="ipAddress">—</dd>
+                    <dt>RSSI</dt>
+                    <dd id="wifiRSSI">—</dd>
+                    <dt>MAC address</dt>
+                    <dd id="macAddress">—</dd>
+                </dl>
+            </section>
+            <form action="/" method="get">
+                <button type="submit">Back to Main Menu</button>
+            </form>
+        </div>
+        <script>
+            const setField = (id, val) => {
+                const el = document.getElementById(id)
+                if (!el) return
+                if (val === null || val === undefined || val === '') {
+                    el.textContent = '—'
+                    return
+                }
+                el.textContent = val
+            }
+            async function refreshBridgeInfo() {
+                try {
+                    const resp = await fetch('/bridge.json', { cache: 'no-store' })
+                    if (!resp.ok) throw new Error('bad status')
+                    const data = await resp.json()
+                    setField('chipRev', data.chipRevision)
+                    setField('sdkVersion', data.sdkVersion)
+                    setField('bridgeFirmware', data.bridgeFirmware)
+                    setField('heapFree', data.heapFree ? `${(data.heapFree / 1024).toFixed(1)} kB` : null)
+                    setField('heapMax', data.heapMax ? `${(data.heapMax / 1024).toFixed(1)} kB` : null)
+                    setField('wifiMode', data.wifiMode)
+                    setField('ipAddress', data.ipAddress)
+                    setField('wifiRSSI', data.wifiRSSI)
+                    setField('macAddress', data.macAddress)
+                } catch (err) {
+                    console.warn('Bridge info refresh failed', err)
+                }
+            }
+            refreshBridgeInfo()
+            setInterval(refreshBridgeInfo, 4000)
+        </script>
+    </body>
+</html>

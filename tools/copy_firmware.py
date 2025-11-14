@@ -58,3 +58,21 @@ def copy_firmware_bundle(source, target, env) -> None:
 
 # Register callback after the primary firmware image is built.
 env.AddPostAction("$BUILD_DIR/${PROGNAME}.bin", copy_firmware_bundle)
+
+
+def copy_filesystem_bundle(source, target, env) -> None:
+    project_dir = Path(env["PROJECT_DIR"])
+    build_dir = Path(env.subst("$BUILD_DIR"))
+    dest_dir = project_dir / "docs" / "web-install" / "firmware" / "latest"
+
+    fs_image = build_dir / "littlefs.bin"
+    if not fs_image.exists():
+        print(f"[copy_firmware] WARNING: filesystem image missing: {fs_image}")
+        return
+
+    dest_path = dest_dir / "littlefs.bin"
+    _copy_with_log(fs_image, dest_path)
+
+
+# Mirror filesystem image alongside firmware bundle when available.
+env.AddPostAction("$BUILD_DIR/littlefs.bin", copy_filesystem_bundle)

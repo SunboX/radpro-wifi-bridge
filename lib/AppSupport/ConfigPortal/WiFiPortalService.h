@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <WiFiManager.h>
 #include <esp_wifi_types.h>
+#include <vector>
 #include "DeviceInfo/DeviceInfoStore.h"
 #include "DeviceInfo/DeviceInfoPage.h"
 #include "DeviceInfo/BridgeInfoPage.h"
@@ -45,8 +46,19 @@ private:
     String exportConfigJson() const;
     bool importConfigJson(const String &body, String &errorMessage);
     static String htmlEscape(const String &value);
+    using TemplateReplacements = std::vector<std::pair<String, String>>;
+    bool sendTemplate(const char *path, const TemplateReplacements &replacements);
+    bool readFile(const char *path, String &out);
+    void sendTemplateError(const char *path);
+    void ensureMenuHtmlLoaded();
+    bool remountLittleFsIfNeeded(const char *context);
+    void dumpFilesystemContents(const __FlashStringHelper *reason);
+    bool sendStaticFile(const char *path, const char *contentType);
     void disablePortalPowerSave();
     void restorePortalPowerSave();
+    void logPortalState(const char *context);
+    bool hasStoredCredentials() const;
+    void scheduleRestart(const char *reason);
 
     AppConfig &config_;
     AppConfigStore &store_;
@@ -71,6 +83,7 @@ private:
     WiFiManagerParameter paramRadmonUser_;
     WiFiManagerParameter paramRadmonPassword_;
     bool paramsAttached_;
+    String menuHtml_;
     wl_status_t lastStatus_;
     WiFiEventId_t wifiEventId_;
     IPAddress lastIp_;
@@ -83,4 +96,7 @@ private:
     String lastKnownPass_;
     bool portalPsDisabled_ = false;
     wifi_ps_type_t previousPsType_ = WIFI_PS_MIN_MODEM;
+    bool routesRegistered_ = false;
+    bool restartScheduled_ = false;
+    unsigned long restartAtMs_ = 0;
 };
