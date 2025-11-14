@@ -12,8 +12,5 @@ public:
     void handleJson(WiFiManager *manager);
 
 private:
-    String buildHtml() const;
-    String buildScript() const;
-
     DeviceInfoStore &store_;
 };

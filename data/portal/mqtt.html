@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>Configure MQTT</title>
+        <link rel="stylesheet" href="/portal/portal.css" />
+    </head>
+    <body class="invert">
+        <div class="wrap wrap--compact">
+            <h1>MQTT Settings</h1>
+            <p class="notice {{NOTICE_CLASS}}">{{NOTICE_TEXT}}</p>
+            <form method="POST" action="/mqtt">
+                <label class="toggle"
+                    ><input id="mqttEnabled" name="mqttEnabled" type="checkbox" value="1" {{MQTT_ENABLED_CHECKED}} /> Enable MQTT
+                    publishing</label
+                >
+                <label for="mqttHost">Host</label>
+                <input id="mqttHost" name="mqttHost" type="text" value="{{MQTT_HOST}}" />
+                <label for="mqttPort">Port</label>
+                <input id="mqttPort" name="mqttPort" type="number" min="1" max="65535" value="{{MQTT_PORT}}" />
+                <label for="mqttClient">Client ID Suffix</label>
+                <input id="mqttClient" name="mqttClient" type="text" value="{{MQTT_CLIENT}}" />
+                <label for="mqttUser">Username</label>
+                <input id="mqttUser" name="mqttUser" type="text" value="{{MQTT_USER}}" />
+                <label for="mqttPass">Password</label>
+                <input id="mqttPass" name="mqttPass" type="password" value="{{MQTT_PASS}}" />
+                <label for="mqttTopic">Base Topic</label>
+                <input id="mqttTopic" name="mqttTopic" type="text" value="{{MQTT_TOPIC}}" />
+                <label for="mqttFullTopic">Full Topic Template</label>
+                <input id="mqttFullTopic" name="mqttFullTopic" type="text" value="{{MQTT_FULL_TOPIC}}" />
+                <label for="readInterval">Read Interval (ms)</label>
+                <input id="readInterval" name="readInterval" type="number" min="{{READ_INTERVAL_MIN}}" value="{{READ_INTERVAL}}" />
+                <button type="submit">Save MQTT Settings</button>
+            </form>
+            <form action="/" method="get" class="back-form">
+                <button type="submit">Back to Main Menu</button>
+            </form>
+        </div>
+    </body>
+</html>

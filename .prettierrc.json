@@ -1,0 +1,9 @@
+{
+    "trailingComma": "none",
+    "tabWidth": 4,
+    "semi": false,
+    "singleQuote": true,
+    "singleAttributePerLine": false,
+    "html.format.wrapLineLength": 0,
+    "printWidth": 140
+}

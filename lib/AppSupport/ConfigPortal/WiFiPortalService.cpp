@@ -3,9 +3,19 @@
 #include <Arduino.h>
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <vector>
 #include <esp_wifi.h>
 #include <ArduinoJson.h>
+#include <FS.h>
+#include <LittleFS.h>
+
+namespace
+{
+constexpr const char *kPortalLittleFsBasePath = "/littlefs";
+constexpr const char *kPortalLittleFsLabel = "spiffs";
+constexpr uint8_t kPortalLittleFsMaxFiles = 10;
+}
 
 WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, DeviceInfoStore &info, Print &logPort, LedController &led)
     : config_(config),
@@ -45,13 +55,21 @@ WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, D
 
 void WiFiPortalService::begin()
 {
-    manager_.setDebugOutput(false);
+    manager_.setDebugOutput(true);
     manager_.setClass("invert");
     manager_.setConnectTimeout(10);
     manager_.setConnectRetries(1);
     manager_.setTitle("RadPro WiFi Bridge Configuration");
     std::vector<const char *> menuEntries = {"wifi", "custom"};
     manager_.setMenu(menuEntries);
+    log_.print(F("WiFi portal menu tokens: "));
+    for (size_t i = 0; i < menuEntries.size(); ++i)
+    {
+        log_.print(menuEntries[i]);
+        if (i + 1 < menuEntries.size())
+            log_.print(F(", "));
+    }
+    log_.println();
     manager_.setSaveConfigCallback([this]()
                                    { store_.requestSave(); });
     manager_.setSaveParamsCallback([this]()
@@ -63,30 +81,52 @@ void WiFiPortalService::begin()
     attachParameters();
     refreshParameters();
     logStatusIfNeeded();
+    dumpFilesystemContents(F("WiFiPortalService begin"));
+    logPortalState("begin");
 }
 
 bool WiFiPortalService::connect(bool forcePortal)
 {
+    log_.print(F("WiFiPortalService::connect(forcePortal="));
+    log_.print(forcePortal ? F("true") : F("false"));
+    log_.println(F(") invoked."));
+    logPortalState("connect(start)");
+
     refreshParameters();
 
     bool connected = false;
+    if (!forcePortal && !hasStoredCredentials())
+    {
+        forcePortal = true;
+        log_.println(F("No saved Wi-Fi credentials detected; forcing configuration portal."));
+    }
+
     if (forcePortal)
     {
         String apName = config_.deviceName.length() ? config_.deviceName : String("RadPro WiFi Bridge");
         apName += " Setup";
-        log_.println("Starting Wi-Fi configuration portal…");
+        log_.print(F("Starting Wi-Fi configuration portal with SSID '"));
+        log_.print(apName);
+        log_.println(F("'"));
         manager_.setConfigPortalTimeout(0);
         connected = manager_.startConfigPortal(apName.c_str());
+        log_.println(connected ? F("Configuration portal completed (credentials supplied).") : F("Configuration portal exited without connection."));
+        logPortalState("after startConfigPortal");
     }
     else
     {
         manager_.setConfigPortalTimeout(30);
+        log_.println(F("Attempting Wi-Fi autoConnect()…"));
         connected = manager_.autoConnect(config_.deviceName.c_str());
+        log_.println(connected ? F("autoConnect() succeeded.") : F("autoConnect() failed or timed out."));
+        if (!connected)
+            logPortalState("autoConnect failed");
     }
 
     if (!connected)
     {
         led_.activateFault(FaultCode::WifiPortalStuck);
+        log_.println(F("WiFiPortalService::connect() returning failure."));
         return false;
     }
 
@@ -118,12 +158,25 @@ void WiFiPortalService::maintain()
         if (!manager_.getConfigPortalActive() && !manager_.getWebPortalActive())
         {
             refreshParameters();
+            if (!menuHtml_.length())
+            {
+                log_.println(F("Menu HTML empty prior to portal start; attempting reload."));
+                ensureMenuHtmlLoaded();
+            }
+            log_.print(F("Starting Wi-Fi web portal; menu bytes="));
+            log_.print(menuHtml_.length());
+            log_.print(F(" routes registered="));
+            log_.println(routesRegistered_ ? F("true") : F("false"));
             manager_.startWebPortal();
+            log_.println(manager_.getWebPortalActive() ? F("Wi-Fi web portal started.") : F("Wi-Fi web portal inactive after start request."));
+            logPortalState("startWebPortal");
         }
     }
     else if (manager_.getWebPortalActive())
     {
+        log_.println(F("Stopping Wi-Fi web portal (station disconnected)."));
         manager_.stopWebPortal();
+        logPortalState("stopWebPortal");
     }
 
     logStatusIfNeeded();
@@ -162,6 +215,16 @@ void WiFiPortalService::maintain()
             }
         }
     }
+
+    if (restartScheduled_)
+    {
+        if (millis() >= restartAtMs_)
+        {
+            log_.println(F("Restarting device to apply configuration changes."));
+            delay(100);
+            ESP.restart();
+        }
+    }
 }
 
 void WiFiPortalService::process()
@@ -189,12 +252,14 @@ void WiFiPortalService::syncIfRequested()
         hasLoggedIp_ = false;
         log_.println("Wi-Fi reconnect scheduled.");
         led_.activateFault(FaultCode::PortalReconnectFailed);
+        logPortalState("syncIfRequested");
     }
 }
 
 void WiFiPortalService::dumpStatus()
 {
     logStatus();
+    logPortalState("dumpStatus");
 }
 
 void WiFiPortalService::enableStatusLogging()
@@ -237,93 +302,140 @@ void WiFiPortalService::refreshParameters()
 void WiFiPortalService::attachParameters()
 {
     if (paramsAttached_)
+    {
+        log_.println(F("attachParameters(): parameters already attached; skipping."));
         return;
+    }
+
+    log_.println(F("attachParameters(): registering Wi-Fi portal parameters and routes."));
 
     manager_.addParameter(&paramDeviceName_);
 
-    manager_.setCustomMenuHTML("<div style='margin:-5px;display:flex;flex-direction:column;gap:20px;'>"
-                               "<form action='/device' method='get'><button class='btn btn-primary' type='submit'>RadPro Device Info</button></form>"
-                               "<form action='/bridge' method='get'><button class='btn btn-primary' type='submit'>WiFi Bridge Info</button></form>"
-                               "<form action='/mqtt' method='get'><button class='btn btn-primary' type='submit'>Configure MQTT</button></form>"
-                               "<form action='/osem' method='get'><button class='btn btn-primary' type='submit'>Configure OpenSenseMap</button></form>"
-                               "<form action='/radmon' method='get'><button class='btn btn-primary' type='submit'>Configure Radmon</button></form>"
-                               "<form action='/gmc' method='get'><button class='btn btn-primary' type='submit'>Configure GMCMap</button></form>"
-                               "<form action='/backup' method='get'><button class='btn btn-primary' type='submit'>Configuration Backup &amp; Restore</button></form>"
-                               "<form action='/restart' method='get'><button class='btn btn-primary' type='submit'>Restart WiFi Bridge</button></form>"
-                               "</div>");
-
+    ensureMenuHtmlLoaded();
+    if (menuHtml_.length())
+    {
+        log_.print(F("Applying custom menu HTML ("));
+        log_.print(menuHtml_.length());
+        log_.println(F(" bytes)."));
+        manager_.setCustomMenuHTML(menuHtml_.c_str());
+    }
+    else
+    {
+        log_.println(F("Custom menu HTML missing; Wi-Fi portal menu will only show default entries."));
+    }
+    
     manager_.setWebServerCallback([this]()
                                   {
+        log_.println(F("Web server callback invoked; registering custom portal routes."));
         if (!manager_.server)
+        {
+            log_.println(F("manager_.server is null; cannot register custom routes."));
             return;
+        }
+        routesRegistered_ = true;
+        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /gmc /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /restart"));
 
         manager_.server->on("/mqtt", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /mqtt"));
             sendMqttForm();
         });
 
+        manager_.server->on("/portal/portal.css", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /portal/portal.css"));
+            if (!sendStaticFile("/portal/portal.css", "text/css"))
+                sendTemplateError("/portal/portal.css");
+        });
+
         manager_.server->on("/mqtt", HTTP_POST, [this]() {
+            log_.println(F("HTTP POST /mqtt"));
             handleMqttPost();
         });
 
         manager_.server->on("/osem", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /osem"));
             sendOpenSenseForm();
         });
 
         manager_.server->on("/osem", HTTP_POST, [this]() {
+            log_.println(F("HTTP POST /osem"));
             handleOpenSensePost();
         });
 
         manager_.server->on("/radmon", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /radmon"));
             sendRadmonForm();
         });
 
         manager_.server->on("/radmon", HTTP_POST, [this]() {
+            log_.println(F("HTTP POST /radmon"));
             handleRadmonPost();
         });
 
         manager_.server->on("/gmc", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /gmc"));
             sendGmcMapForm();
         });
 
         manager_.server->on("/gmc", HTTP_POST, [this]() {
+            log_.println(F("HTTP POST /gmc"));
             handleGmcMapPost();
         });
 
         manager_.server->on("/device", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /device"));
             deviceInfoPage_.handlePage(&manager_);
         });
 
         manager_.server->on("/device.json", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /device.json"));
             deviceInfoPage_.handleJson(&manager_);
         });
 
         manager_.server->on("/bridge", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /bridge"));
             bridgeInfoPage_.handlePage(&manager_);
         });
 
         manager_.server->on("/bridge.json", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /bridge.json"));
             bridgeInfoPage_.handleJson(&manager_);
         });
 
         manager_.server->on("/backup", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /backup"));
             sendConfigBackupPage();
         });
 
         manager_.server->on("/backup.json", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /backup.json"));
             handleConfigDownload();
         });
 
         manager_.server->on("/backup/restore", HTTP_POST, [this]() {
+            log_.println(F("HTTP POST /backup/restore"));
             handleConfigRestore();
         });
 
         manager_.server->on("/restart", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /restart"));
             manager_.server->send(200, "text/plain", "Restarting...\n");
             log_.println("Restart requested from Wi-Fi portal.");
             delay(200);
             ESP.restart();
+        });
+
+        manager_.server->onNotFound([this]() {
+            if (!manager_.server)
+                return;
+            log_.print(F("Portal request not found: "));
+            log_.print(manager_.server->uri());
+            log_.print(F(" (method "));
+            log_.print(manager_.server->method());
+            log_.println(F(")"));
+            manager_.handleNotFound();
         }); });
 
+    log_.println(F("Custom Wi-Fi portal routes registered."));
     paramsAttached_ = true;
 }
 
@@ -434,9 +546,14 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
         break;
     }
     case ARDUINO_EVENT_WIFI_AP_START:
+        log_.print(F("SoftAP started. IP="));
+        log_.println(WiFi.softAPIP());
+        logPortalState("event:AP_START");
         disablePortalPowerSave();
         break;
     case ARDUINO_EVENT_WIFI_AP_STOP:
+        log_.println(F("SoftAP stopped."));
+        logPortalState("event:AP_STOP");
         restorePortalPowerSave();
         break;
     case ARDUINO_EVENT_WIFI_STA_CONNECTED:
@@ -453,6 +570,7 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
             log_.print("Wi-Fi connected to AP: ");
             log_.println(ssid);
         }
+        logPortalState("event:STA_CONNECTED");
         lastStatus_ = WL_CONNECTED;
         waitingForIpSinceMs_ = millis();
         led_.clearFault(FaultCode::WifiAuthFailure);
@@ -465,6 +583,7 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
             log_.print(info.wifi_sta_disconnected.reason);
             log_.println(")");
         }
+        logPortalState("event:STA_DISCONNECTED");
         lastStatus_ = WL_DISCONNECTED;
         hasLoggedIp_ = false;
         lastIp_ = IPAddress();
@@ -570,6 +689,104 @@ void WiFiPortalService::logStatus()
     }
 }
 
+void WiFiPortalService::logPortalState(const char *context)
+{
+    log_.print(F("Portal state"));
+    if (context && context[0])
+    {
+        log_.print(F(" ("));
+        log_.print(context);
+        log_.print(F(")"));
+    }
+    log_.print(F(": status="));
+    log_.print(static_cast<int>(WiFi.status()));
+    log_.print(F(" configPortalActive="));
+    log_.print(manager_.getConfigPortalActive() ? F("yes") : F("no"));
+    log_.print(F(" webPortalActive="));
+    log_.print(manager_.getWebPortalActive() ? F("yes") : F("no"));
+    log_.print(F(" routesRegistered="));
+    log_.print(routesRegistered_ ? F("yes") : F("no"));
+
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    if (esp_wifi_get_mode(&mode) == ESP_OK)
+    {
+        log_.print(F(" mode="));
+        switch (mode)
+        {
+        case WIFI_MODE_NULL:
+            log_.print(F("NULL"));
+            break;
+        case WIFI_MODE_STA:
+            log_.print(F("STA"));
+            break;
+        case WIFI_MODE_AP:
+            log_.print(F("AP"));
+            break;
+        case WIFI_MODE_APSTA:
+            log_.print(F("AP+STA"));
+            break;
+        default:
+            log_.print(static_cast<int>(mode));
+            break;
+        }
+    }
+
+    IPAddress staIp = WiFi.localIP();
+    IPAddress apIp = WiFi.softAPIP();
+    log_.print(F(" staIP="));
+    log_.print(staIp);
+    log_.print(F(" apIP="));
+    log_.print(apIp);
+    log_.print(F(" apClients="));
+    log_.print(WiFi.softAPgetStationNum());
+
+    String ssid = WiFi.SSID();
+    if (ssid.length())
+    {
+        log_.print(F(" ssid=\""));
+        log_.print(ssid);
+        log_.print(F("\""));
+    }
+    String apSsid = WiFi.softAPSSID();
+    if (apSsid.length())
+    {
+        log_.print(F(" apSsid=\""));
+        log_.print(apSsid);
+        log_.print(F("\""));
+    }
+    log_.println();
+}
+
+bool WiFiPortalService::hasStoredCredentials() const
+{
+    wifi_config_t conf;
+    if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK)
+    {
+        if (conf.sta.ssid[0] != 0)
+            return true;
+    }
+
+    if (WiFi.SSID().length())
+        return true;
+    if (WiFi.psk().length())
+        return true;
+    return false;
+}
+
+void WiFiPortalService::scheduleRestart(const char *reason)
+{
+    restartScheduled_ = true;
+    restartAtMs_ = millis() + 1500;
+    log_.print(F("Restart scheduled"));
+    if (reason && reason[0])
+    {
+        log_.print(F(" ("));
+        log_.print(reason);
+        log_.print(F(")"));
+    }
+    log_.println(F("."));
+}
+
 void WiFiPortalService::disablePortalPowerSave()
 {
     if (portalPsDisabled_)
@@ -643,71 +860,23 @@ void WiFiPortalService::sendMqttForm(const String &message)
     if (!manager_.server)
         return;
 
-    String html;
-    html.reserve(2048);
-    html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>"
-              "<title>Configure MQTT</title>"
-              "<style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}"
-              "h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}"
-              "label{font-weight:bold;}input,select{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;box-sizing:border-box;}"
-              "button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}"
-              "button:hover{background:#1976D2;}a{color:#03A9F4;} .wrap{display:inline-block;min-width:260px;max-width:500px;width:100%;text-align:left;}"
-              "p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;}"
-              ".toggle input{width:auto;}</style></head><body class='invert'><div class='wrap'><h1>MQTT Settings</h1>");
+    String notice = htmlEscape(message);
+    TemplateReplacements vars = {
+        {"{{NOTICE_CLASS}}", notice.length() ? String() : String("hidden")},
+        {"{{NOTICE_TEXT}}", notice},
+        {"{{MQTT_ENABLED_CHECKED}}", config_.mqttEnabled ? String("checked") : String()},
+        {"{{MQTT_HOST}}", htmlEscape(config_.mqttHost)},
+        {"{{MQTT_PORT}}", String(config_.mqttPort)},
+        {"{{MQTT_CLIENT}}", htmlEscape(config_.mqttClient)},
+        {"{{MQTT_USER}}", htmlEscape(config_.mqttUser)},
+        {"{{MQTT_PASS}}", htmlEscape(config_.mqttPassword)},
+        {"{{MQTT_TOPIC}}", htmlEscape(config_.mqttTopic)},
+        {"{{MQTT_FULL_TOPIC}}", htmlEscape(config_.mqttFullTopic)},
+        {"{{READ_INTERVAL_MIN}}", String(kMinReadIntervalMs)},
+        {"{{READ_INTERVAL}}", String(config_.readIntervalMs)}
+    };
 
-    if (message.length())
-    {
-        html += F("<p class='notice'>");
-        html += message;
-        html += F("</p>");
-    }
-
-    html += F("<form method='POST' action='/mqtt'>");
-
-    html += F("<label class='toggle'><input id='mqttEnabled' name='mqttEnabled' type='checkbox' value='1'");
-    if (config_.mqttEnabled)
-        html += F(" checked");
-    html += F("> Enable MQTT publishing</label>");
-
-    html += F("<label for='mqttHost'>Host</label><input id='mqttHost' name='mqttHost' type='text' style='box-sizing:border-box;' value='");
-    html += htmlEscape(config_.mqttHost);
-    html += F("'/>");
-
-    html += F("<label for='mqttPort'>Port</label><input id='mqttPort' name='mqttPort' type='number' min='1' max='65535' style='box-sizing:border-box;' value='");
-    html += String(config_.mqttPort);
-    html += F("'/>");
-
-    html += F("<label for='mqttClient'>Client ID Suffix</label><input id='mqttClient' name='mqttClient' type='text' style='box-sizing:border-box;' value='");
-    html += htmlEscape(config_.mqttClient);
-    html += F("'/>");
-
-    html += F("<label for='mqttUser'>Username</label><input id='mqttUser' name='mqttUser' type='text' style='box-sizing:border-box;' value='");
-    html += htmlEscape(config_.mqttUser);
-    html += F("'/>");
-
-    html += F("<label for='mqttPass'>Password</label><input id='mqttPass' name='mqttPass' type='password' style='box-sizing:border-box;' value='");
-    html += htmlEscape(config_.mqttPassword);
-    html += F("'/>");
-
-    html += F("<label for='mqttTopic'>Base Topic</label><input id='mqttTopic' name='mqttTopic' type='text' style='box-sizing:border-box;' value='");
-    html += htmlEscape(config_.mqttTopic);
-    html += F("'/>");
-
-    html += F("<label for='mqttFullTopic'>Full Topic Template</label><input id='mqttFullTopic' name='mqttFullTopic' type='text' style='box-sizing:border-box;' value='");
-    html += htmlEscape(config_.mqttFullTopic);
-    html += F("'/>");
-
-    html += F("<label for='readInterval'>Read Interval (ms)</label><input id='readInterval' name='readInterval' type='number' style='box-sizing:border-box;' min='");
-    html += String(kMinReadIntervalMs);
-    html += F("' value='");
-    html += String(config_.readIntervalMs);
-    html += F("'/>");
-
-    html += F("<button type='submit'>Save MQTT Settings</button></form>"
-              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Back to Main Menu</button></form>"
-              "</div></body></html>");
-
-    manager_.server->send(200, "text/html", html);
+    sendTemplate("/portal/mqtt.html", vars);
 }
 
 void WiFiPortalService::handleMqttPost()
@@ -797,52 +966,18 @@ void WiFiPortalService::sendOpenSenseForm(const String &message)
     if (!manager_.server)
         return;
 
-    String html;
-    html.reserve(2048);
-    html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>"
-              "<title>Configure OpenSenseMap</title>"
-              "<style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}"
-              "h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}"
-              "label{font-weight:bold;}input{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;box-sizing:border-box;}"
-              "button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}"
-              "button:hover{background:#1976D2;} .wrap{display:inline-block;min-width:260px;max-width:500px;width:100%;text-align:left;}"
-              "p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;}"
-              ".toggle input{width:auto;}</style></head><body class='invert'><div class='wrap'><h1>OpenSenseMap Settings</h1>");
+    String notice = htmlEscape(message);
+    TemplateReplacements vars = {
+        {"{{NOTICE_CLASS}}", notice.length() ? String() : String("hidden")},
+        {"{{NOTICE_TEXT}}", notice},
+        {"{{OSEM_ENABLED_CHECKED}}", config_.openSenseMapEnabled ? String("checked") : String()},
+        {"{{OSEM_BOX_ID}}", htmlEscape(config_.openSenseBoxId)},
+        {"{{OSEM_API_KEY}}", htmlEscape(config_.openSenseApiKey)},
+        {"{{OSEM_RATE_ID}}", htmlEscape(config_.openSenseTubeRateSensorId)},
+        {"{{OSEM_DOSE_ID}}", htmlEscape(config_.openSenseDoseRateSensorId)}
+    };
 
-    if (message.length())
-    {
-        html += F("<p class='notice'>");
-        html += message;
-        html += F("</p>");
-    }
-
-    html += F("<form method='POST' action='/osem'>");
-    html += F("<label class='toggle'><input id='osemEnabled' name='osemEnabled' type='checkbox' value='1'");
-    if (config_.openSenseMapEnabled)
-        html += F(" checked");
-    html += F("> Enable OpenSenseMap publishing</label>");
-
-    html += F("<label for='osemBoxId'>Box ID</label><input id='osemBoxId' name='osemBoxId' type='text' value='");
-    html += htmlEscape(config_.openSenseBoxId);
-    html += F("'/>");
-
-    html += F("<label for='osemApiKey'>Access Token</label><input id='osemApiKey' name='osemApiKey' type='text' value='");
-    html += htmlEscape(config_.openSenseApiKey);
-    html += F("'/>");
-
-    html += F("<label for='osemRate'>Tube Rate (cpm) - Geiger Sensor ID</label><input id='osemRate' name='osemRate' type='text' value='");
-    html += htmlEscape(config_.openSenseTubeRateSensorId);
-    html += F("'/>");
-
-    html += F("<label for='osemDose'>Dose Rate (uSv/h) - Dose Sensor ID</label><input id='osemDose' name='osemDose' type='text' value='");
-    html += htmlEscape(config_.openSenseDoseRateSensorId);
-    html += F("'/>");
-
-    html += F("<button type='submit'>Save OpenSenseMap Settings</button></form>"
-              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Back to Main Menu</button></form>"
-              "</div></body></html>");
-
-    manager_.server->send(200, "text/html", html);
+    sendTemplate("/portal/osem.html", vars);
 }
 
 void WiFiPortalService::handleOpenSensePost()
@@ -901,40 +1036,16 @@ void WiFiPortalService::sendRadmonForm(const String &message)
     if (!manager_.server)
         return;
 
-    String html;
-    html.reserve(2048);
-    html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>");
-    html += F("<title>Configure Radmon</title><style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}");
-    html += F("h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}label{font-weight:bold;}input{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;box-sizing:border-box;}");
-    html += F("button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}button:hover{background:#1976D2;}");
-    html += F(".wrap{display:inline-block;min-width:260px;max-width:500px;width:100%;text-align:left;}p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;} .toggle input{width:auto;}</style></head><body class='invert'><div class='wrap'><h1>Radmon Settings</h1>");
+    String notice = htmlEscape(message);
+    TemplateReplacements vars = {
+        {"{{NOTICE_CLASS}}", notice.length() ? String() : String("hidden")},
+        {"{{NOTICE_TEXT}}", notice},
+        {"{{RADMON_ENABLED_CHECKED}}", config_.radmonEnabled ? String("checked") : String()},
+        {"{{RADMON_USER}}", htmlEscape(config_.radmonUser)},
+        {"{{RADMON_PASS}}", htmlEscape(config_.radmonPassword)}
+    };
 
-    if (message.length())
-    {
-        html += F("<p class='notice'>");
-        html += message;
-        html += F("</p>");
-    }
-
-    html += F("<form method='POST' action='/radmon'>");
-    html += F("<label class='toggle'><input id='radmonEnabled' name='radmonEnabled' type='checkbox' value='1'");
-    if (config_.radmonEnabled)
-        html += F(" checked");
-    html += F("> Enable Radmon publishing</label>");
-
-    html += F("<label for='radmonUser'>Username</label><input id='radmonUser' name='radmonUser' type='text' value='");
-    html += htmlEscape(config_.radmonUser);
-    html += F("'/>");
-
-    html += F("<label for='radmonPass'>Password</label><input id='radmonPass' name='radmonPass' type='password' value='");
-    html += htmlEscape(config_.radmonPassword);
-    html += F("'/>");
-
-    html += F("<button type='submit'>Save Radmon Settings</button></form>"
-              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Back to Main Menu</button></form>"
-              "</div></body></html>");
-
-    manager_.server->send(200, "text/html", html);
+    sendTemplate("/portal/radmon.html", vars);
 }
 
 void WiFiPortalService::handleRadmonPost()
@@ -992,40 +1103,16 @@ void WiFiPortalService::sendGmcMapForm(const String &message)
     if (!manager_.server)
         return;
 
-    String html;
-    html.reserve(2048);
-    html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>");
-    html += F("<title>Configure GMCMap</title><style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}");
-    html += F("h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}label{font-weight:bold;}input{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;box-sizing:border-box;}");
-    html += F("button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}button:hover{background:#1976D2;}");
-    html += F(".wrap{display:inline-block;min-width:260px;max-width:500px;width:100%;text-align:left;}p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;} .toggle input{width:auto;}</style></head><body class='invert'><div class='wrap'><h1>GMCMap Settings</h1>");
+    String notice = htmlEscape(message);
+    TemplateReplacements vars = {
+        {"{{NOTICE_CLASS}}", notice.length() ? String() : String("hidden")},
+        {"{{NOTICE_TEXT}}", notice},
+        {"{{GMC_ENABLED_CHECKED}}", config_.gmcMapEnabled ? String("checked") : String()},
+        {"{{GMC_ACCOUNT}}", htmlEscape(config_.gmcMapAccountId)},
+        {"{{GMC_DEVICE}}", htmlEscape(config_.gmcMapDeviceId)}
+    };
 
-    if (message.length())
-    {
-        html += F("<p class='notice'>");
-        html += message;
-        html += F("</p>");
-    }
-
-    html += F("<form method='POST' action='/gmc'>");
-    html += F("<label class='toggle'><input id='gmcEnabled' name='gmcEnabled' type='checkbox' value='1'");
-    if (config_.gmcMapEnabled)
-        html += F(" checked");
-    html += F("> Enable GMCMap publishing</label>");
-
-    html += F("<label for='gmcAccount'>Account ID</label><input id='gmcAccount' name='gmcAccount' type='text' value='");
-    html += htmlEscape(config_.gmcMapAccountId);
-    html += F("'/>");
-
-    html += F("<label for='gmcDevice'>Device ID</label><input id='gmcDevice' name='gmcDevice' type='text' value='");
-    html += htmlEscape(config_.gmcMapDeviceId);
-    html += F("'/>");
-
-    html += F("<button type='submit'>Save GMCMap Settings</button></form>"
-              "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Back to Main Menu</button></form>"
-              "</div></body></html>");
-
-    manager_.server->send(200, "text/html", html);
+    sendTemplate("/portal/gmc.html", vars);
 }
 
 void WiFiPortalService::handleGmcMapPost()
@@ -1080,47 +1167,25 @@ void WiFiPortalService::sendConfigBackupPage(const String &message)
         return;
 
     bool isError = message.startsWith(F("ERROR:"));
-    String displayMessage = isError ? message.substring(6) : message;
-    displayMessage.trim();
+    String display = isError ? message.substring(6) : message;
+    display.trim();
 
-    String html;
-    html.reserve(5000);
-    html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>");
-    html += F("<title>Configuration Backup &amp; Restore</title><style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}"
-              ".wrap{max-width:620px;width:100%;}section{background:#1e1e1e;border-radius:8px;padding:16px;margin-bottom:20px;box-shadow:0 4px 18px rgba(0,0,0,0.35);}"
-              "h1{margin-top:0;}button{padding:10px;width:100%;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;}"
-              "button:hover{background:#1976D2;}p.notice{margin:0 0 16px;color:#8bc34a;}p.notice.error{color:#ff7676;}"
-              ".client-msg{margin-top:10px;color:#ffca28;} .client-msg.error{color:#ff7676;}input[type=file]{width:100%;}");
-    html += F("</style></head><body class='invert'><div class='wrap'><h1>Configuration Backup &amp; Restore</h1>");
-
-    if (displayMessage.length())
+    String noticeClass;
+    if (!display.length())
     {
-        html += isError ? F("<p class='notice error'>") : F("<p class='notice'>");
-        html += htmlEscape(displayMessage);
-        html += F("</p>");
+        noticeClass = "hidden";
+    }
+    else
+    {
+        noticeClass = isError ? "error" : "success";
     }
 
-    html += F("<section><h2>Download Backup</h2><p>Grab a JSON snapshot of the current configuration for safekeeping.</p>"
-              "<form action='/backup.json' method='get'><button type='submit'>Download JSON Backup</button></form></section>");
+    TemplateReplacements vars = {
+        {"{{NOTICE_CLASS}}", noticeClass},
+        {"{{NOTICE_TEXT}}", htmlEscape(display)}
+    };
 
-    html += F("<section><h2>Restore From Backup</h2><p>Select a previously exported JSON file. The device will apply the settings immediately.</p>"
-              "<input type='file' id='restoreFile' accept='application/json' style='margin-bottom:12px;'/>"
-              "<form id='restoreForm' action='/backup/restore' method='post'>"
-              "<textarea id='configJsonField' name='configJson' style='display:none;'></textarea>"
-              "<button type='button' id='restoreSubmit'>Restore Configuration</button>"
-              "</form><p id='restoreClientMessage' class='client-msg'></p></section>");
-
-    html += F("<form action='/' method='get'><button type='submit'>Back to Main Menu</button></form>");
-
-    html += F("</div><script>const fileInput=document.getElementById('restoreFile');const hiddenField=document.getElementById('configJsonField');"
-              "const clientMsg=document.getElementById('restoreClientMessage');const form=document.getElementById('restoreForm');"
-              "const submitBtn=document.getElementById('restoreSubmit');"
-              "submitBtn.addEventListener('click',async()=>{clientMsg.textContent='';clientMsg.classList.remove('error');"
-              "if(!fileInput.files.length){clientMsg.textContent='Please choose a backup file first.';clientMsg.classList.add('error');return;}"
-              "try{const text=await fileInput.files[0].text();hiddenField.value=text;form.submit();}catch(err){clientMsg.textContent='Could not read file: '+err.message;clientMsg.classList.add('error');}});"
-              "</script></body></html>");
-
-    manager_.server->send(200, "text/html", html);
+    sendTemplate("/portal/backup.html", vars);
 }
 
 void WiFiPortalService::handleConfigDownload()
@@ -1160,6 +1225,7 @@ void WiFiPortalService::handleConfigRestore()
     if (importConfigJson(body, error))
     {
         sendConfigBackupPage(F("Configuration restored. The bridge will reconnect with the imported settings."));
+        scheduleRestart("config restore");
     }
     else
     {
@@ -1327,4 +1393,197 @@ String WiFiPortalService::htmlEscape(const String &value)
         }
     }
     return out;
+}
+
+bool WiFiPortalService::readFile(const char *path, String &out)
+{
+    bool fsAvailable = true;
+    File file = LittleFS.open(path, "r");
+    if (!file)
+    {
+        fsAvailable = remountLittleFsIfNeeded(path);
+        if (fsAvailable)
+            file = LittleFS.open(path, "r");
+    }
+    if (!file)
+    {
+        log_.print(F("Missing portal asset: "));
+        log_.println(path);
+        if (fsAvailable)
+        {
+            log_.print(F("LittleFS.exists? "));
+            log_.println(LittleFS.exists(path) ? F("yes") : F("no"));
+            dumpFilesystemContents(F("on missing asset"));
+        }
+        else
+        {
+            log_.println(F("LittleFS unavailable; cannot enumerate assets."));
+        }
+        return false;
+    }
+
+    log_.print(F("Serving asset: "));
+    log_.print(path);
+    log_.print(F(" size="));
+    log_.println(file.size());
+
+    out.clear();
+    out.reserve(file.size() + 8);
+    while (file.available())
+    {
+        out += static_cast<char>(file.read());
+    }
+    file.close();
+    return true;
+}
+
+bool WiFiPortalService::sendStaticFile(const char *path, const char *contentType)
+{
+    if (!manager_.server)
+        return false;
+    String content;
+    if (!readFile(path, content))
+        return false;
+    manager_.server->send(200, contentType, content);
+    log_.print(F("Served asset: "));
+    log_.println(path);
+    return true;
+}
+
+bool WiFiPortalService::sendTemplate(const char *path, const TemplateReplacements &replacements)
+{
+    if (!manager_.server)
+    {
+        log_.print(F("Cannot send template "));
+        log_.print(path);
+        log_.println(F(": web server not ready."));
+        return false;
+    }
+
+    String content;
+    if (!readFile(path, content))
+    {
+        log_.print(F("Retrying template load: ")); log_.println(path);
+        // Attempt to reload the menu snippet in case LittleFS mounted late.
+        if (strcmp(path, "/portal/menu.html") == 0)
+        {
+            menuHtml_ = String();
+            ensureMenuHtmlLoaded();
+            content = menuHtml_;
+        }
+
+        if (!content.length())
+        {
+            sendTemplateError(path);
+            return false;
+        }
+    }
+
+    for (const auto &entry : replacements)
+    {
+        content.replace(entry.first, entry.second);
+    }
+
+    manager_.server->send(200, "text/html", content);
+    log_.print(F("Served template OK: "));
+    log_.println(path);
+    return true;
+}
+
+void WiFiPortalService::sendTemplateError(const char *path)
+{
+    if (!manager_.server)
+    {
+        log_.print(F("Cannot send template error for "));
+        log_.print(path);
+        log_.println(F(" because server is null."));
+        return;
+    }
+    String body = String(F("Template not found: ")) + path;
+    manager_.server->send(500, "text/plain", body);
+    log_.print(F("Sent template error response for "));
+    log_.println(path);
+}
+
+bool WiFiPortalService::remountLittleFsIfNeeded(const char *context)
+{
+    log_.print(F("LittleFS unavailable while accessing "));
+    log_.print(context);
+    log_.println(F("; attempting remount."));
+    if (LittleFS.begin(false, kPortalLittleFsBasePath, kPortalLittleFsMaxFiles, kPortalLittleFsLabel))
+    {
+        log_.println(F("LittleFS remount successful."));
+        dumpFilesystemContents(F("after remount"));
+        return true;
+    }
+    log_.println(F("LittleFS remount failed."));
+    return false;
+}
+
+void WiFiPortalService::dumpFilesystemContents(const __FlashStringHelper *reason)
+{
+    log_.print(F("LittleFS listing ("));
+    log_.print(reason);
+    log_.println(F("):"));
+    File root = LittleFS.open("/");
+    if (!root || !root.isDirectory())
+    {
+        log_.println(F("  <unavailable>"));
+        return;
+    }
+    std::function<void(const String &, File &)> dumpDir = [&](const String &prefix, File &dir) {
+        File entry = dir.openNextFile();
+        while (entry)
+        {
+            String entryPath = prefix + entry.name();
+            log_.print(F("  "));
+            log_.print(entryPath);
+            if (entry.isDirectory())
+            {
+                log_.println(F("/ (dir)"));
+                File sub = LittleFS.open(entryPath);
+                if (sub)
+                {
+                    dumpDir(entryPath + "/", sub);
+                    sub.close();
+                }
+            }
+            else
+            {
+                log_.print(F(" size="));
+                log_.println(entry.size());
+            }
+            entry = dir.openNextFile();
+        }
+    };
+    dumpDir(String("/"), root);
+    root.close();
+}
+
+void WiFiPortalService::ensureMenuHtmlLoaded()
+{
+    log_.println(F("ensureMenuHtmlLoaded(): checking cached menu HTML…"));
+    if (menuHtml_.length())
+    {
+        log_.println(F("Menu HTML already loaded."));
+        return;
+    }
+    log_.print(F("ensureMenuHtmlLoaded(): loading /portal/menu.html (exists? "));
+    log_.print(LittleFS.exists("/portal/menu.html") ? F("yes") : F("no"));
+    log_.println(F(")"));
+    if (!readFile("/portal/menu.html", menuHtml_))
+    {
+        log_.println(F("Failed to load /portal/menu.html"));
+    }
+    else
+    {
+        log_.print(F("Loaded menu HTML ("));
+        log_.print(menuHtml_.length());
+        log_.println(F(" bytes)."));
+        if (paramsAttached_)
+        {
+            log_.println(F("Re-applying custom menu HTML to WiFiManager."));
+            manager_.setCustomMenuHTML(menuHtml_.c_str());
+        }
+    }
 }
