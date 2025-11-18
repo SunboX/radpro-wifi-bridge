@@ -1,5 +1,7 @@
 #pragma once
 #include <Arduino.h>
+#include <utility>
+#include <vector>
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -42,11 +44,16 @@ public:
     void setLineCallback(LineCb on_line);
     void setRawCallback(RawCb cb);
 
-    // Optional: restrict to a specific VID/PID (0 = ANY)
-    void setVidPidFilter(uint16_t vid, uint16_t pid);
+    // Optional: restrict to specific VID/PID pairs (empty list = ANY)
+    void setVidPidFilter(uint16_t vid, uint16_t pid);           // legacy single filter
+    void setVidPidFilters(const std::vector<std::pair<uint16_t, uint16_t>> &filters);
+    void clearVidPidFilters();
+    void addVidPidFilter(uint16_t vid, uint16_t pid);
 
     // Status
     bool isConnected() const { return dev_ != nullptr || vcp_dev_ != nullptr; }
+    uint16_t connectedVid() const { return connected_vid_; }
+    uint16_t connectedPid() const { return connected_pid_; }
 
 private:
     // Tasks
@@ -101,9 +108,15 @@ private:
     QueueHandle_t tx_q_ = nullptr;
     SemaphoreHandle_t tx_mutex_ = nullptr;
 
-    // Optional VID/PID filter (0 => ANY)
-    uint16_t allow_vid_ = 0;
-    uint16_t allow_pid_ = 0;
+    struct VidPid
+    {
+        uint16_t vid;
+        uint16_t pid;
+    };
+    std::vector<VidPid> allowed_devices_;
+
+    uint16_t connected_vid_ = 0;
+    uint16_t connected_pid_ = 0;
 
     // Post-connect settle time for first TX
     volatile TickType_t ready_after_tick_ = 0;

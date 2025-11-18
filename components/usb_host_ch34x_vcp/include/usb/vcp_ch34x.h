@@ -13,6 +13,8 @@
 #define CH340_PID                  (0x7522)
 #define CH340_PID_1                (0x7523)
 #define CH341_PID                  (0x5523)
+#define CH9102F_PID                (0x55D4)
+#define CH9102X_PID                (0x55D3)
 
 #ifdef __cplusplus
 extern "C" {
