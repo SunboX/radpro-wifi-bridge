@@ -223,7 +223,7 @@ static esp_err_t cdc_acm_start(cdc_dev_t *cdc_dev, cdc_acm_host_dev_callback_t e
 
 err:
     usb_host_interface_release(p_cdc_acm_obj->cdc_acm_client_hdl, cdc_dev->dev_hdl, cdc_dev->data.intf_desc->bInterfaceNumber);
-    if (cdc_dev->notif.xfer && (cdc_dev->notif.intf_desc != cdc_dev->data.intf_desc)) {
+    if (cdc_dev->notif.xfer && cdc_dev->notif.intf_desc && (cdc_dev->notif.intf_desc != cdc_dev->data.intf_desc)) {
         usb_host_interface_release(p_cdc_acm_obj->cdc_acm_client_hdl, cdc_dev->dev_hdl, cdc_dev->notif.intf_desc->bInterfaceNumber);
     }
     return ret;
@@ -457,6 +457,8 @@ static void cdc_acm_transfers_free(cdc_dev_t *cdc_dev)
     assert(cdc_dev);
     if (cdc_dev->notif.xfer != NULL) {
         usb_host_transfer_free(cdc_dev->notif.xfer);
+        cdc_dev->notif.xfer = NULL;
+        cdc_dev->notif.intf_desc = NULL;
     }
     if (cdc_dev->data.in_xfer != NULL) {
         cdc_acm_reset_in_transfer(cdc_dev);
@@ -502,7 +504,15 @@ static esp_err_t cdc_acm_transfers_allocate(cdc_dev_t *cdc_dev, const usb_ep_des
     assert(out_ep_desc);
     esp_err_t ret;
 
-    // 1. Setup notification transfer if it is supported
+    // 1. Setup notification transfer if it is supported and has a sane interval
+    if (notif_ep_desc) {
+        if (notif_ep_desc->bInterval == 0 || notif_ep_desc->bInterval >= 0xFF) {
+            ESP_LOGW(TAG, "Skipping notification EP (addr=0x%02X) with invalid bInterval=%u",
+                     notif_ep_desc->bEndpointAddress, notif_ep_desc->bInterval);
+            notif_ep_desc = NULL; // disable notif pipe; continue with bulk channels
+        }
+    }
+
     if (notif_ep_desc) {
         ESP_GOTO_ON_ERROR(
             usb_host_transfer_alloc(USB_EP_DESC_GET_MPS(notif_ep_desc), 0, &cdc_dev->notif.xfer),
@@ -663,16 +673,28 @@ esp_err_t cdc_acm_host_close(cdc_acm_dev_hdl_t cdc_hdl)
 
     // Cancel polling of BULK IN and INTERRUPT IN
     if (cdc_dev->data.in_xfer) {
-        ESP_ERROR_CHECK(cdc_acm_reset_transfer_endpoint(cdc_dev->dev_hdl, cdc_dev->data.in_xfer));
+        esp_err_t err = cdc_acm_reset_transfer_endpoint(cdc_dev->dev_hdl, cdc_dev->data.in_xfer);
+        if (err != ESP_OK && err != ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG, "reset data IN ep failed: %s", esp_err_to_name(err));
+        }
     }
     if (cdc_dev->notif.xfer != NULL) {
-        ESP_ERROR_CHECK(cdc_acm_reset_transfer_endpoint(cdc_dev->dev_hdl, cdc_dev->notif.xfer));
+        esp_err_t err = cdc_acm_reset_transfer_endpoint(cdc_dev->dev_hdl, cdc_dev->notif.xfer);
+        if (err != ESP_OK && err != ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG, "reset notif ep failed: %s", esp_err_to_name(err));
+        }
     }
 
     // Release all interfaces
-    ESP_ERROR_CHECK(usb_host_interface_release(p_cdc_acm_obj->cdc_acm_client_hdl, cdc_dev->dev_hdl, cdc_dev->data.intf_desc->bInterfaceNumber));
+    esp_err_t rel = usb_host_interface_release(p_cdc_acm_obj->cdc_acm_client_hdl, cdc_dev->dev_hdl, cdc_dev->data.intf_desc->bInterfaceNumber);
+    if (rel != ESP_OK && rel != ESP_ERR_NOT_FOUND) {
+        ESP_LOGW(TAG, "release data intf failed: %s", esp_err_to_name(rel));
+    }
     if ((cdc_dev->notif.intf_desc != NULL) && (cdc_dev->notif.intf_desc != cdc_dev->data.intf_desc)) {
-        ESP_ERROR_CHECK(usb_host_interface_release(p_cdc_acm_obj->cdc_acm_client_hdl, cdc_dev->dev_hdl, cdc_dev->notif.intf_desc->bInterfaceNumber));
+        rel = usb_host_interface_release(p_cdc_acm_obj->cdc_acm_client_hdl, cdc_dev->dev_hdl, cdc_dev->notif.intf_desc->bInterfaceNumber);
+        if (rel != ESP_OK && rel != ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG, "release notif intf failed: %s", esp_err_to_name(rel));
+        }
     }
 
     CDC_ACM_ENTER_CRITICAL();

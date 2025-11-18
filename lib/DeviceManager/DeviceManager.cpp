@@ -1,10 +1,11 @@
 #include <DeviceManager.h>
+#include <cstdio>
 #include <time.h>
 
 namespace
 {
-    constexpr uint32_t DEVICE_ID_INITIAL_DELAY_MS = 2500;
-    constexpr uint32_t DEVICE_ID_RETRY_DELAY_MS = 1500;
+    constexpr uint32_t DEVICE_ID_INITIAL_DELAY_MS = 100;
+    constexpr uint32_t DEVICE_ID_RETRY_DELAY_MS = 250;
     constexpr uint32_t DEVICE_ID_RESPONSE_TIMEOUT_MS = 3000;
     constexpr uint8_t DEVICE_ID_MAX_RETRY = 4;
     constexpr const char *DEVICE_KEEPALIVE_LINE = "Main loop is running.";
@@ -44,13 +45,18 @@ DeviceManager::DeviceManager(UsbCdcHost &host)
 
 void DeviceManager::begin(uint16_t vid, uint16_t pid)
 {
+    begin(std::vector<std::pair<uint16_t, uint16_t>>{{vid, pid}});
+}
+
+void DeviceManager::begin(const std::vector<std::pair<uint16_t, uint16_t>> &vid_pid_allowlist)
+{
     instance_ = this;
 
     host_.setDeviceCallbacks(&DeviceManager::HandleConnected, &DeviceManager::HandleDisconnected);
     host_.setLineCallback(&DeviceManager::HandleLine);
     host_.setRawCallback(&DeviceManager::HandleRaw);
 
-    host_.setVidPidFilter(vid, pid);
+    host_.setVidPidFilters(vid_pid_allowlist);
 
     enabled_ = false;
     device_id_logged_ = false;
@@ -175,7 +181,12 @@ void DeviceManager::onConnected()
         scheduleDeviceId(DEVICE_ID_INITIAL_DELAY_MS, true);
 
     if (line_handler_)
-        line_handler_(String("USB device CONNECTED"));
+    {
+        char buf[80];
+        snprintf(buf, sizeof(buf), "USB device CONNECTED (VID=0x%04X PID=0x%04X)",
+                 host_.connectedVid(), host_.connectedPid());
+        line_handler_(String(buf));
+    }
 
     processQueue();
 }
@@ -617,8 +628,14 @@ void DeviceManager::handleError()
 {
     awaiting_response_ = false;
 
-    if (!has_current_command_)
+    // If the device dropped mid-command, just reset state quietly.
+    if (!host_.isConnected())
+    {
+        has_current_command_ = false;
+        current_command_ = PendingCommand{};
+        command_queue_.clear();
         return;
+    }
 
     if (current_command_.type == CommandType::DeviceId && current_command_.retry < DEVICE_ID_MAX_RETRY)
     {
@@ -642,7 +659,9 @@ void DeviceManager::handleError()
         line_handler_(String("Command failed: ") + current_command_.command);
     }
 
-    emitResult(current_command_.type, String(), false);
+    // For fast poll commands, don’t emit/log failures; they recover quickly on the next cycle.
+    if (current_command_.type != CommandType::TubePulseCount && current_command_.type != CommandType::TubeRate)
+        emitResult(current_command_.type, String(), false);
 
     has_current_command_ = false;
     current_command_ = PendingCommand{};
