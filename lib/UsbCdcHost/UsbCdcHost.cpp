@@ -1,4 +1,5 @@
 #include "UsbCdcHost.h"
+#include <array>
 #include <cstring>
 #include "usb/vcp.hpp"       // VCP service (C++)
 #include "usb/vcp_ch34x.hpp" // CH340/CH341 driver registration
@@ -12,9 +13,9 @@ namespace
     {
         struct PidList
         {
-            const uint16_t values[3];
+            const uint16_t values[5];
             constexpr const uint16_t *begin() const { return values; }
-            constexpr const uint16_t *end() const { return values + 3; }
+            constexpr const uint16_t *end() const { return values + 5; }
         };
 
         static constexpr uint16_t vid = NANJING_QINHENG_MICROE_VID;
@@ -30,13 +31,18 @@ namespace
         }
     };
 
-    const Ch34xVcpDriver::PidList Ch34xVcpDriver::pids = {{CH340_PID, CH340_PID_1, CH341_PID}};
+    const Ch34xVcpDriver::PidList Ch34xVcpDriver::pids = {{
+        CH340_PID,
+        CH340_PID_1,
+        CH341_PID,
+        CH9102F_PID,
+        CH9102X_PID}};
 } // namespace
 #endif
 
 namespace
 {
-    constexpr uint32_t kConnectionTimeoutMs = 1000;
+    constexpr uint32_t kConnectionTimeoutMs = 150;
     constexpr size_t kOutBufferSize = 512;
     constexpr size_t kInBufferSize = 512;
     constexpr uint8_t kDefaultInterfaceIndex = 0;
@@ -53,8 +59,28 @@ void UsbCdcHost::setDeviceCallbacks(DeviceCb on_connected, DeviceCb on_disconnec
 void UsbCdcHost::setLineCallback(LineCb on_line) { on_line_ = on_line; }
 void UsbCdcHost::setVidPidFilter(uint16_t vid, uint16_t pid)
 {
-    allow_vid_ = vid;
-    allow_pid_ = pid;
+    allowed_devices_.clear();
+    if (vid != 0 || pid != 0)
+        allowed_devices_.push_back({vid, pid});
+}
+
+void UsbCdcHost::setVidPidFilters(const std::vector<std::pair<uint16_t, uint16_t>> &filters)
+{
+    allowed_devices_.clear();
+    for (const auto &entry : filters)
+    {
+        allowed_devices_.push_back({entry.first, entry.second});
+    }
+}
+
+void UsbCdcHost::clearVidPidFilters()
+{
+    allowed_devices_.clear();
+}
+
+void UsbCdcHost::addVidPidFilter(uint16_t vid, uint16_t pid)
+{
+    allowed_devices_.push_back({vid, pid});
 }
 
 bool UsbCdcHost::begin()
@@ -147,6 +173,8 @@ void UsbCdcHost::stop()
     }
 #endif
     use_vcp_ = false;
+    connected_vid_ = 0;
+    connected_pid_ = 0;
 
     if (tx_q_)
     {
@@ -301,6 +329,17 @@ void UsbCdcHost::cdcTask()
 {
     ESP_LOGI(TAG, "CDC task started");
 
+    if (!allowed_devices_.empty())
+    {
+        ESP_LOGI(TAG, "Allowlist contains %u VID/PID pairs", (unsigned)allowed_devices_.size());
+        for (const auto &entry : allowed_devices_)
+            ESP_LOGI(TAG, "  allow VID=0x%04X PID=0x%04X", entry.vid, entry.pid);
+    }
+    else
+    {
+        ESP_LOGI(TAG, "No VID/PID allowlist; will open ANY CDC device");
+    }
+
     // --- Common device config & callback thunk
     cdc_acm_host_device_config_t dev_cfg{};
     dev_cfg.connection_timeout_ms = kConnectionTimeoutMs;
@@ -330,71 +369,114 @@ void UsbCdcHost::cdcTask()
         // If we aren’t open yet, try to find & open a CDC-ACM interface
         if (!dev_ && !vcp_dev_)
         {
-            const uint16_t open_vid = allow_vid_ ? allow_vid_ : CDC_HOST_ANY_VID;
-            const uint16_t open_pid = allow_pid_ ? allow_pid_ : CDC_HOST_ANY_PID;
             opened_intf_idx_ = kDefaultInterfaceIndex;
+            static const uint8_t kIfaceCandidates[] = {0, 1, 2};
+
+            auto try_open = [&](uint16_t vid, uint16_t pid) -> bool {
+                const uint16_t open_vid = vid ? vid : CDC_HOST_ANY_VID;
+                const uint16_t open_pid = pid ? pid : CDC_HOST_ANY_PID;
 
 #if __has_include("usb/vcp.hpp")
-            // Prefer vendor-specific VCP drivers first
-            if (!vcp_dev_)
-            {
-                CdcAcmDevice *v = nullptr;
-                if (allow_vid_ || allow_pid_)
+                // Prefer vendor-specific VCP drivers first
+                if (!vcp_dev_)
                 {
-                    v = esp_usb::VCP::open(open_vid, open_pid, &dev_cfg, opened_intf_idx_);
+                    for (uint8_t iface : kIfaceCandidates)
+                    {
+                        CdcAcmDevice *v = nullptr;
+                        opened_intf_idx_ = iface;
+                        ESP_LOGD(TAG, "VCP open attempt iface=%u VID=0x%04X PID=0x%04X", iface, open_vid, open_pid);
+                        if (vid || pid)
+                            v = esp_usb::VCP::open(open_vid, open_pid, &dev_cfg, opened_intf_idx_);
+                        else
+                            v = esp_usb::VCP::open(&dev_cfg, opened_intf_idx_);
+
+                        if (v)
+                        {
+                            vcp_dev_ = v;
+                            use_vcp_ = true;
+                            connected_vid_ = open_vid;
+                            connected_pid_ = open_pid;
+                            ESP_LOGI(TAG, "CDC/VCP device opened (iface=%u, VID=0x%04X PID=0x%04X)",
+                                     opened_intf_idx_, open_vid, open_pid);
+                            (void)vcp_dev_->set_control_line_state(true, true);
+                            cdc_acm_line_coding_t lc{};
+                            lc.dwDTERate = target_baud_;
+                            lc.bCharFormat = 0;
+                            lc.bParityType = 0;
+                            lc.bDataBits = 8;
+                            (void)vcp_dev_->line_coding_set(&lc);
+                    ready_after_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(40);
+                            if (on_connected_)
+                                on_connected_();
+                            return true;
+                        }
+                    }
                 }
-                else
-                {
-                    v = esp_usb::VCP::open(&dev_cfg, opened_intf_idx_);
-                }
-                if (v)
-                {
-                    vcp_dev_ = v;
-                    use_vcp_ = true;
-                    ESP_LOGI(TAG, "CDC/VCP device opened (vendor-specific, interface idx=%u)",
-                             opened_intf_idx_);
-                    (void)vcp_dev_->set_control_line_state(true, true);
-                    cdc_acm_line_coding_t lc{};
-                    lc.dwDTERate = target_baud_;
-                    lc.bCharFormat = 0;
-                    lc.bParityType = 0;
-                    lc.bDataBits = 8;
-                    (void)vcp_dev_->line_coding_set(&lc);
-                    ready_after_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(80);
-                    if (on_connected_)
-                        on_connected_();
-                    continue;
-                }
-            }
 #endif
 
-            esp_err_t err = cdc_acm_host_open(open_vid, open_pid, opened_intf_idx_, &dev_cfg, &dev_);
-            if (err == ESP_OK && dev_ != nullptr)
-            {
-                use_vcp_ = false;
-                ESP_LOGI(TAG, "CDC device opened (iface=%u, %04X:%04X)",
-                         opened_intf_idx_, open_vid, open_pid);
-                esp_err_t lerr = cdc_acm_host_set_control_line_state(dev_, true, true);
-                if (lerr != ESP_OK && lerr != ESP_ERR_NOT_SUPPORTED)
+                for (uint8_t iface : kIfaceCandidates)
                 {
-                    ESP_LOGW(TAG, "set_control_line_state: %s", esp_err_to_name(lerr));
+                    opened_intf_idx_ = iface;
+                    ESP_LOGD(TAG, "CDC host open attempt iface=%u VID=0x%04X PID=0x%04X", iface, open_vid, open_pid);
+                    esp_err_t err = cdc_acm_host_open(open_vid, open_pid, opened_intf_idx_, &dev_cfg, &dev_);
+                    if (err == ESP_OK && dev_ != nullptr)
+                    {
+                        use_vcp_ = false;
+                        connected_vid_ = open_vid;
+                        connected_pid_ = open_pid;
+                        ESP_LOGI(TAG, "CDC device opened (iface=%u, VID=0x%04X PID=0x%04X)",
+                                 opened_intf_idx_, open_vid, open_pid);
+                        esp_err_t lerr = cdc_acm_host_set_control_line_state(dev_, true, true);
+                        if (lerr != ESP_OK && lerr != ESP_ERR_NOT_SUPPORTED)
+                        {
+                            ESP_LOGW(TAG, "set_control_line_state: %s", esp_err_to_name(lerr));
+                        }
+                        (void)configureLineCoding(target_baud_);
+                    ready_after_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(40);
+                        if (on_connected_)
+                            on_connected_();
+                        return true;
+                    }
                 }
-                (void)configureLineCoding(target_baud_);
-                ready_after_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(80);
-                if (on_connected_)
-                    on_connected_();
-                continue;
+                return false;
+            };
+
+            bool opened = false;
+            // Always try allowlist first, then ANY immediately to avoid waiting between passes
+            if (!allowed_devices_.empty())
+            {
+                for (const auto &entry : allowed_devices_)
+                {
+                    ESP_LOGD(TAG, "Trying CDC open for VID=0x%04X PID=0x%04X",
+                             entry.vid ? entry.vid : 0,
+                             entry.pid ? entry.pid : 0);
+                    if (try_open(entry.vid, entry.pid))
+                    {
+                        opened = true;
+                        break;
+                    }
+                }
+            }
+            if (!opened)
+            {
+                if (!allowed_devices_.empty())
+                    ESP_LOGW(TAG, "Allowlist attempts failed; trying ANY CDC device");
+                opened = try_open(0, 0);
             }
 
-            // Nothing opened yet; avoid tight loop
-            vTaskDelay(pdMS_TO_TICKS(200));
+            if (!opened)
+            {
+                // Nothing opened yet; avoid tight loop
+                vTaskDelay(pdMS_TO_TICKS(75));
+                continue;
+            }
             continue;
         }
         else
         {
 
             // Already open; keep the task responsive but light
-            vTaskDelay(pdMS_TO_TICKS(25));
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
 
@@ -541,6 +623,8 @@ void UsbCdcHost::onDevEvent(const cdc_acm_host_dev_event_data_t *event)
         if (event->data.cdc_hdl)
             cdc_acm_host_close(event->data.cdc_hdl);
         dev_ = nullptr;
+        connected_vid_ = 0;
+        connected_pid_ = 0;
         ready_after_tick_ = 0;
         if (!line_buf_.isEmpty() && on_line_)
         {
@@ -618,6 +702,12 @@ void UsbCdcHost::DbgClientCb(const usb_host_client_event_msg_t *evt, void *arg)
                         auto *ifd = (const usb_intf_desc_t *)p;
                         ESP_LOGI(TAG, "  IF#%u class=0x%02X sub=0x%02X proto=0x%02X",
                                  ifd->bInterfaceNumber, ifd->bInterfaceClass, ifd->bInterfaceSubClass, ifd->bInterfaceProtocol);
+                    }
+                    else if (type == USB_B_DESCRIPTOR_TYPE_ENDPOINT && len >= sizeof(usb_ep_desc_t))
+                    {
+                        auto *ep = (const usb_ep_desc_t *)p;
+                        ESP_LOGI(TAG, "    EP addr=0x%02X attr=0x%02X maxPkt=%u interval=%u",
+                                 ep->bEndpointAddress, ep->bmAttributes, ep->wMaxPacketSize, ep->bInterval);
                     }
                     p += len;
                 }
