@@ -40,7 +40,7 @@ public:
 
     // List of supported VIDs and PIDs
     static constexpr uint16_t vid = NANJING_QINHENG_MICROE_VID;
-    static constexpr std::array<uint16_t, 3> pids = {CH340_PID, CH340_PID_1, CH341_PID};
+    static constexpr std::array<uint16_t, 5> pids = {CH340_PID, CH340_PID_1, CH341_PID, CH9102F_PID, CH9102X_PID};
 
 private:
     // Make open functions from CdcAcmDevice class private

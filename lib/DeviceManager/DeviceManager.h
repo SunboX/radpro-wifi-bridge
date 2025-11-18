@@ -15,6 +15,7 @@ public:
     explicit DeviceManager(UsbCdcHost &host);
 
     void begin(uint16_t vid, uint16_t pid);
+    void begin(const std::vector<std::pair<uint16_t, uint16_t>> &vid_pid_allowlist);
     void loop();
 
     enum class CommandType

@@ -19,11 +19,11 @@ void BridgeDiagnostics::handleLine(const String &line)
 {
     log_.println(line);
 
-    if (line == "USB device CONNECTED")
+    if (line.startsWith("USB device CONNECTED"))
     {
         led_.clearFault(FaultCode::UsbDeviceGone);
     }
-    else if (line == "USB device DISCONNECTED")
+    else if (line.startsWith("USB device DISCONNECTED"))
     {
         led_.activateFault(FaultCode::UsbDeviceGone);
     }
@@ -68,16 +68,22 @@ void BridgeDiagnostics::applyUsbLogLevels(bool announce)
     if (usb_debug_enabled_)
     {
         esp_log_level_set("cdc_acm_ops", ESP_LOG_INFO);
+        esp_log_level_set("cdc_acm_host", ESP_LOG_INFO);
         esp_log_level_set("UsbCdcHost", ESP_LOG_INFO);
         esp_log_level_set("USBH", ESP_LOG_INFO);
+        esp_log_level_set("usb_host", ESP_LOG_INFO);
+        esp_log_level_set("CH34x", ESP_LOG_INFO);
         if (announce)
             log_.println("USB debug logging ENABLED (cdc_acm_ops/UsbCdcHost/USBH=INFO).");
     }
     else
     {
         esp_log_level_set("cdc_acm_ops", ESP_LOG_NONE);
+        esp_log_level_set("cdc_acm_host", ESP_LOG_WARN);
         esp_log_level_set("UsbCdcHost", ESP_LOG_WARN);
-        esp_log_level_set("USBH", ESP_LOG_NONE);
+        esp_log_level_set("USBH", ESP_LOG_WARN);
+        esp_log_level_set("usb_host", ESP_LOG_WARN);
+        esp_log_level_set("CH34x", ESP_LOG_WARN);
         if (announce)
             log_.println("USB debug logging disabled (restored quiet log levels).");
     }

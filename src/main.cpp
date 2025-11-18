@@ -4,6 +4,8 @@
 #include "esp_system.h"
 #include "esp_err.h"
 #include <cstring>
+#include <utility>
+#include <vector>
 #include <functional>
 #include <WiFi.h>
 #include <LittleFS.h>
@@ -45,7 +47,7 @@ extern "C"
 // =========================
 // Startup configuration
 // =========================
-#define INITIAL_STARTUP_DELAY_MS 5000
+#define INITIAL_STARTUP_DELAY_MS 0
 #define ALLOW_EARLY_START true
 
 // Program state
@@ -61,6 +63,13 @@ static void runMainLogic();
 // =========================
 static UsbCdcHost usb;
 static DeviceManager device_manager(usb);
+static const std::vector<std::pair<uint16_t, uint16_t>> kSupportedUsbVidPid = {
+    {0x1A86, 0x7523}, // CH340/341 (Bosean FS-600)
+    {0x1A86, 0x7522}, // Alternate CH340 PID sometimes reported
+    {0x1A86, 0x5523}, // CH341 variant
+    {0x1A86, 0x55D4}, // CH9102F (Fnirsi GC01)
+    {0x1A86, 0x55D3}  // CH9102X (Fnirsi GC01 alt)
+};
 
 static LedController ledController;
 static BridgeDiagnostics diagnostics(DBG, ledController);
@@ -213,16 +222,20 @@ void setup()
                                            {
         if (!success)
         {
-            deviceError = true;
-            if (type == DeviceManager::CommandType::DeviceId)
-                deviceReady = false;
-            DBG.print("Device command failed: ");
-            DBG.println(static_cast<int>(type));
-            ledController.triggerPulse(LedPulse::MqttFailure, 250);
-            if (type == DeviceManager::CommandType::DeviceId)
-                ledController.activateFault(FaultCode::DeviceIdTimeout);
-            else
-                ledController.activateFault(FaultCode::CommandTimeout);
+            bool transient = (type == DeviceManager::CommandType::TubePulseCount || type == DeviceManager::CommandType::TubeRate);
+            if (!transient)
+            {
+                deviceError = true;
+                if (type == DeviceManager::CommandType::DeviceId)
+                    deviceReady = false;
+                DBG.print("Device command failed: ");
+                DBG.println(static_cast<int>(type));
+                ledController.triggerPulse(LedPulse::MqttFailure, 250);
+                if (type == DeviceManager::CommandType::DeviceId)
+                    ledController.activateFault(FaultCode::DeviceIdTimeout);
+                else
+                    ledController.activateFault(FaultCode::CommandTimeout);
+            }
             return;
         }
 
@@ -258,7 +271,7 @@ void setup()
         openSenseMapPublisher.onCommandResult(type, value);
         gmcMapPublisher.onCommandResult(type, value);
         radmonPublisher.onCommandResult(type, value); });
-    device_manager.begin(0x1A86, 0x7523);
+    device_manager.begin(kSupportedUsbVidPid);
 
     // Optionally set target baud for CDC device
     // usb.setBaud(115200);
