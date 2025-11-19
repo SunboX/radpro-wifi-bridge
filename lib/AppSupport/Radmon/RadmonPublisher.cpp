@@ -1,6 +1,9 @@
 #include "Radmon/RadmonPublisher.h"
 
 #include <WiFi.h>
+#include "ConfigPortal/WiFiPortalService.h"
+#include <WebServer.h>
+#include "Led/LedController.h"
 
 namespace
 {
@@ -199,4 +202,68 @@ String RadmonPublisher::urlEncode(const String &input)
         }
     }
     return encoded;
+}
+
+void RadmonPublisher::HandlePortalPost(WebServer &server,
+                                       AppConfig &config,
+                                       AppConfigStore &store,
+                                       LedController &led,
+                                       Print &log,
+                                       String &message)
+{
+    bool enabled = server.hasArg("radmonEnabled") && server.arg("radmonEnabled") == "1";
+    String user = server.arg("radmonUser");
+    String password = server.arg("radmonPass");
+
+    user.trim();
+
+    bool changed = false;
+    if (config.radmonEnabled != enabled)
+    {
+        config.radmonEnabled = enabled;
+        changed = true;
+    }
+    changed |= UpdateStringIfChanged(config.radmonUser, user.c_str());
+
+    if (password != config.radmonPassword)
+    {
+        config.radmonPassword = password;
+        changed = true;
+    }
+
+    if (changed)
+    {
+        if (store.save(config))
+        {
+            log.println("Radmon configuration saved to NVS.");
+            led.clearFault(FaultCode::NvsWriteFailure);
+            message = F("Radmon settings saved.");
+        }
+        else
+        {
+            log.println("Preferences write failed; Radmon configuration not saved.");
+            led.activateFault(FaultCode::NvsWriteFailure);
+            message = F("Failed to save settings.");
+        }
+        return;
+    }
+
+    message = F("No changes detected.");
+}
+
+void RadmonPublisher::SendPortalForm(WiFiPortalService &portal, const String &message)
+{
+    if (!portal.manager_.server)
+        return;
+
+    String notice = WiFiPortalService::htmlEscape(message);
+    WiFiPortalService::TemplateReplacements vars = {
+        {"{{NOTICE_CLASS}}", notice.length() ? String() : String("hidden")},
+        {"{{NOTICE_TEXT}}", notice},
+        {"{{RADMON_ENABLED_CHECKED}}", portal.config_.radmonEnabled ? String("checked") : String()},
+        {"{{RADMON_USER}}", WiFiPortalService::htmlEscape(portal.config_.radmonUser)},
+        {"{{RADMON_PASS}}", WiFiPortalService::htmlEscape(portal.config_.radmonPassword)}};
+
+    portal.appendCommonTemplateVars(vars);
+    portal.sendTemplate("/portal/radmon.html", vars);
 }

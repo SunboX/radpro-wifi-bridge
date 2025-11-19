@@ -1,6 +1,9 @@
 #include "OpenSenseMap/OpenSenseMapPublisher.h"
 
 #include <WiFi.h>
+#include "ConfigPortal/WiFiPortalService.h"
+#include <WebServer.h>
+#include "Led/LedController.h"
 
 namespace
 {
@@ -161,6 +164,74 @@ bool OpenSenseMapPublisher::publishPending()
         suppressUntilMs_ = millis() + kRetryBackoffMs;
     }
     return true;
+}
+
+void OpenSenseMapPublisher::HandlePortalPost(WebServer &server,
+                                             AppConfig &config,
+                                             AppConfigStore &store,
+                                             LedController &led,
+                                             Print &log,
+                                             String &message)
+{
+    bool enabled = server.hasArg("osemEnabled") && server.arg("osemEnabled") == "1";
+    String boxId = server.arg("osemBoxId");
+    String apiKey = server.arg("osemApiKey");
+    String rateId = server.arg("osemRate");
+    String doseId = server.arg("osemDose");
+
+    boxId.trim();
+    apiKey.trim();
+    rateId.trim();
+    doseId.trim();
+
+    bool changed = false;
+    if (config.openSenseMapEnabled != enabled)
+    {
+        config.openSenseMapEnabled = enabled;
+        changed = true;
+    }
+    changed |= UpdateStringIfChanged(config.openSenseBoxId, boxId.c_str());
+    changed |= UpdateStringIfChanged(config.openSenseApiKey, apiKey.c_str());
+    changed |= UpdateStringIfChanged(config.openSenseTubeRateSensorId, rateId.c_str());
+    changed |= UpdateStringIfChanged(config.openSenseDoseRateSensorId, doseId.c_str());
+
+    if (changed)
+    {
+        if (store.save(config))
+        {
+            log.println("OpenSenseMap configuration updated via portal.");
+            led.clearFault(FaultCode::NvsWriteFailure);
+            message = F("OpenSenseMap settings saved.");
+        }
+        else
+        {
+            log.println("Preferences write failed; OpenSenseMap configuration not saved.");
+            led.activateFault(FaultCode::NvsWriteFailure);
+            message = F("Failed to save settings to NVS.");
+        }
+        return;
+    }
+
+    message = F("No changes detected.");
+}
+
+void OpenSenseMapPublisher::SendPortalForm(WiFiPortalService &portal, const String &message)
+{
+    if (!portal.manager_.server)
+        return;
+
+    String notice = WiFiPortalService::htmlEscape(message);
+    WiFiPortalService::TemplateReplacements vars = {
+        {"{{NOTICE_CLASS}}", notice.length() ? String() : String("hidden")},
+        {"{{NOTICE_TEXT}}", notice},
+        {"{{OSEM_ENABLED_CHECKED}}", portal.config_.openSenseMapEnabled ? String("checked") : String()},
+        {"{{OSEM_BOX_ID}}", WiFiPortalService::htmlEscape(portal.config_.openSenseBoxId)},
+        {"{{OSEM_API_KEY}}", WiFiPortalService::htmlEscape(portal.config_.openSenseApiKey)},
+        {"{{OSEM_RATE_ID}}", WiFiPortalService::htmlEscape(portal.config_.openSenseTubeRateSensorId)},
+        {"{{OSEM_DOSE_ID}}", WiFiPortalService::htmlEscape(portal.config_.openSenseDoseRateSensorId)}};
+
+    portal.appendCommonTemplateVars(vars);
+    portal.sendTemplate("/portal/osem.html", vars);
 }
 
 bool OpenSenseMapPublisher::sendPayload(const String &payload)

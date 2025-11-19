@@ -1,0 +1,55 @@
+#pragma once
+
+#include <Arduino.h>
+#include <vector>
+#include <WiFiClient.h>
+
+class OtaUpdateService
+{
+public:
+    struct Status
+    {
+        bool busy = false;
+        bool needsReboot = false;
+        String lastError;
+        size_t partsCompleted = 0;
+        size_t partsTotal = 0;
+        String targetVersion;
+    };
+
+    bool begin(const String &manifestJson);
+    bool beginPart(const String &path, uint32_t offset, size_t size);
+    bool writePartChunk(const uint8_t *data, size_t len);
+    bool finalizePart();
+    bool finish();
+    void reset();
+    void abort(const String &message);
+    Status status() const;
+
+private:
+    struct PartInfo
+    {
+        String path;
+        uint32_t offset = 0;
+        bool received = false;
+    };
+
+    struct ActivePart
+    {
+        PartInfo *info = nullptr;
+        uint32_t offset = 0;
+        size_t expectedSize = 0;
+        size_t written = 0;
+    };
+
+    bool eraseRegion(uint32_t offset, size_t size);
+    bool ensureFsUnmounted(uint32_t offset, const String &path);
+
+    std::vector<PartInfo> parts_;
+    bool busy_ = false;
+    bool needsReboot_ = false;
+    bool fsUnmounted_ = false;
+    String lastError_;
+    String targetVersion_;
+    ActivePart active_;
+};
