@@ -1,6 +1,7 @@
 {
     "T_MENU_DEVICE_INFO": "RadPro Device Info",
     "T_MENU_BRIDGE_INFO": "WiFi Bridge Info",
+    "T_MENU_DEBUG_LOGS": "Debug Log Console",
     "T_MENU_CONFIGURE_MQTT": "Configure MQTT",
     "T_MENU_CONFIGURE_OSEM": "Configure OpenSenseMap",
     "T_MENU_CONFIGURE_RADMON": "Configure Radmon",
@@ -77,5 +78,16 @@
     "T_PORTAL_SUBTITLE": "RadPro WiFi Bridge - {ip}",
     "T_PORTAL_WIFI_BUTTON": "Configure WiFi",
     "T_PORTAL_CONNECTED": "Connected to {ssid}",
-    "T_PORTAL_IP": "with IP {ip}"
+    "T_PORTAL_IP": "with IP {ip}",
+    "T_PAGE_LOG_CONSOLE": "Debug Log Console",
+    "T_LOG_CONSOLE_HINT": "Live serial debug output refreshed every few seconds.",
+    "T_LOG_AUTO_SCROLL": "Auto-scroll to newest entries",
+    "T_LOG_COPY": "Copy Visible Logs",
+    "T_LOG_CLEAR": "Clear View",
+    "T_LOG_STATUS_IDLE": "Waiting for logs…",
+    "T_LOG_STATUS_UPDATED": "Updated at {time}",
+    "T_LOG_STATUS_ERROR": "Log fetch failed.",
+    "T_LOG_STATUS_COPIED": "Logs copied to clipboard.",
+    "T_LOG_STATUS_COPY_FAILED": "Clipboard copy failed.",
+    "T_LOG_STATUS_CLEARED": "Console cleared."
 }

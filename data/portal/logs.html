@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="{{LOCALE}}">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>Debug Log Console</title>
+        <link rel="stylesheet" href="/portal/portal.css" />
+    </head>
+    <body class="invert" data-i18n-title="T_PAGE_LOG_CONSOLE" data-portal-locale-value="{{LOCALE}}">
+        <div class="wrap">
+            <h1 data-i18n="T_PAGE_LOG_CONSOLE">Debug Log Console</h1>
+            <section>
+                <p class="notice" data-i18n="T_LOG_CONSOLE_HINT">Live serial console output refreshed every few seconds.</p>
+                <div class="log-controls">
+                    <label class="toggle">
+                        <input type="checkbox" id="autoScrollToggle" checked />
+                        <span data-i18n="T_LOG_AUTO_SCROLL">Auto-scroll to newest entries</span>
+                    </label>
+                    <div class="log-control-buttons">
+                        <button type="button" id="copyLogsButton" data-i18n="T_LOG_COPY">Copy Visible Logs</button>
+                        <button type="button" id="clearLogsButton" data-i18n="T_LOG_CLEAR">Clear View</button>
+                    </div>
+                </div>
+                <div class="log-console" id="logConsole"></div>
+                <p class="log-status" id="logStatus" data-i18n="T_LOG_STATUS_IDLE">Waiting for logs…</p>
+            </section>
+            <form action="/" method="get" class="back-form">
+                <button type="submit" data-i18n="T_BUTTON_BACK">Back to Main Menu</button>
+            </form>
+        </div>
+        <script src="/portal/portal-locale.js"></script>
+        <script src="/portal/js/log-console.js"></script>
+    </body>
+</html>
