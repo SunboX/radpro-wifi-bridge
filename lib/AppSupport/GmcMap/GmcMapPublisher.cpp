@@ -1,6 +1,9 @@
 #include "GmcMap/GmcMapPublisher.h"
 
 #include <WiFi.h>
+#include "ConfigPortal/WiFiPortalService.h"
+#include <WebServer.h>
+#include "Led/LedController.h"
 #include <WiFiClient.h>
 #include <cmath>
 
@@ -184,6 +187,66 @@ bool GmcMapPublisher::computeAcpm(float &out)
     }
     out = rateSampleSum_ / static_cast<float>(rateSamples_.size());
     return true;
+}
+
+void GmcMapPublisher::HandlePortalPost(WebServer &server,
+                                       AppConfig &config,
+                                       AppConfigStore &store,
+                                       LedController &led,
+                                       Print &log,
+                                       String &message)
+{
+    bool enabled = server.hasArg("gmcEnabled") && server.arg("gmcEnabled") == "1";
+    String account = server.arg("gmcAccount");
+    String device = server.arg("gmcDevice");
+
+    account.trim();
+    device.trim();
+
+    bool changed = false;
+    if (config.gmcMapEnabled != enabled)
+    {
+        config.gmcMapEnabled = enabled;
+        changed = true;
+    }
+    changed |= UpdateStringIfChanged(config.gmcMapAccountId, account.c_str());
+    changed |= UpdateStringIfChanged(config.gmcMapDeviceId, device.c_str());
+
+    if (changed)
+    {
+        if (store.save(config))
+        {
+            log.println("GMCMap configuration saved to NVS.");
+            led.clearFault(FaultCode::NvsWriteFailure);
+            message = F("GMCMap settings saved.");
+        }
+        else
+        {
+            log.println("Preferences write failed; GMCMap configuration not saved.");
+            led.activateFault(FaultCode::NvsWriteFailure);
+            message = F("Failed to save settings.");
+        }
+        return;
+    }
+
+    message = F("No changes detected.");
+}
+
+void GmcMapPublisher::SendPortalForm(WiFiPortalService &portal, const String &message)
+{
+    if (!portal.manager_.server)
+        return;
+
+    String notice = WiFiPortalService::htmlEscape(message);
+    WiFiPortalService::TemplateReplacements vars = {
+        {"{{NOTICE_CLASS}}", notice.length() ? String() : String("hidden")},
+        {"{{NOTICE_TEXT}}", notice},
+        {"{{GMC_ENABLED_CHECKED}}", portal.config_.gmcMapEnabled ? String("checked") : String()},
+        {"{{GMC_ACCOUNT}}", WiFiPortalService::htmlEscape(portal.config_.gmcMapAccountId)},
+        {"{{GMC_DEVICE}}", WiFiPortalService::htmlEscape(portal.config_.gmcMapDeviceId)}};
+
+    portal.appendCommonTemplateVars(vars);
+    portal.sendTemplate("/portal/gmc.html", vars);
 }
 
 String GmcMapPublisher::formatFloat(float value, uint8_t decimals)

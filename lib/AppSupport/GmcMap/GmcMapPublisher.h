@@ -6,6 +6,10 @@
 #include "AppConfig/AppConfig.h"
 #include "DeviceManager.h"
 
+class WebServer;
+class LedController;
+class WiFiPortalService;
+
 class GmcMapPublisher
 {
 public:
@@ -15,6 +19,13 @@ public:
     void updateConfig();
     void loop();
     void onCommandResult(DeviceManager::CommandType type, const String &value);
+    static void SendPortalForm(WiFiPortalService &portal, const String &message = String());
+    static void HandlePortalPost(WebServer &server,
+                                 AppConfig &config,
+                                 AppConfigStore &store,
+                                 LedController &led,
+                                 Print &log,
+                                 String &message);
 
 private:
     bool isEnabled() const;
