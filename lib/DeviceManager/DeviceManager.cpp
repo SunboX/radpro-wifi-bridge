@@ -6,7 +6,7 @@ namespace
 {
     constexpr uint32_t DEVICE_ID_INITIAL_DELAY_MS = 100;
     constexpr uint32_t DEVICE_ID_RETRY_DELAY_MS = 250;
-    constexpr uint32_t DEVICE_ID_RESPONSE_TIMEOUT_MS = 3000;
+    constexpr uint32_t DEVICE_ID_RESPONSE_TIMEOUT_MS = 12000;
     constexpr uint8_t DEVICE_ID_MAX_RETRY = 4;
     constexpr const char *DEVICE_KEEPALIVE_LINE = "Main loop is running.";
 }
@@ -644,7 +644,8 @@ void DeviceManager::handleError()
         retry.ready_ms = millis() + DEVICE_ID_RETRY_DELAY_MS;
         command_queue_.insert(command_queue_.begin(), retry);
     }
-    else if ((current_command_.type == CommandType::TubePulseCount || current_command_.type == CommandType::TubeRate) &&
+    else if ((current_command_.type == CommandType::TubePulseCount || current_command_.type == CommandType::TubeRate ||
+              current_command_.type == CommandType::DeviceBatteryVoltage || current_command_.type == CommandType::DeviceBatteryPercent) &&
              current_command_.retry < 1)
     {
         PendingCommand retry = current_command_;
@@ -652,15 +653,20 @@ void DeviceManager::handleError()
         retry.ready_ms = millis() + DEVICE_ID_RETRY_DELAY_MS;
         command_queue_.push_back(retry);
     }
-    else if (line_handler_ &&
+    else if (line_handler_ && device_id_logged_ &&
              current_command_.type != CommandType::TubePulseCount &&
-             current_command_.type != CommandType::TubeRate)
+             current_command_.type != CommandType::TubeRate &&
+             current_command_.type != CommandType::DeviceBatteryVoltage &&
+             current_command_.type != CommandType::DeviceBatteryPercent)
     {
         line_handler_(String("Command failed: ") + current_command_.command);
     }
 
     // For fast poll commands, don’t emit/log failures; they recover quickly on the next cycle.
-    if (current_command_.type != CommandType::TubePulseCount && current_command_.type != CommandType::TubeRate)
+    if (current_command_.type != CommandType::TubePulseCount &&
+        current_command_.type != CommandType::TubeRate &&
+        current_command_.type != CommandType::DeviceBatteryVoltage &&
+        current_command_.type != CommandType::DeviceBatteryPercent)
         emitResult(current_command_.type, String(), false);
 
     has_current_command_ = false;

@@ -207,3 +207,49 @@ a {
 .menu-list form {
     margin: 0;
 }
+
+.log-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.log-control-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.log-control-buttons button {
+    flex: 1 1 180px;
+}
+
+.log-console {
+    background: #040404;
+    border: 1px solid #333;
+    border-radius: 6px;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 320px;
+    max-height: 480px;
+    overflow-y: auto;
+    padding: 12px;
+    white-space: pre-wrap;
+}
+
+.log-line {
+    color: #bfe3ff;
+    word-break: break-word;
+}
+
+.log-status {
+    margin-top: 8px;
+    font-size: 0.9rem;
+    color: #9ecfff;
+}
+
+.log-status.error {
+    color: #ff7676;
+}

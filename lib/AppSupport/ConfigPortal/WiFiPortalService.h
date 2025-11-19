@@ -9,11 +9,12 @@
 #include "DeviceInfo/BridgeInfoPage.h"
 #include "AppConfig/AppConfig.h"
 #include "Led/LedController.h"
+#include "Logging/DebugLogStream.h"
 
 class WiFiPortalService
 {
 public:
-    WiFiPortalService(AppConfig &config, AppConfigStore &store, DeviceInfoStore &info, Print &logPort, LedController &led);
+    WiFiPortalService(AppConfig &config, AppConfigStore &store, DeviceInfoStore &info, DebugLogStream &logPort, LedController &led);
 
     void begin();
     bool connect(bool forcePortal);
@@ -57,6 +58,7 @@ private:
     bool sendStaticFile(const char *path, const char *contentType);
     void applyTemplateReplacements(String &content, const TemplateReplacements &replacements);
     void appendCommonTemplateVars(TemplateReplacements &replacements);
+    void handleLogsJson();
     void disablePortalPowerSave();
     void restorePortalPowerSave();
     void logPortalState(const char *context);
@@ -70,7 +72,7 @@ private:
     DeviceInfoPage deviceInfoPage_;
     BridgeInfoPage bridgeInfoPage_;
     WiFiManager manager_;
-    Print &log_;
+    DebugLogStream &log_;
     LedController &led_;
 
     WiFiManagerParameter paramDeviceName_;
