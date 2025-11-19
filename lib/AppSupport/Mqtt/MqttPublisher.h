@@ -42,7 +42,6 @@ private:
     String sanitizedDeviceId() const;
     bool publish(const String &leaf, const String &payload, bool retain = true);
     bool publishCommand(DeviceManager::CommandType type, const String &payload, bool retain = true);
-    String escapeJson(const String &value) const;
     String deviceNameForDiscovery() const;
     String deviceModelForDiscovery() const;
     void markAllPending();

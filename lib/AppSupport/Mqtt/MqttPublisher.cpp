@@ -1,4 +1,14 @@
 #include "MqttPublisher.h"
+#include <ArduinoJson.h>
+
+namespace
+{
+    JsonDocument &getDiscoveryDoc()
+    {
+        static JsonDocument doc;
+        return doc;
+    }
+}
 
 const std::array<DeviceManager::CommandType, 15> MqttPublisher::kRetainedTypes_ = {
     DeviceManager::CommandType::DeviceId,
@@ -601,25 +611,11 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
     else
         fullName = deviceName;
 
-    String payload;
-    payload.reserve(256);
-    payload = "{";
-
-    auto appendField = [&](const char *field, const String &val) {
-        if (!val.length())
-            return;
-        if (payload.length() > 1)
-            payload += ',';
-        payload += '"';
-        payload += field;
-        payload += "\":\"";
-        payload += escapeJson(val);
-        payload += '"';
-    };
-
-    appendField("name", fullName);
-    appendField("state_topic", stateTopic);
-    appendField("unique_id", objectUid);
+    JsonDocument &doc = getDiscoveryDoc();
+    doc.clear();
+    doc["name"] = fullName;
+    doc["state_topic"] = stateTopic;
+    doc["unique_id"] = objectUid;
     String deviceNameSlug = makeSlug(deviceName);
     String objectIdField;
     if (deviceNameSlug.length())
@@ -632,53 +628,34 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
     {
         objectIdField = objectUid;
     }
-    appendField("object_id", objectIdField);
+    doc["object_id"] = objectIdField;
     if (unit && *unit)
-        appendField("unit_of_measurement", String(unit));
+        doc["unit_of_measurement"] = unit;
     if (deviceClass && *deviceClass)
-        appendField("device_class", String(deviceClass));
+        doc["device_class"] = deviceClass;
     if (stateClass && *stateClass)
-        appendField("state_class", String(stateClass));
+        doc["state_class"] = stateClass;
     if (payloadOn && *payloadOn)
     {
-        appendField("payload_on", String(payloadOn));
+        doc["payload_on"] = payloadOn;
         if (payloadOff && *payloadOff)
-            appendField("payload_off", String(payloadOff));
+            doc["payload_off"] = payloadOff;
     }
     if (entityCategory && *entityCategory)
-        appendField("entity_category", String(entityCategory));
-
-    String deviceJson = "{";
-    bool firstDeviceField = true;
-    auto appendDeviceField = [&](const char *field, const String &val) {
-        if (!val.length())
-            return;
-        if (!firstDeviceField)
-            deviceJson += ',';
-        deviceJson += '"';
-        deviceJson += field;
-        deviceJson += "\":\"";
-        deviceJson += escapeJson(val);
-        deviceJson += '"';
-        firstDeviceField = false;
-    };
+        doc["entity_category"] = entityCategory;
 
     String identifier = String("radpro-") + deviceIdSlug;
-    deviceJson += "\"identifiers\":[\"" + escapeJson(identifier) + "\"]";
-    firstDeviceField = false;
-    appendDeviceField("manufacturer", String("Bosean"));
-    appendDeviceField("model", deviceModelForDiscovery());
-    appendDeviceField("name", deviceNameForDiscovery());
+    JsonObject device = doc["device"].to<JsonObject>();
+    JsonArray identifiers = device["identifiers"].to<JsonArray>();
+    identifiers.add(identifier);
+    device["manufacturer"] = "Bosean";
+    device["model"] = deviceModelForDiscovery();
+    device["name"] = deviceNameForDiscovery();
     if (deviceFirmware_.length())
-        appendDeviceField("sw_version", deviceFirmware_);
-    deviceJson += "}";
+        device["sw_version"] = deviceFirmware_;
 
-    if (payload.length() > 1)
-        payload += ',';
-    payload += "\"device\":";
-    payload += deviceJson;
-    payload += "}";
-
+    String payload;
+    serializeJson(doc, payload);
     size_t neededLen = discoveryTopic.length() + payload.length() + 16;
     if (neededLen > mqtt_client_.getBufferSize())
     {
@@ -739,52 +716,6 @@ bool MqttPublisher::publishBridgeVersion()
     if (ok)
         bridgeVersionDirty_ = false;
     return ok;
-}
-
-String MqttPublisher::escapeJson(const String &value) const
-{
-    String out;
-    out.reserve(value.length() + 4);
-    for (size_t i = 0; i < value.length(); ++i)
-    {
-        char c = value[i];
-        switch (c)
-        {
-        case '\\':
-        case '"':
-            out += '\\';
-            out += c;
-            break;
-        case '\b':
-            out += "\\b";
-            break;
-        case '\f':
-            out += "\\f";
-            break;
-        case '\n':
-            out += "\\n";
-            break;
-        case '\r':
-            out += "\\r";
-            break;
-        case '\t':
-            out += "\\t";
-            break;
-        default:
-            if (static_cast<unsigned char>(c) < 0x20)
-            {
-                char buf[7];
-                snprintf(buf, sizeof(buf), "\\u%04x", c);
-                out += buf;
-            }
-            else
-            {
-                out += c;
-            }
-            break;
-        }
-    }
-    return out;
 }
 
 String MqttPublisher::deviceNameForDiscovery() const

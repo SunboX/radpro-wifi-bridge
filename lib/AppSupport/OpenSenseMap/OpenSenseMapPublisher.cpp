@@ -131,7 +131,7 @@ bool OpenSenseMapPublisher::publishPending()
     }
 
     String payload;
-    payload.reserve(256);
+    payload.reserve(128 + config_.openSenseTubeRateSensorId.length() + config_.openSenseDoseRateSensorId.length() + pendingTubeValue_.length() + pendingDoseValue_.length());
     payload = "[{\"sensor\":\"";
     payload += escapeJson(config_.openSenseTubeRateSensorId);
     payload += "\",\"value\":\"";

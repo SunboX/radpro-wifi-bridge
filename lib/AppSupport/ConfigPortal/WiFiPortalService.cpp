@@ -1,24 +1,17 @@
 #include "ConfigPortal/WiFiPortalService.h"
 
+#include "FileSystem/BridgeFileSystem.h"
+
 #include <Arduino.h>
 #include <algorithm>
 #include <cstring>
-#include <functional>
 #include <vector>
 #include <esp_wifi.h>
 #include <ArduinoJson.h>
 #include <FS.h>
 #include <LittleFS.h>
 
-namespace
-{
-    constexpr const char *kPortalLittleFsBasePath = "/littlefs";
-    constexpr const char *kPortalLittleFsLabel = "spiffs";
-    constexpr uint8_t kPortalLittleFsMaxFiles = 10;
-
-}
-
-WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, DeviceInfoStore &info, Print &logPort, LedController &led)
+WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, DeviceInfoStore &info, DebugLogStream &logPort, LedController &led)
     : config_(config),
       store_(store),
       deviceInfo_(info),
@@ -334,7 +327,7 @@ void WiFiPortalService::attachParameters()
             return;
         }
         routesRegistered_ = true;
-        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /gmc /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /restart"));
+        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /gmc /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /logs /logs.json /restart"));
 
         manager_.server->on("/mqtt", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /mqtt"));
@@ -363,6 +356,12 @@ void WiFiPortalService::attachParameters()
             log_.println(F("HTTP GET /portal/js/backup-page.js"));
             if (!sendStaticFile("/portal/js/backup-page.js", "application/javascript"))
                 sendTemplateError("/portal/js/backup-page.js");
+        });
+
+        manager_.server->on("/portal/js/log-console.js", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /portal/js/log-console.js"));
+            if (!sendStaticFile("/portal/js/log-console.js", "application/javascript"))
+                sendTemplateError("/portal/js/log-console.js");
         });
 
         manager_.server->on("/portal/portal-locale.js", HTTP_GET, [this]() {
@@ -440,6 +439,17 @@ void WiFiPortalService::attachParameters()
         manager_.server->on("/bridge.json", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /bridge.json"));
             bridgeInfoPage_.handleJson(&manager_);
+        });
+
+        manager_.server->on("/logs", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /logs"));
+            TemplateReplacements vars;
+            appendCommonTemplateVars(vars);
+            sendTemplate("/portal/logs.html", vars);
+        });
+
+        manager_.server->on("/logs.json", HTTP_GET, [this]() {
+            handleLogsJson();
         });
 
         manager_.server->on("/backup", HTTP_GET, [this]() {
@@ -1554,6 +1564,28 @@ void WiFiPortalService::appendCommonTemplateVars(TemplateReplacements &replaceme
     replacements.emplace_back("{{LOCALE}}", locale);
 }
 
+void WiFiPortalService::handleLogsJson()
+{
+    if (!manager_.server)
+        return;
+
+    std::vector<DebugLogEntry> entries;
+    log_.copyEntries(entries);
+
+    JsonDocument doc;
+    JsonArray lines = doc["lines"].to<JsonArray>();
+    for (const auto &entry : entries)
+    {
+        lines.add(entry.text);
+    }
+    doc["count"] = static_cast<uint32_t>(entries.size());
+    doc["latest"] = log_.latestId();
+
+    String body;
+    serializeJson(doc, body);
+    manager_.server->send(200, "application/json", body);
+}
+
 void WiFiPortalService::sendTemplateError(const char *path)
 {
     if (!manager_.server)
@@ -1574,7 +1606,7 @@ bool WiFiPortalService::remountLittleFsIfNeeded(const char *context)
     log_.print(F("LittleFS unavailable while accessing "));
     log_.print(context);
     log_.println(F("; attempting remount."));
-    if (LittleFS.begin(false, kPortalLittleFsBasePath, kPortalLittleFsMaxFiles, kPortalLittleFsLabel))
+    if (LittleFS.begin(false, BridgeFileSystem::kBasePath, BridgeFileSystem::kMaxFiles, BridgeFileSystem::kLabel))
     {
         log_.println(F("LittleFS remount successful."));
         dumpFilesystemContents(F("after remount"));
@@ -1586,43 +1618,7 @@ bool WiFiPortalService::remountLittleFsIfNeeded(const char *context)
 
 void WiFiPortalService::dumpFilesystemContents(const __FlashStringHelper *reason)
 {
-    log_.print(F("LittleFS listing ("));
-    log_.print(reason);
-    log_.println(F("):"));
-    File root = LittleFS.open("/");
-    if (!root || !root.isDirectory())
-    {
-        log_.println(F("  <unavailable>"));
-        return;
-    }
-    std::function<void(const String &, File &)> dumpDir = [&](const String &prefix, File &dir)
-    {
-        File entry = dir.openNextFile();
-        while (entry)
-        {
-            String entryPath = prefix + entry.name();
-            log_.print(F("  "));
-            log_.print(entryPath);
-            if (entry.isDirectory())
-            {
-                log_.println(F("/ (dir)"));
-                File sub = LittleFS.open(entryPath);
-                if (sub)
-                {
-                    dumpDir(entryPath + "/", sub);
-                    sub.close();
-                }
-            }
-            else
-            {
-                log_.print(F(" size="));
-                log_.println(entry.size());
-            }
-            entry = dir.openNextFile();
-        }
-    };
-    dumpDir(String("/"), root);
-    root.close();
+    BridgeFileSystem::dumpTree(log_, reason);
 }
 
 void WiFiPortalService::ensureMenuHtmlLoaded()
