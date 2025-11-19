@@ -1,6 +1,11 @@
 #include "ConfigPortal/WiFiPortalService.h"
 
 #include "FileSystem/BridgeFileSystem.h"
+#include "Ota/OtaUpdateService.h"
+#include "Mqtt/MqttPublisher.h"
+#include "OpenSenseMap/OpenSenseMapPublisher.h"
+#include "GmcMap/GmcMapPublisher.h"
+#include "Radmon/RadmonPublisher.h"
 
 #include <Arduino.h>
 #include <algorithm>
@@ -8,8 +13,6 @@
 #include <vector>
 #include <esp_wifi.h>
 #include <ArduinoJson.h>
-#include <FS.h>
-#include <LittleFS.h>
 
 WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, DeviceInfoStore &info, DebugLogStream &logPort, LedController &led)
     : config_(config),
@@ -327,11 +330,11 @@ void WiFiPortalService::attachParameters()
             return;
         }
         routesRegistered_ = true;
-        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /gmc /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /logs /logs.json /restart"));
+        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /gmc /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /logs /logs.json /ota /ota/status /ota/fetch /ota/upload/* /restart"));
 
         manager_.server->on("/mqtt", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /mqtt"));
-            sendMqttForm();
+            MqttPublisher::SendPortalForm(*this);
         });
 
         manager_.server->on("/portal/portal.css", HTTP_GET, [this]() {
@@ -382,39 +385,73 @@ void WiFiPortalService::attachParameters()
                 sendTemplateError("/portal/locales/de.json");
         });
 
+        manager_.server->on("/portal/js/ota-page.js", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /portal/js/ota-page.js"));
+            if (!sendStaticFile("/portal/js/ota-page.js", "application/javascript"))
+                sendTemplateError("/portal/js/ota-page.js");
+        });
+
+        manager_.server->on("/portal/js/jszip.min.js", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /portal/js/jszip.min.js"));
+            if (!sendStaticFile("/portal/js/jszip.min.js", "application/javascript"))
+                sendTemplateError("/portal/js/jszip.min.js");
+        });
+
         manager_.server->on("/mqtt", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /mqtt"));
-            handleMqttPost();
+            if (!manager_.server)
+                return;
+            String message;
+            bool needsReconnect = MqttPublisher::HandlePortalPost(*manager_.server, config_, store_, led_, log_, message);
+            if (needsReconnect)
+            {
+                pendingReconnect_ = true;
+                lastReconnectAttemptMs_ = 0;
+                hasLoggedIp_ = false;
+            }
+            MqttPublisher::SendPortalForm(*this, message);
         });
 
         manager_.server->on("/osem", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /osem"));
-            sendOpenSenseForm();
+            OpenSenseMapPublisher::SendPortalForm(*this);
         });
 
         manager_.server->on("/osem", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /osem"));
-            handleOpenSensePost();
+            if (!manager_.server)
+                return;
+            String message;
+            OpenSenseMapPublisher::HandlePortalPost(*manager_.server, config_, store_, led_, log_, message);
+            OpenSenseMapPublisher::SendPortalForm(*this, message);
         });
 
         manager_.server->on("/radmon", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /radmon"));
-            sendRadmonForm();
+            RadmonPublisher::SendPortalForm(*this);
         });
 
         manager_.server->on("/radmon", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /radmon"));
-            handleRadmonPost();
+            if (!manager_.server)
+                return;
+            String message;
+            RadmonPublisher::HandlePortalPost(*manager_.server, config_, store_, led_, log_, message);
+            RadmonPublisher::SendPortalForm(*this, message);
         });
 
         manager_.server->on("/gmc", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /gmc"));
-            sendGmcMapForm();
+            GmcMapPublisher::SendPortalForm(*this);
         });
 
         manager_.server->on("/gmc", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /gmc"));
-            handleGmcMapPost();
+            if (!manager_.server)
+                return;
+            String message;
+            GmcMapPublisher::HandlePortalPost(*manager_.server, config_, store_, led_, log_, message);
+            GmcMapPublisher::SendPortalForm(*this, message);
         });
 
         manager_.server->on("/device", HTTP_GET, [this]() {
@@ -465,6 +502,50 @@ void WiFiPortalService::attachParameters()
         manager_.server->on("/backup/restore", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /backup/restore"));
             handleConfigRestore();
+        });
+
+        manager_.server->on("/ota", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /ota"));
+            sendOtaPage();
+        });
+
+        manager_.server->on("/ota/status", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /ota/status"));
+            handleOtaStatus();
+        });
+
+        manager_.server->on("/ota/fetch", HTTP_POST, [this]() {
+            log_.println(F("HTTP POST /ota/fetch"));
+            handleOtaFetch();
+        });
+
+        manager_.server->on("/ota/upload/begin", HTTP_POST, [this]() {
+            log_.println(F("HTTP POST /ota/upload/begin"));
+            handleOtaUploadBegin();
+        });
+
+        manager_.server->on("/ota/upload/part/begin", HTTP_POST, [this]() {
+            log_.println(F("HTTP POST /ota/upload/part/begin"));
+            handleOtaUploadPartBegin();
+        });
+
+        manager_.server->on("/ota/upload/part/chunk", HTTP_POST, [this]() {
+            handleOtaUploadPartChunk();
+        });
+
+        manager_.server->on("/ota/upload/part/finish", HTTP_POST, [this]() {
+            log_.println(F("HTTP POST /ota/upload/part/finish"));
+            handleOtaUploadPartFinish();
+        });
+
+        manager_.server->on("/ota/upload/finish", HTTP_POST, [this]() {
+            log_.println(F("HTTP POST /ota/upload/finish"));
+            handleOtaUploadFinish();
+        });
+
+        manager_.server->on("/ota/cancel", HTTP_POST, [this]() {
+            log_.println(F("HTTP POST /ota/cancel"));
+            handleOtaCancel();
         });
 
         manager_.server->on("/restart", HTTP_GET, [this]() {
@@ -906,311 +987,10 @@ void WiFiPortalService::attemptReconnect()
     }
 }
 
-void WiFiPortalService::sendMqttForm(const String &message)
-{
-    if (!manager_.server)
-        return;
-
-    String notice = htmlEscape(message);
-    TemplateReplacements vars = {
-        {"{{NOTICE_CLASS}}", notice.length() ? String() : String("hidden")},
-        {"{{NOTICE_TEXT}}", notice},
-        {"{{MQTT_ENABLED_CHECKED}}", config_.mqttEnabled ? String("checked") : String()},
-        {"{{MQTT_HOST}}", htmlEscape(config_.mqttHost)},
-        {"{{MQTT_PORT}}", String(config_.mqttPort)},
-        {"{{MQTT_CLIENT}}", htmlEscape(config_.mqttClient)},
-        {"{{MQTT_USER}}", htmlEscape(config_.mqttUser)},
-        {"{{MQTT_PASS}}", htmlEscape(config_.mqttPassword)},
-        {"{{MQTT_TOPIC}}", htmlEscape(config_.mqttTopic)},
-        {"{{MQTT_FULL_TOPIC}}", htmlEscape(config_.mqttFullTopic)},
-        {"{{READ_INTERVAL_MIN}}", String(kMinReadIntervalMs)},
-        {"{{READ_INTERVAL}}", String(config_.readIntervalMs)}};
-
-    appendCommonTemplateVars(vars);
-    sendTemplate("/portal/mqtt.html", vars);
-}
-
-void WiFiPortalService::handleMqttPost()
-{
-    if (!manager_.server)
-        return;
-
-    auto &server = *manager_.server;
-    String host = server.arg("mqttHost");
-    String portStr = server.arg("mqttPort");
-    String client = server.arg("mqttClient");
-    String user = server.arg("mqttUser");
-    String pass = server.arg("mqttPass");
-    String topic = server.arg("mqttTopic");
-    String fullTopic = server.arg("mqttFullTopic");
-    String intervalStr = server.arg("readInterval");
-    bool enabled = server.hasArg("mqttEnabled") && server.arg("mqttEnabled") == "1";
-
-    host.trim();
-    client.trim();
-    user.trim();
-    pass.trim();
-    topic.trim();
-    fullTopic.trim();
-    intervalStr.trim();
-
-    bool changed = false;
-    changed |= UpdateStringIfChanged(config_.mqttHost, host.c_str());
-    changed |= UpdateStringIfChanged(config_.mqttClient, client.c_str());
-    changed |= UpdateStringIfChanged(config_.mqttUser, user.c_str());
-    changed |= UpdateStringIfChanged(config_.mqttPassword, pass.c_str());
-    changed |= UpdateStringIfChanged(config_.mqttTopic, topic.c_str());
-    changed |= UpdateStringIfChanged(config_.mqttFullTopic, fullTopic.c_str());
-
-    if (config_.mqttEnabled != enabled)
-    {
-        config_.mqttEnabled = enabled;
-        changed = true;
-    }
-
-    uint32_t parsedPort = strtoul(portStr.c_str(), nullptr, 10);
-    if (parsedPort == 0 || parsedPort > 65535)
-        parsedPort = config_.mqttPort;
-    if (config_.mqttPort != parsedPort)
-    {
-        config_.mqttPort = static_cast<uint16_t>(parsedPort);
-        changed = true;
-    }
-
-    uint32_t newInterval = strtoul(intervalStr.c_str(), nullptr, 10);
-    if (newInterval < kMinReadIntervalMs)
-        newInterval = kMinReadIntervalMs;
-    if (config_.readIntervalMs != newInterval)
-    {
-        config_.readIntervalMs = newInterval;
-        changed = true;
-    }
-
-    String message;
-    if (changed)
-    {
-        if (store_.save(config_))
-        {
-            log_.println("MQTT configuration updated via portal.");
-            led_.clearFault(FaultCode::NvsWriteFailure);
-            pendingReconnect_ = true;
-            lastReconnectAttemptMs_ = 0;
-            hasLoggedIp_ = false;
-            message = F("Settings saved. The device will reconnect using the new MQTT configuration.");
-        }
-        else
-        {
-            led_.activateFault(FaultCode::NvsWriteFailure);
-            message = F("Failed to save settings to NVS.");
-        }
-    }
-    else
-    {
-        message = F("No changes detected.");
-    }
-
-    sendMqttForm(message);
-}
-
-void WiFiPortalService::sendOpenSenseForm(const String &message)
-{
-    if (!manager_.server)
-        return;
-
-    String notice = htmlEscape(message);
-    TemplateReplacements vars = {
-        {"{{NOTICE_CLASS}}", notice.length() ? String() : String("hidden")},
-        {"{{NOTICE_TEXT}}", notice},
-        {"{{OSEM_ENABLED_CHECKED}}", config_.openSenseMapEnabled ? String("checked") : String()},
-        {"{{OSEM_BOX_ID}}", htmlEscape(config_.openSenseBoxId)},
-        {"{{OSEM_API_KEY}}", htmlEscape(config_.openSenseApiKey)},
-        {"{{OSEM_RATE_ID}}", htmlEscape(config_.openSenseTubeRateSensorId)},
-        {"{{OSEM_DOSE_ID}}", htmlEscape(config_.openSenseDoseRateSensorId)}};
-
-    appendCommonTemplateVars(vars);
-    sendTemplate("/portal/osem.html", vars);
-}
-
-void WiFiPortalService::handleOpenSensePost()
-{
-    if (!manager_.server)
-        return;
-
-    auto &server = *manager_.server;
-    bool enabled = server.hasArg("osemEnabled") && server.arg("osemEnabled") == "1";
-    String boxId = server.arg("osemBoxId");
-    String apiKey = server.arg("osemApiKey");
-    String rateId = server.arg("osemRate");
-    String doseId = server.arg("osemDose");
-
-    boxId.trim();
-    apiKey.trim();
-    rateId.trim();
-    doseId.trim();
-
-    bool changed = false;
-    if (config_.openSenseMapEnabled != enabled)
-    {
-        config_.openSenseMapEnabled = enabled;
-        changed = true;
-    }
-    changed |= UpdateStringIfChanged(config_.openSenseBoxId, boxId.c_str());
-    changed |= UpdateStringIfChanged(config_.openSenseApiKey, apiKey.c_str());
-    changed |= UpdateStringIfChanged(config_.openSenseTubeRateSensorId, rateId.c_str());
-    changed |= UpdateStringIfChanged(config_.openSenseDoseRateSensorId, doseId.c_str());
-
-    String message;
-    if (changed)
-    {
-        if (store_.save(config_))
-        {
-            log_.println("OpenSenseMap configuration updated via portal.");
-            led_.clearFault(FaultCode::NvsWriteFailure);
-            message = F("OpenSenseMap settings saved.");
-        }
-        else
-        {
-            led_.activateFault(FaultCode::NvsWriteFailure);
-            message = F("Failed to save settings to NVS.");
-        }
-    }
-    else
-    {
-        message = F("No changes detected.");
-    }
-
-    sendOpenSenseForm(message);
-}
-
-void WiFiPortalService::sendRadmonForm(const String &message)
-{
-    if (!manager_.server)
-        return;
-
-    String notice = htmlEscape(message);
-    TemplateReplacements vars = {
-        {"{{NOTICE_CLASS}}", notice.length() ? String() : String("hidden")},
-        {"{{NOTICE_TEXT}}", notice},
-        {"{{RADMON_ENABLED_CHECKED}}", config_.radmonEnabled ? String("checked") : String()},
-        {"{{RADMON_USER}}", htmlEscape(config_.radmonUser)},
-        {"{{RADMON_PASS}}", htmlEscape(config_.radmonPassword)}};
-
-    appendCommonTemplateVars(vars);
-    sendTemplate("/portal/radmon.html", vars);
-}
-
-void WiFiPortalService::handleRadmonPost()
-{
-    if (!manager_.server)
-        return;
-
-    auto &server = *manager_.server;
-    bool enabled = server.hasArg("radmonEnabled") && server.arg("radmonEnabled") == "1";
-    String user = server.arg("radmonUser");
-    String password = server.arg("radmonPass");
-
-    user.trim();
-
-    bool changed = false;
-    if (config_.radmonEnabled != enabled)
-    {
-        config_.radmonEnabled = enabled;
-        changed = true;
-    }
-    changed |= UpdateStringIfChanged(config_.radmonUser, user.c_str());
-
-    if (password != config_.radmonPassword)
-    {
-        config_.radmonPassword = password;
-        changed = true;
-    }
-
-    String message;
-    if (changed)
-    {
-        if (store_.save(config_))
-        {
-            log_.println("Radmon configuration saved to NVS.");
-            led_.clearFault(FaultCode::NvsWriteFailure);
-            message = F("Radmon settings saved.");
-        }
-        else
-        {
-            log_.println("Preferences write failed; Radmon configuration not saved.");
-            led_.activateFault(FaultCode::NvsWriteFailure);
-            message = F("Failed to save settings.");
-        }
-    }
-    else
-    {
-        message = F("No changes detected.");
-    }
-
-    sendRadmonForm(message);
-}
-
-void WiFiPortalService::sendGmcMapForm(const String &message)
-{
-    if (!manager_.server)
-        return;
-
-    String notice = htmlEscape(message);
-    TemplateReplacements vars = {
-        {"{{NOTICE_CLASS}}", notice.length() ? String() : String("hidden")},
-        {"{{NOTICE_TEXT}}", notice},
-        {"{{GMC_ENABLED_CHECKED}}", config_.gmcMapEnabled ? String("checked") : String()},
-        {"{{GMC_ACCOUNT}}", htmlEscape(config_.gmcMapAccountId)},
-        {"{{GMC_DEVICE}}", htmlEscape(config_.gmcMapDeviceId)}};
-
-    appendCommonTemplateVars(vars);
-    sendTemplate("/portal/gmc.html", vars);
-}
-
-void WiFiPortalService::handleGmcMapPost()
-{
-    if (!manager_.server)
-        return;
-
-    auto &server = *manager_.server;
-    bool enabled = server.hasArg("gmcEnabled") && server.arg("gmcEnabled") == "1";
-    String account = server.arg("gmcAccount");
-    String device = server.arg("gmcDevice");
-
-    account.trim();
-    device.trim();
-
-    bool changed = false;
-    if (config_.gmcMapEnabled != enabled)
-    {
-        config_.gmcMapEnabled = enabled;
-        changed = true;
-    }
-    changed |= UpdateStringIfChanged(config_.gmcMapAccountId, account.c_str());
-    changed |= UpdateStringIfChanged(config_.gmcMapDeviceId, device.c_str());
-
-    String message;
-    if (changed)
-    {
-        if (store_.save(config_))
-        {
-            log_.println("GMCMap configuration saved to NVS.");
-            led_.clearFault(FaultCode::NvsWriteFailure);
-            message = F("GMCMap settings saved.");
-        }
-        else
-        {
-            log_.println("Preferences write failed; GMCMap configuration not saved.");
-            led_.activateFault(FaultCode::NvsWriteFailure);
-            message = F("Failed to save settings.");
-        }
-    }
-    else
-    {
-        message = F("No changes detected.");
-    }
-
-    sendGmcMapForm(message);
-}
+#include <Arduino.h>
+#include <ArduinoJson.h>
+#include <FS.h>
+#include <LittleFS.h>
 
 void WiFiPortalService::sendConfigBackupPage(const String &message)
 {
@@ -1238,6 +1018,7 @@ void WiFiPortalService::sendConfigBackupPage(const String &message)
     appendCommonTemplateVars(vars);
     sendTemplate("/portal/backup.html", vars);
 }
+
 
 void WiFiPortalService::handleConfigDownload()
 {
@@ -1492,12 +1273,43 @@ bool WiFiPortalService::sendStaticFile(const char *path, const char *contentType
 {
     if (!manager_.server)
         return false;
-    String content;
-    if (!readFile(path, content))
+
+    File file = LittleFS.open(path, "r");
+    if (!file)
+    {
+        if (!remountLittleFsIfNeeded(path))
+            return false;
+        file = LittleFS.open(path, "r");
+    }
+
+    if (!file)
+    {
+        log_.print(F("Missing portal asset: "));
+        log_.println(path);
+        log_.print(F("LittleFS.exists? "));
+        log_.println(LittleFS.exists(path) ? F("yes") : F("no"));
         return false;
-    manager_.server->send(200, contentType, content);
+    }
+
+    log_.print(F("Serving asset: "));
+    log_.print(path);
+    log_.print(F(" size="));
+    log_.println(file.size());
+
+    size_t sent = manager_.server->streamFile(file, contentType);
+    file.close();
+
+    if (sent == 0)
+    {
+        log_.print(F("Failed to stream asset: "));
+        log_.println(path);
+        return false;
+    }
+
     log_.print(F("Served asset: "));
-    log_.println(path);
+    log_.print(path);
+    log_.print(F(" bytes="));
+    log_.println(sent);
     return true;
 }
 
@@ -1666,3 +1478,4 @@ void WiFiPortalService::applyMenuHtmlForLocale(const String &locale)
 
     manager_.setCustomMenuHTML(menuHtmlRendered_.c_str());
 }
+

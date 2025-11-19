@@ -9,6 +9,9 @@
 #include "DeviceManager.h"
 #include "Led/LedController.h"
 
+class WebServer;
+class WiFiPortalService;
+
 class MqttPublisher
 {
 public:
@@ -20,6 +23,13 @@ public:
     void onCommandResult(DeviceManager::CommandType type, const String &value);
     void setPublishCallback(std::function<void(bool)> cb) { publishCallback_ = std::move(cb); }
     void setBridgeVersion(const String &version);
+    static void SendPortalForm(WiFiPortalService &portal, const String &message = String());
+    static bool HandlePortalPost(WebServer &server,
+                                 AppConfig &config,
+                                 AppConfigStore &store,
+                                 LedController &led,
+                                 Print &log,
+                                 String &message);
 
 private:
     bool ensureConnected();

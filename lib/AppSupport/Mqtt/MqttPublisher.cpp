@@ -1,5 +1,7 @@
 #include "MqttPublisher.h"
 #include <ArduinoJson.h>
+#include "ConfigPortal/WiFiPortalService.h"
+#include <WebServer.h>
 
 namespace
 {
@@ -716,6 +718,107 @@ bool MqttPublisher::publishBridgeVersion()
     if (ok)
         bridgeVersionDirty_ = false;
     return ok;
+}
+
+bool MqttPublisher::HandlePortalPost(WebServer &server,
+                                     AppConfig &config,
+                                     AppConfigStore &store,
+                                     LedController &led,
+                                     Print &log,
+                                     String &message)
+{
+    String host = server.arg("mqttHost");
+    String portStr = server.arg("mqttPort");
+    String client = server.arg("mqttClient");
+    String user = server.arg("mqttUser");
+    String pass = server.arg("mqttPass");
+    String topic = server.arg("mqttTopic");
+    String fullTopic = server.arg("mqttFullTopic");
+    String intervalStr = server.arg("readInterval");
+    bool enabled = server.hasArg("mqttEnabled") && server.arg("mqttEnabled") == "1";
+
+    host.trim();
+    client.trim();
+    user.trim();
+    pass.trim();
+    topic.trim();
+    fullTopic.trim();
+    intervalStr.trim();
+
+    bool changed = false;
+    changed |= UpdateStringIfChanged(config.mqttHost, host.c_str());
+    changed |= UpdateStringIfChanged(config.mqttClient, client.c_str());
+    changed |= UpdateStringIfChanged(config.mqttUser, user.c_str());
+    changed |= UpdateStringIfChanged(config.mqttPassword, pass.c_str());
+    changed |= UpdateStringIfChanged(config.mqttTopic, topic.c_str());
+    changed |= UpdateStringIfChanged(config.mqttFullTopic, fullTopic.c_str());
+
+    if (config.mqttEnabled != enabled)
+    {
+        config.mqttEnabled = enabled;
+        changed = true;
+    }
+
+    uint32_t parsedPort = strtoul(portStr.c_str(), nullptr, 10);
+    if (parsedPort == 0 || parsedPort > 65535)
+        parsedPort = config.mqttPort;
+    if (config.mqttPort != parsedPort)
+    {
+        config.mqttPort = static_cast<uint16_t>(parsedPort);
+        changed = true;
+    }
+
+    uint32_t newInterval = strtoul(intervalStr.c_str(), nullptr, 10);
+    if (newInterval < kMinReadIntervalMs)
+        newInterval = kMinReadIntervalMs;
+    if (config.readIntervalMs != newInterval)
+    {
+        config.readIntervalMs = newInterval;
+        changed = true;
+    }
+
+    if (changed)
+    {
+        if (store.save(config))
+        {
+            log.println("MQTT configuration updated via portal.");
+            led.clearFault(FaultCode::NvsWriteFailure);
+            message = F("Settings saved. The device will reconnect using the new MQTT configuration.");
+            return true;
+        }
+
+        led.activateFault(FaultCode::NvsWriteFailure);
+        log.println("Preferences write failed; MQTT configuration not saved.");
+        message = F("Failed to save settings to NVS.");
+        return false;
+    }
+
+    message = F("No changes detected.");
+    return false;
+}
+
+void MqttPublisher::SendPortalForm(WiFiPortalService &portal, const String &message)
+{
+    if (!portal.manager_.server)
+        return;
+
+    String notice = WiFiPortalService::htmlEscape(message);
+    WiFiPortalService::TemplateReplacements vars = {
+        {"{{NOTICE_CLASS}}", notice.length() ? String() : String("hidden")},
+        {"{{NOTICE_TEXT}}", notice},
+        {"{{MQTT_ENABLED_CHECKED}}", portal.config_.mqttEnabled ? String("checked") : String()},
+        {"{{MQTT_HOST}}", WiFiPortalService::htmlEscape(portal.config_.mqttHost)},
+        {"{{MQTT_PORT}}", String(portal.config_.mqttPort)},
+        {"{{MQTT_CLIENT}}", WiFiPortalService::htmlEscape(portal.config_.mqttClient)},
+        {"{{MQTT_USER}}", WiFiPortalService::htmlEscape(portal.config_.mqttUser)},
+        {"{{MQTT_PASS}}", WiFiPortalService::htmlEscape(portal.config_.mqttPassword)},
+        {"{{MQTT_TOPIC}}", WiFiPortalService::htmlEscape(portal.config_.mqttTopic)},
+        {"{{MQTT_FULL_TOPIC}}", WiFiPortalService::htmlEscape(portal.config_.mqttFullTopic)},
+        {"{{READ_INTERVAL_MIN}}", String(kMinReadIntervalMs)},
+        {"{{READ_INTERVAL}}", String(portal.config_.readIntervalMs)}};
+
+    portal.appendCommonTemplateVars(vars);
+    portal.sendTemplate("/portal/mqtt.html", vars);
 }
 
 String MqttPublisher::deviceNameForDiscovery() const
