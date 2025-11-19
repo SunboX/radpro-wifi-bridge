@@ -2,17 +2,11 @@
 #include "UsbCdcHost.h"
 #include "esp_log.h"
 #include "esp_system.h"
-#include "esp_err.h"
 #include <cstring>
 #include <utility>
 #include <vector>
-#include <functional>
 #include <WiFi.h>
 #include <LittleFS.h>
-extern "C"
-{
-#include "esp_littlefs.h"
-}
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "DeviceManager.h"
@@ -25,6 +19,8 @@ extern "C"
 #include "Radmon/RadmonPublisher.h"
 #include "BridgeDiagnostics.h"
 #include "DeviceInfo/DeviceInfoStore.h"
+#include "FileSystem/BridgeFileSystem.h"
+#include "Logging/DebugLogStream.h"
 
 #ifndef BRIDGE_FIRMWARE_VERSION
 #define BRIDGE_FIRMWARE_VERSION "0.0.0"
@@ -39,10 +35,13 @@ extern "C"
 
 // Prefer the CP210x/UART "second USB port" for debug when USB-CDC is on
 #if defined(ARDUINO_USB_CDC_ON_BOOT) && (ARDUINO_USB_CDC_ON_BOOT == 1)
-#define DBG Serial0
+#define DBG_SERIAL Serial0
 #else
-#define DBG Serial
+#define DBG_SERIAL Serial
 #endif
+
+static DebugLogStream debugSerial(DBG_SERIAL);
+#define DBG debugSerial
 
 // =========================
 // Startup configuration
@@ -75,8 +74,6 @@ static LedController ledController;
 static BridgeDiagnostics diagnostics(DBG, ledController);
 static DeviceInfoStore deviceInfoStore;
 
-static const char *kLittleFsBasePath = "/littlefs";
-static const char *kLittleFsLabel = "spiffs";
 static AppConfig appConfig;
 static AppConfigStore configStore;
 static WiFiPortalService portalService(appConfig, configStore, deviceInfoStore, DBG, ledController);
@@ -87,87 +84,6 @@ static RadmonPublisher radmonPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
 static bool deviceReady = false;
 static bool deviceError = false;
 static bool mqttError = false;
-
-static void logLittleFsStats(const char *stage)
-{
-    size_t total = 0;
-    size_t used = 0;
-    esp_err_t err = esp_littlefs_info(kLittleFsLabel, &total, &used);
-    DBG.print("[LittleFS] info (");
-    DBG.print(stage);
-    DBG.print("): err=");
-    DBG.println(esp_err_to_name(err));
-    if (err == ESP_OK)
-    {
-        DBG.print("[LittleFS] total=");
-        DBG.print(total);
-        DBG.print(" bytes used=");
-        DBG.println(used);
-    }
-}
-
-static void dumpLittleFsTree(const char *reason)
-{
-    DBG.print("[LittleFS] Directory listing (");
-    DBG.print(reason);
-    DBG.println("):");
-
-    File root = LittleFS.open("/");
-    if (!root || !root.isDirectory())
-    {
-        DBG.println("[LittleFS] <root unavailable>");
-        return;
-    }
-
-    std::function<void(const String &, File &)> dumpDir = [&](const String &path, File &dir) {
-        File entry = dir.openNextFile();
-        while (entry)
-        {
-            String entryPath = path + entry.name();
-            DBG.print("  ");
-            DBG.print(entryPath);
-            if (entry.isDirectory())
-            {
-                DBG.println("/ (dir)");
-                File sub = LittleFS.open(entryPath);
-                if (sub)
-                {
-                    dumpDir(entryPath + "/", sub);
-                    sub.close();
-                }
-            }
-            else
-            {
-                DBG.print(" size=");
-                DBG.println(entry.size());
-            }
-            entry = dir.openNextFile();
-        }
-    };
-
-    dumpDir(String("/"), root);
-    root.close();
-}
-
-static bool mountLittleFs(const char *stage, bool formatOnFail)
-{
-    DBG.print("[LittleFS] mount request (");
-    DBG.print(stage);
-    DBG.println(")");
-    DBG.print("[LittleFS] already mounted? ");
-    DBG.println(esp_littlefs_mounted(kLittleFsLabel) ? "yes" : "no");
-
-    bool mounted = LittleFS.begin(formatOnFail, kLittleFsBasePath, 10, kLittleFsLabel);
-    DBG.print("[LittleFS] begin returned ");
-    DBG.println(mounted ? "true" : "false");
-    DBG.print("[LittleFS] mounted after begin? ");
-    DBG.println(esp_littlefs_mounted(kLittleFsLabel) ? "yes" : "no");
-
-    logLittleFsStats(stage);
-    if (mounted)
-        dumpLittleFsTree(stage);
-    return mounted;
-}
 
 // =========================
 // Arduino setup / loop
@@ -181,7 +97,7 @@ void setup()
 
     DBG.println("Initializing RadPro WiFi Bridge…");
 
-    if (!mountLittleFs("setup-initial", true))
+    if (!BridgeFileSystem::mount(DBG, "setup-initial", true))
     {
         DBG.println("[LittleFS] Initial mount failed; portal assets unavailable.");
     }
@@ -214,15 +130,16 @@ void setup()
     // Record start time for non-blocking startup delay
     startupStartTime = millis();
 
-    device_manager.setLineHandler([&](const String &line)
-                                  { diagnostics.handleLine(line); });
-    device_manager.setRawHandler([&](const uint8_t *data, size_t len)
-                                 { diagnostics.handleRaw(data, len); });
-    device_manager.setCommandResultHandler([&](DeviceManager::CommandType type, const String &value, bool success)
-                                           {
+    device_manager.setLineHandler([&](const String &line) { diagnostics.handleLine(line); });
+    device_manager.setRawHandler([&](const uint8_t *data, size_t len) { diagnostics.handleRaw(data, len); });
+    device_manager.setCommandResultHandler([&](DeviceManager::CommandType type, const String &value, bool success) {
         if (!success)
         {
-            bool transient = (type == DeviceManager::CommandType::TubePulseCount || type == DeviceManager::CommandType::TubeRate);
+            bool transient = (type == DeviceManager::CommandType::TubePulseCount ||
+                               type == DeviceManager::CommandType::TubeRate ||
+                               type == DeviceManager::CommandType::DeviceBatteryVoltage ||
+                               type == DeviceManager::CommandType::DeviceBatteryPercent ||
+                               (type == DeviceManager::CommandType::DeviceId && !deviceReady));
             if (!transient)
             {
                 deviceError = true;
@@ -270,7 +187,9 @@ void setup()
         mqttPublisher.onCommandResult(type, value);
         openSenseMapPublisher.onCommandResult(type, value);
         gmcMapPublisher.onCommandResult(type, value);
-        radmonPublisher.onCommandResult(type, value); });
+        radmonPublisher.onCommandResult(type, value);
+    });
+
     device_manager.begin(kSupportedUsbVidPid);
 
     // Optionally set target baud for CDC device
