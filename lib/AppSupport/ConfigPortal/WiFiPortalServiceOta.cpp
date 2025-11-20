@@ -165,7 +165,7 @@ void WiFiPortalService::handleOtaStatus()
     refreshLatestRemoteVersion(false);
 
     OtaUpdateService::Status state = otaService_.status();
-    StatusJsonDoc doc(512);
+    JsonDocument doc;
     doc["currentVersion"] = BRIDGE_FIRMWARE_VERSION;
     if (latestRemoteVersion_.length())
         doc["latestVersion"] = latestRemoteVersion_;
@@ -207,7 +207,7 @@ void WiFiPortalService::handleOtaFetch()
 
     if (otaTaskHandle_)
     {
-        ErrorJsonDoc doc(128);
+        JsonDocument doc;
         doc["error"] = F("OTA download already running.");
         String body;
         serializeJson(doc, body);
@@ -218,7 +218,7 @@ void WiFiPortalService::handleOtaFetch()
     OtaUpdateService::Status status = otaService_.status();
     if (status.busy)
     {
-        ErrorJsonDoc doc(128);
+        JsonDocument doc;
         doc["error"] = F("OTA process already active.");
         String body;
         serializeJson(doc, body);
@@ -228,7 +228,7 @@ void WiFiPortalService::handleOtaFetch()
 
     if (WiFi.status() != WL_CONNECTED)
     {
-        ErrorJsonDoc doc(128);
+        JsonDocument doc;
         doc["error"] = F("Wi-Fi is not connected.");
         String body;
         serializeJson(doc, body);
@@ -250,7 +250,7 @@ void WiFiPortalService::handleOtaFetch()
     if (created != pdPASS)
     {
         otaTaskHandle_ = nullptr;
-        ErrorJsonDoc doc(128);
+        JsonDocument doc;
         doc["error"] = F("Unable to start OTA task.");
         String body;
         serializeJson(doc, body);
@@ -258,7 +258,7 @@ void WiFiPortalService::handleOtaFetch()
         return;
     }
 
-    ErrorJsonDoc doc(128);
+    JsonDocument doc;
     doc["started"] = true;
     String body;
     serializeJson(doc, body);
@@ -272,7 +272,7 @@ void WiFiPortalService::handleOtaUploadBegin()
 
     if (otaTaskHandle_)
     {
-        ErrorJsonDoc doc(128);
+        JsonDocument doc;
         doc["error"] = F("Remote OTA already running.");
         String body;
         serializeJson(doc, body);
@@ -284,7 +284,7 @@ void WiFiPortalService::handleOtaUploadBegin()
     manifest.trim();
     if (!manifest.length())
     {
-        ErrorJsonDoc doc(128);
+        JsonDocument doc;
         doc["error"] = F("Manifest payload missing.");
         String body;
         serializeJson(doc, body);
@@ -296,7 +296,7 @@ void WiFiPortalService::handleOtaUploadBegin()
     {
         OtaUpdateService::Status state = otaService_.status();
         String err = state.lastError.length() ? state.lastError : String(F("Manifest rejected."));
-        ErrorJsonDoc doc(128);
+        JsonDocument doc;
         doc["error"] = err;
         String body;
         serializeJson(doc, body);
@@ -323,7 +323,7 @@ void WiFiPortalService::handleOtaUploadPartBegin()
 
     if (!otaService_.status().busy)
     {
-        ErrorJsonDoc doc(128);
+        JsonDocument doc;
         doc["error"] = F("OTA session is not active.");
         String body;
         serializeJson(doc, body);
@@ -364,7 +364,7 @@ void WiFiPortalService::handleOtaUploadPartBegin()
 
     setOtaProgress(String(F("Uploading ")) + path, size, 0);
 
-    ErrorJsonDoc doc(128);
+    JsonDocument doc;
     doc["ok"] = true;
     doc["path"] = path;
     String body;
@@ -417,7 +417,7 @@ void WiFiPortalService::handleOtaUploadPartChunk()
     otaLastProgressMs_ = millis();
     portEXIT_CRITICAL(&otaLock_);
 
-    ErrorJsonDoc doc(128);
+    JsonDocument doc;
     doc["ok"] = true;
     doc["bytes"] = static_cast<uint32_t>(otaChunkBuffer_.size());
     String body;
@@ -510,7 +510,7 @@ void WiFiPortalService::handleOtaCancel()
 
 bool WiFiPortalService::parseManifestParts(const String &manifestJson, std::vector<ManifestPart> &parts, String &version, String &error)
 {
-    ManifestJsonDoc doc(3072);
+    JsonDocument doc;
     DeserializationError err = deserializeJson(doc, manifestJson);
     if (err)
     {
@@ -581,7 +581,7 @@ bool WiFiPortalService::fetchRemoteManifest(String &manifestJson, String &versio
     manifestJson = http.getString();
     http.end();
 
-    ManifestJsonDoc doc(3072);
+    JsonDocument doc;
     DeserializationError err = deserializeJson(doc, manifestJson);
     if (err)
     {

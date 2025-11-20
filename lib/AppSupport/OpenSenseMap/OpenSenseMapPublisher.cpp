@@ -52,8 +52,7 @@ namespace
 OpenSenseMapPublisher::OpenSenseMapPublisher(AppConfig &config, Print &log, const char *bridgeVersion)
     : config_(config),
       log_(log),
-      bridgeVersion_(bridgeVersion ? bridgeVersion : ""),
-      payloadDoc_(256)
+      bridgeVersion_(bridgeVersion ? bridgeVersion : "")
 {
 }
 
