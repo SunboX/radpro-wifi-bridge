@@ -3,6 +3,8 @@
 #include <Arduino.h>
 #include <vector>
 #include <WiFiClient.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
 
 class OtaUpdateService
 {
@@ -32,6 +34,8 @@ private:
         String path;
         uint32_t offset = 0;
         bool received = false;
+        bool isFirmware = false;
+        bool skip = false;
     };
 
     struct ActivePart
@@ -40,10 +44,15 @@ private:
         uint32_t offset = 0;
         size_t expectedSize = 0;
         size_t written = 0;
+        bool isOta = false;
+        esp_ota_handle_t otaHandle = 0;
+        const esp_partition_t *partition = nullptr;
+        bool skip = false;
     };
 
     bool eraseRegion(uint32_t offset, size_t size);
     bool ensureFsUnmounted(uint32_t offset, const String &path);
+    bool isProtectedRegion(uint32_t offset, const String &path) const;
 
     std::vector<PartInfo> parts_;
     bool busy_ = false;
@@ -52,4 +61,5 @@ private:
     String lastError_;
     String targetVersion_;
     ActivePart active_;
+    const esp_partition_t *targetOtaPartition_ = nullptr;
 };

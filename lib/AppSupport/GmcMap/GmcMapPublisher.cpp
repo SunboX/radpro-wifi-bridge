@@ -35,11 +35,15 @@ void GmcMapPublisher::updateConfig()
 
 void GmcMapPublisher::loop()
 {
+    if (paused_)
+        return;
     publishPending();
 }
 
 void GmcMapPublisher::onCommandResult(DeviceManager::CommandType type, const String &value)
 {
+    if (paused_)
+        return;
     switch (type)
     {
     case DeviceManager::CommandType::TubeRate:
@@ -81,6 +85,8 @@ bool GmcMapPublisher::isEnabled() const
 
 bool GmcMapPublisher::publishPending()
 {
+    if (paused_)
+        return true;
     if (!publishQueued_)
         return false;
 

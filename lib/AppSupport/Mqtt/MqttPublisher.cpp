@@ -7,7 +7,7 @@ namespace
 {
     JsonDocument &getDiscoveryDoc()
     {
-        static JsonDocument doc;
+        static JsonDocument doc(896);
         return doc;
     }
 }
@@ -57,6 +57,13 @@ void MqttPublisher::begin()
 
 void MqttPublisher::updateConfig()
 {
+    if (paused_)
+    {
+        if (mqtt_client_.connected())
+            mqtt_client_.disconnect();
+        return;
+    }
+
     String host = config_.mqttHost;
     host.trim();
     uint16_t port = config_.mqttPort ? config_.mqttPort : 1883;
@@ -144,6 +151,13 @@ void MqttPublisher::updateConfig()
 
 void MqttPublisher::loop()
 {
+    if (paused_)
+    {
+        if (mqtt_client_.connected())
+            mqtt_client_.disconnect();
+        return;
+    }
+
     if (!config_.mqttEnabled)
         return;
 
@@ -165,6 +179,9 @@ void MqttPublisher::loop()
 
 void MqttPublisher::onCommandResult(DeviceManager::CommandType type, const String &value)
 {
+    if (paused_)
+        return;
+
     if (!config_.mqttEnabled)
         return;
 
@@ -222,6 +239,15 @@ void MqttPublisher::onCommandResult(DeviceManager::CommandType type, const Strin
     if (type == DeviceManager::CommandType::RandomData || type == DeviceManager::CommandType::DataLog)
         retain = false;
     publishCommand(type, value, retain);
+}
+
+void MqttPublisher::pause(bool paused)
+{
+    paused_ = paused;
+    if (paused_ && mqtt_client_.connected())
+    {
+        mqtt_client_.disconnect();
+    }
 }
 
 bool MqttPublisher::ensureConnected()
@@ -656,9 +682,8 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
     if (deviceFirmware_.length())
         device["sw_version"] = deviceFirmware_;
 
-    String payload;
-    serializeJson(doc, payload);
-    size_t neededLen = discoveryTopic.length() + payload.length() + 16;
+    const size_t payloadLen = measureJson(doc);
+    size_t neededLen = discoveryTopic.length() + payloadLen + 16;
     if (neededLen > mqtt_client_.getBufferSize())
     {
         log_.print("MQTT discovery payload too large for ");
@@ -671,7 +696,16 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
         return false;
     }
 
-    bool ok = mqtt_client_.publish(discoveryTopic.c_str(), payload.c_str(), true);
+    if (!mqtt_client_.beginPublish(discoveryTopic.c_str(), payloadLen, true))
+    {
+        log_.print("MQTT discovery publish begin failed for ");
+        log_.println(discoveryTopic);
+        led_.activateFault(FaultCode::MqttConnectionReset);
+        return false;
+    }
+
+    serializeJson(doc, mqtt_client_);
+    bool ok = mqtt_client_.endPublish();
     if (!ok)
     {
         log_.print("MQTT discovery publish failed for ");

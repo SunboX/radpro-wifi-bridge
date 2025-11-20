@@ -2,6 +2,7 @@
 #include "UsbCdcHost.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_ota_ops.h"
 #include <cstring>
 #include <utility>
 #include <vector>
@@ -84,6 +85,20 @@ static RadmonPublisher radmonPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
 static bool deviceReady = false;
 static bool deviceError = false;
 static bool mqttError = false;
+static bool updateInProgress = false;
+
+static void enterUpdateMode()
+{
+    if (updateInProgress)
+        return;
+    updateInProgress = true;
+    device_manager.stop();
+    usb.stop();
+    mqttPublisher.pause(true);
+    openSenseMapPublisher.setPaused(true);
+    gmcMapPublisher.setPaused(true);
+    radmonPublisher.setPaused(true);
+}
 
 // =========================
 // Arduino setup / loop
@@ -94,6 +109,9 @@ void setup()
     Serial.begin(115200);
     DBG.begin(115200);
     delay(300);
+
+    // Confirm current app as valid to cancel any pending rollback.
+    esp_ota_mark_app_valid_cancel_rollback();
 
     DBG.println("Initializing RadPro WiFi Bridge…");
 
@@ -222,6 +240,8 @@ void setup()
     }
 
     portalService.begin();
+    portalService.setOtaStartCallback([]()
+                                      { enterUpdateMode(); });
     mqttPublisher.begin();
     mqttPublisher.setBridgeVersion(BRIDGE_FIRMWARE_VERSION);
     openSenseMapPublisher.begin();
@@ -271,18 +291,24 @@ void loop()
         runMainLogic();
     }
 
-    device_manager.loop();
+    if (!updateInProgress)
+    {
+        device_manager.loop();
+    }
     portalService.syncIfRequested();
     portalService.maintain();
     portalService.process();
-    mqttPublisher.updateConfig();
-    mqttPublisher.loop();
-    openSenseMapPublisher.updateConfig();
-    openSenseMapPublisher.loop();
-    gmcMapPublisher.updateConfig();
-    gmcMapPublisher.loop();
-    radmonPublisher.updateConfig();
-    radmonPublisher.loop();
+    if (!updateInProgress)
+    {
+        mqttPublisher.updateConfig();
+        mqttPublisher.loop();
+        openSenseMapPublisher.updateConfig();
+        openSenseMapPublisher.loop();
+        gmcMapPublisher.updateConfig();
+        gmcMapPublisher.loop();
+        radmonPublisher.updateConfig();
+        radmonPublisher.loop();
+    }
     if (!usb.isConnected())
         deviceReady = false;
     diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);

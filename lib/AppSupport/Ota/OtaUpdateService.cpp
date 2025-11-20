@@ -2,6 +2,8 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <esp_flash.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
 
 namespace
 {
@@ -16,7 +18,7 @@ bool OtaUpdateService::begin(const String &manifestJson)
         return false;
     }
 
-    JsonDocument doc;
+    JsonDocument doc(3072);
     DeserializationError err = deserializeJson(doc, manifestJson);
     if (err)
     {
@@ -40,6 +42,7 @@ bool OtaUpdateService::begin(const String &manifestJson)
 
     parts_.clear();
     parts_.reserve(parts.size());
+    size_t skipped = 0;
     for (const JsonVariantConst &entry : parts)
     {
         PartInfo info;
@@ -51,7 +54,23 @@ bool OtaUpdateService::begin(const String &manifestJson)
             parts_.clear();
             return false;
         }
+        String lower = info.path;
+        lower.toLowerCase();
+        info.isFirmware = lower.indexOf(F("bridge.bin")) >= 0 || lower.indexOf(F("wifi-bridge.bin")) >= 0;
+        if (isProtectedRegion(info.offset, info.path))
+        {
+            info.skip = true;
+            ++skipped;
+        }
         parts_.push_back(info);
+    }
+
+    if (parts_.empty())
+    {
+        lastError_ = String(F("Manifest parts are not writable (skipped: "));
+        lastError_ += skipped;
+        lastError_ += F(").");
+        return false;
     }
 
     targetVersion_ = doc["version"].as<const char *>();
@@ -60,6 +79,7 @@ bool OtaUpdateService::begin(const String &manifestJson)
     fsUnmounted_ = false;
     active_ = ActivePart{};
     lastError_ = String();
+    targetOtaPartition_ = nullptr;
     return true;
 }
 
@@ -80,7 +100,7 @@ bool OtaUpdateService::beginPart(const String &path, uint32_t offset, size_t siz
     PartInfo *target = nullptr;
     for (auto &part : parts_)
     {
-        if (!part.received && part.path == path && part.offset == offset)
+        if (!part.received && part.path == path)
         {
             target = &part;
             break;
@@ -93,15 +113,83 @@ bool OtaUpdateService::beginPart(const String &path, uint32_t offset, size_t siz
         return false;
     }
 
-    if (!ensureFsUnmounted(offset, path))
-        return false;
-
-    if (!eraseRegion(offset, size))
-        return false;
-
+    active_ = ActivePart{};
     active_.info = target;
-    active_.offset = offset;
     active_.expectedSize = size;
+    active_.skip = target->skip;
+
+    if (target->skip)
+    {
+        active_.skip = true;
+        active_.info = target;
+        active_.expectedSize = size;
+        active_.written = 0;
+        return true;
+    }
+
+    if (target->isFirmware)
+    {
+        if (!targetOtaPartition_)
+            targetOtaPartition_ = esp_ota_get_next_update_partition(nullptr);
+        if (!targetOtaPartition_)
+        {
+            lastError_ = F("No OTA partition available.");
+            active_ = ActivePart{};
+            return false;
+        }
+        if (size > targetOtaPartition_->size)
+        {
+            lastError_ = F("Firmware image too large for OTA partition.");
+            active_ = ActivePart{};
+            return false;
+        }
+        esp_err_t err = esp_ota_begin(targetOtaPartition_, size, &active_.otaHandle);
+        if (err != ESP_OK)
+        {
+            lastError_ = String(F("esp_ota_begin failed: ")) + esp_err_to_name(err);
+            active_ = ActivePart{};
+            return false;
+        }
+        active_.isOta = true;
+        active_.partition = targetOtaPartition_;
+        active_.offset = targetOtaPartition_->address;
+    }
+    else
+    {
+        // Data partition (e.g., LittleFS). Use the partition table entry instead of manifest offset.
+        const esp_partition_t *part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                                               ESP_PARTITION_SUBTYPE_DATA_SPIFFS,
+                                                               "spiffs");
+        if (!part)
+        {
+            lastError_ = F("LittleFS partition not found.");
+            active_ = ActivePart{};
+            return false;
+        }
+        if (size > part->size)
+        {
+            lastError_ = F("LittleFS image too large for partition.");
+            active_ = ActivePart{};
+            return false;
+        }
+
+        if (!ensureFsUnmounted(part->address, path))
+        {
+            active_ = ActivePart{};
+            return false;
+        }
+
+        // Erase target range before writing.
+        if (!eraseRegion(part->address, size))
+        {
+            active_ = ActivePart{};
+            return false;
+        }
+
+        active_.offset = part->address;
+        active_.partition = part;
+    }
+
     active_.written = 0;
     return true;
 }
@@ -114,13 +202,29 @@ bool OtaUpdateService::writePartChunk(const uint8_t *data, size_t len)
         return false;
     }
 
+    if (active_.skip)
+        return true;
+
     if (active_.written + len > active_.expectedSize)
     {
         lastError_ = F("Chunk exceeds expected size.");
         return false;
     }
 
-    esp_err_t err = esp_flash_write(nullptr, data, active_.offset + active_.written, len);
+    esp_err_t err = ESP_OK;
+    if (active_.isOta)
+    {
+        err = esp_ota_write(active_.otaHandle, data, len);
+    }
+    else if (active_.partition)
+    {
+        err = esp_partition_write(active_.partition, active_.written, data, len);
+    }
+    else
+    {
+        err = ESP_ERR_INVALID_STATE;
+    }
+
     if (err != ESP_OK)
     {
         lastError_ = String(F("Flash write failed: ")) + esp_err_to_name(err);
@@ -139,10 +243,27 @@ bool OtaUpdateService::finalizePart()
         return false;
     }
 
+    if (active_.skip)
+    {
+        active_.info->received = true;
+        active_ = ActivePart{};
+        return true;
+    }
+
     if (active_.written != active_.expectedSize)
     {
         lastError_ = F("Part size mismatch.");
         return false;
+    }
+
+    if (active_.isOta)
+    {
+        esp_err_t err = esp_ota_end(active_.otaHandle);
+        if (err != ESP_OK)
+        {
+            lastError_ = String(F("OTA finalize failed: ")) + esp_err_to_name(err);
+            return false;
+        }
     }
 
     active_.info->received = true;
@@ -173,6 +294,16 @@ bool OtaUpdateService::finish()
         }
     }
 
+    if (targetOtaPartition_)
+    {
+        esp_err_t err = esp_ota_set_boot_partition(targetOtaPartition_);
+        if (err != ESP_OK)
+        {
+            lastError_ = String(F("Failed to set OTA boot partition: ")) + esp_err_to_name(err);
+            return false;
+        }
+    }
+
     needsReboot_ = true;
     busy_ = false;
     return true;
@@ -187,6 +318,7 @@ void OtaUpdateService::reset()
     lastError_ = String();
     active_ = ActivePart{};
     targetVersion_ = String();
+    targetOtaPartition_ = nullptr;
 }
 
 void OtaUpdateService::abort(const String &message)
@@ -236,4 +368,11 @@ bool OtaUpdateService::ensureFsUnmounted(uint32_t offset, const String &path)
         fsUnmounted_ = true;
     }
     return true;
+}
+
+bool OtaUpdateService::isProtectedRegion(uint32_t offset, const String &path) const
+{
+    String lower = path;
+    lower.toLowerCase();
+    return lower.indexOf(F("bootloader")) >= 0 || lower.indexOf(F("partition")) >= 0;
 }

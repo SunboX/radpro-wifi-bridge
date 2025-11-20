@@ -14,6 +14,23 @@ namespace
     constexpr const char *kRemoteManifestUrl = "https://sunbox.github.io/radpro-wifi-bridge/web-install/manifest.json";
     constexpr unsigned long kRemoteManifestRefreshMs = 5UL * 60UL * 1000UL;
     constexpr size_t kOtaDownloadBuffer = 1024;
+    constexpr uint32_t kMinWritableOffset = 0x00010000;
+    using ErrorJsonDoc = JsonDocument;
+    using StatusJsonDoc = JsonDocument;
+    using ManifestJsonDoc = JsonDocument;
+
+    bool isWritableManifestPart(const String &path, uint32_t offset)
+    {
+        if (offset < kMinWritableOffset)
+            return false;
+        String lower = path;
+        lower.toLowerCase();
+        if (lower.indexOf(F("bootloader")) >= 0)
+            return false;
+        if (lower.indexOf(F("partition")) >= 0)
+            return false;
+        return true;
+    }
 }
 
 void WiFiPortalService::sendJson(int code, const String &body)
@@ -148,7 +165,7 @@ void WiFiPortalService::handleOtaStatus()
     refreshLatestRemoteVersion(false);
 
     OtaUpdateService::Status state = otaService_.status();
-    JsonDocument doc;
+    StatusJsonDoc doc(512);
     doc["currentVersion"] = BRIDGE_FIRMWARE_VERSION;
     if (latestRemoteVersion_.length())
         doc["latestVersion"] = latestRemoteVersion_;
@@ -190,7 +207,7 @@ void WiFiPortalService::handleOtaFetch()
 
     if (otaTaskHandle_)
     {
-        JsonDocument doc;
+        ErrorJsonDoc doc(128);
         doc["error"] = F("OTA download already running.");
         String body;
         serializeJson(doc, body);
@@ -201,7 +218,7 @@ void WiFiPortalService::handleOtaFetch()
     OtaUpdateService::Status status = otaService_.status();
     if (status.busy)
     {
-        JsonDocument doc;
+        ErrorJsonDoc doc(128);
         doc["error"] = F("OTA process already active.");
         String body;
         serializeJson(doc, body);
@@ -211,7 +228,7 @@ void WiFiPortalService::handleOtaFetch()
 
     if (WiFi.status() != WL_CONNECTED)
     {
-        JsonDocument doc;
+        ErrorJsonDoc doc(128);
         doc["error"] = F("Wi-Fi is not connected.");
         String body;
         serializeJson(doc, body);
@@ -219,6 +236,7 @@ void WiFiPortalService::handleOtaFetch()
         return;
     }
 
+    notifyOtaStart();
     resetOtaProgress();
     setOtaProgress(F("Preparing remote download…"), 0, 0);
 
@@ -232,7 +250,7 @@ void WiFiPortalService::handleOtaFetch()
     if (created != pdPASS)
     {
         otaTaskHandle_ = nullptr;
-        JsonDocument doc;
+        ErrorJsonDoc doc(128);
         doc["error"] = F("Unable to start OTA task.");
         String body;
         serializeJson(doc, body);
@@ -240,7 +258,7 @@ void WiFiPortalService::handleOtaFetch()
         return;
     }
 
-    JsonDocument doc;
+    ErrorJsonDoc doc(128);
     doc["started"] = true;
     String body;
     serializeJson(doc, body);
@@ -254,7 +272,7 @@ void WiFiPortalService::handleOtaUploadBegin()
 
     if (otaTaskHandle_)
     {
-        JsonDocument doc;
+        ErrorJsonDoc doc(128);
         doc["error"] = F("Remote OTA already running.");
         String body;
         serializeJson(doc, body);
@@ -266,7 +284,7 @@ void WiFiPortalService::handleOtaUploadBegin()
     manifest.trim();
     if (!manifest.length())
     {
-        JsonDocument doc;
+        ErrorJsonDoc doc(128);
         doc["error"] = F("Manifest payload missing.");
         String body;
         serializeJson(doc, body);
@@ -278,7 +296,7 @@ void WiFiPortalService::handleOtaUploadBegin()
     {
         OtaUpdateService::Status state = otaService_.status();
         String err = state.lastError.length() ? state.lastError : String(F("Manifest rejected."));
-        JsonDocument doc;
+        ErrorJsonDoc doc(128);
         doc["error"] = err;
         String body;
         serializeJson(doc, body);
@@ -286,10 +304,11 @@ void WiFiPortalService::handleOtaUploadBegin()
         return;
     }
 
+    notifyOtaStart();
     resetOtaProgress();
     setOtaProgress(F("Manifest uploaded; awaiting binaries…"), 0, 0);
 
-    JsonDocument doc;
+    ErrorJsonDoc doc;
     doc["ok"] = true;
     doc["mode"] = "upload";
     String body;
@@ -304,7 +323,7 @@ void WiFiPortalService::handleOtaUploadPartBegin()
 
     if (!otaService_.status().busy)
     {
-        JsonDocument doc;
+        ErrorJsonDoc doc(128);
         doc["error"] = F("OTA session is not active.");
         String body;
         serializeJson(doc, body);
@@ -320,7 +339,7 @@ void WiFiPortalService::handleOtaUploadPartBegin()
     sizeArg.trim();
     if (!path.length() || !offsetArg.length() || !sizeArg.length())
     {
-        JsonDocument doc;
+        ErrorJsonDoc doc;
         doc["error"] = F("Missing part metadata.");
         String body;
         serializeJson(doc, body);
@@ -335,7 +354,7 @@ void WiFiPortalService::handleOtaUploadPartBegin()
     {
         OtaUpdateService::Status state = otaService_.status();
         String err = state.lastError.length() ? state.lastError : String(F("beginPart() failed."));
-        JsonDocument doc;
+        ErrorJsonDoc doc;
         doc["error"] = err;
         String body;
         serializeJson(doc, body);
@@ -345,7 +364,7 @@ void WiFiPortalService::handleOtaUploadPartBegin()
 
     setOtaProgress(String(F("Uploading ")) + path, size, 0);
 
-    JsonDocument doc;
+    ErrorJsonDoc doc(128);
     doc["ok"] = true;
     doc["path"] = path;
     String body;
@@ -360,7 +379,7 @@ void WiFiPortalService::handleOtaUploadPartChunk()
 
     if (!otaService_.status().busy)
     {
-        JsonDocument doc;
+        ErrorJsonDoc doc;
         doc["error"] = F("OTA session is not active.");
         String body;
         serializeJson(doc, body);
@@ -373,7 +392,7 @@ void WiFiPortalService::handleOtaUploadPartChunk()
     String error;
     if (!decodeBase64Chunk(encoded, otaChunkBuffer_, error))
     {
-        JsonDocument doc;
+        ErrorJsonDoc doc;
         doc["error"] = error;
         String body;
         serializeJson(doc, body);
@@ -385,7 +404,7 @@ void WiFiPortalService::handleOtaUploadPartChunk()
     {
         OtaUpdateService::Status state = otaService_.status();
         String err = state.lastError.length() ? state.lastError : String(F("Chunk write failed."));
-        JsonDocument doc;
+        ErrorJsonDoc doc;
         doc["error"] = err;
         String body;
         serializeJson(doc, body);
@@ -398,7 +417,7 @@ void WiFiPortalService::handleOtaUploadPartChunk()
     otaLastProgressMs_ = millis();
     portEXIT_CRITICAL(&otaLock_);
 
-    JsonDocument doc;
+    ErrorJsonDoc doc(128);
     doc["ok"] = true;
     doc["bytes"] = static_cast<uint32_t>(otaChunkBuffer_.size());
     String body;
@@ -413,7 +432,7 @@ void WiFiPortalService::handleOtaUploadPartFinish()
 
     if (!otaService_.status().busy)
     {
-        JsonDocument doc;
+        ErrorJsonDoc doc;
         doc["error"] = F("OTA session is not active.");
         String body;
         serializeJson(doc, body);
@@ -425,7 +444,7 @@ void WiFiPortalService::handleOtaUploadPartFinish()
     {
         OtaUpdateService::Status state = otaService_.status();
         String err = state.lastError.length() ? state.lastError : String(F("Part finalize failed."));
-        JsonDocument doc;
+        ErrorJsonDoc doc;
         doc["error"] = err;
         String body;
         serializeJson(doc, body);
@@ -437,7 +456,7 @@ void WiFiPortalService::handleOtaUploadPartFinish()
     if (path.length())
         setOtaMessage(String(F("Finished ")) + path);
 
-    JsonDocument doc;
+    ErrorJsonDoc doc;
     doc["ok"] = true;
     String body;
     serializeJson(doc, body);
@@ -453,7 +472,7 @@ void WiFiPortalService::handleOtaUploadFinish()
     {
         OtaUpdateService::Status state = otaService_.status();
         String err = state.lastError.length() ? state.lastError : String(F("OTA completion failed."));
-        JsonDocument doc;
+        ErrorJsonDoc doc;
         doc["error"] = err;
         String body;
         serializeJson(doc, body);
@@ -465,7 +484,7 @@ void WiFiPortalService::handleOtaUploadFinish()
     setOtaMessage(F("Upload complete; applying update…"));
     scheduleRestart("Uploaded OTA");
 
-    JsonDocument doc;
+    ErrorJsonDoc doc;
     doc["ok"] = true;
     doc["reboot"] = true;
     String body;
@@ -482,7 +501,7 @@ void WiFiPortalService::handleOtaCancel()
     BridgeFileSystem::mount(log_, "ota-cancel", false);
     resetOtaProgress();
 
-    JsonDocument doc;
+    ErrorJsonDoc doc;
     doc["ok"] = true;
     String body;
     serializeJson(doc, body);
@@ -491,7 +510,7 @@ void WiFiPortalService::handleOtaCancel()
 
 bool WiFiPortalService::parseManifestParts(const String &manifestJson, std::vector<ManifestPart> &parts, String &version, String &error)
 {
-    JsonDocument doc;
+    ManifestJsonDoc doc(3072);
     DeserializationError err = deserializeJson(doc, manifestJson);
     if (err)
     {
@@ -562,7 +581,7 @@ bool WiFiPortalService::fetchRemoteManifest(String &manifestJson, String &versio
     manifestJson = http.getString();
     http.end();
 
-    JsonDocument doc;
+    ManifestJsonDoc doc(3072);
     DeserializationError err = deserializeJson(doc, manifestJson);
     if (err)
     {
@@ -731,6 +750,11 @@ void WiFiPortalService::runRemoteFetchTask()
 
     for (const auto &part : parts)
     {
+        if (!isWritableManifestPart(part.path, part.offset))
+        {
+            // Skip non-writable parts (bootloader/partition) quietly.
+            continue;
+        }
         setOtaMessage(String(F("Downloading ")) + part.path);
         if (!downloadRemotePart(kRemoteOtaBaseUrl, part.path, part.offset, error))
         {
