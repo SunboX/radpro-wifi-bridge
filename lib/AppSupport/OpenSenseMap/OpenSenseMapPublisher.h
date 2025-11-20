@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
 #include "AppConfig/AppConfig.h"
 #include "DeviceManager.h"
 
@@ -18,6 +19,7 @@ public:
     void updateConfig();
     void loop();
     void onCommandResult(DeviceManager::CommandType type, const String &value);
+    void setPaused(bool paused) { paused_ = paused; }
     static void SendPortalForm(WiFiPortalService &portal, const String &message = String());
     static void HandlePortalPost(WebServer &server,
                                  AppConfig &config,
@@ -29,8 +31,7 @@ public:
 private:
     bool isEnabled() const;
     bool publishPending();
-    bool sendPayload(const String &payload);
-    static String escapeJson(const String &value);
+    bool sendPayload(const JsonDocument &payload);
 
     AppConfig &config_;
     Print &log_;
@@ -42,4 +43,6 @@ private:
     bool pendingPublish_ = false;
     unsigned long lastAttemptMs_ = 0;
     unsigned long suppressUntilMs_ = 0;
+    bool paused_ = false;
+    JsonDocument payloadDoc_;
 };

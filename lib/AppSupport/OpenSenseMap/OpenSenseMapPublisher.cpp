@@ -1,6 +1,6 @@
 #include "OpenSenseMap/OpenSenseMapPublisher.h"
-
 #include <WiFi.h>
+#include <ArduinoJson.h>
 #include "ConfigPortal/WiFiPortalService.h"
 #include <WebServer.h>
 #include "Led/LedController.h"
@@ -52,7 +52,8 @@ namespace
 OpenSenseMapPublisher::OpenSenseMapPublisher(AppConfig &config, Print &log, const char *bridgeVersion)
     : config_(config),
       log_(log),
-      bridgeVersion_(bridgeVersion ? bridgeVersion : "")
+      bridgeVersion_(bridgeVersion ? bridgeVersion : ""),
+      payloadDoc_(256)
 {
 }
 
@@ -69,11 +70,15 @@ void OpenSenseMapPublisher::updateConfig()
 
 void OpenSenseMapPublisher::loop()
 {
+    if (paused_)
+        return;
     publishPending();
 }
 
 void OpenSenseMapPublisher::onCommandResult(DeviceManager::CommandType type, const String &value)
 {
+    if (paused_)
+        return;
     if (!value.length())
         return;
 
@@ -111,6 +116,8 @@ bool OpenSenseMapPublisher::isEnabled() const
 
 bool OpenSenseMapPublisher::publishPending()
 {
+    if (paused_)
+        return true;
     if (!pendingPublish_)
         return false;
 
@@ -133,17 +140,14 @@ bool OpenSenseMapPublisher::publishPending()
         return true;
     }
 
-    String payload;
-    payload.reserve(128 + config_.openSenseTubeRateSensorId.length() + config_.openSenseDoseRateSensorId.length() + pendingTubeValue_.length() + pendingDoseValue_.length());
-    payload = "[{\"sensor\":\"";
-    payload += escapeJson(config_.openSenseTubeRateSensorId);
-    payload += "\",\"value\":\"";
-    payload += escapeJson(pendingTubeValue_);
-    payload += "\"},{\"sensor\":\"";
-    payload += escapeJson(config_.openSenseDoseRateSensorId);
-    payload += "\",\"value\":\"";
-    payload += escapeJson(pendingDoseValue_);
-    payload += "\"}]";
+    payloadDoc_.clear();
+    JsonArray arr = payloadDoc_.to<JsonArray>();
+    JsonObject tubeObj = arr.add<JsonObject>();
+    tubeObj["sensor"] = config_.openSenseTubeRateSensorId;
+    tubeObj["value"] = pendingTubeValue_;
+    JsonObject doseObj = arr.add<JsonObject>();
+    doseObj["sensor"] = config_.openSenseDoseRateSensorId;
+    doseObj["value"] = pendingDoseValue_;
 
     log_.print("OpenSenseMap: POST tube=");
     log_.print(pendingTubeValue_);
@@ -151,7 +155,7 @@ bool OpenSenseMapPublisher::publishPending()
     log_.println(pendingDoseValue_);
 
     lastAttemptMs_ = now;
-    bool ok = sendPayload(payload);
+    bool ok = sendPayload(payloadDoc_);
     if (ok)
     {
         pendingPublish_ = false;
@@ -234,7 +238,7 @@ void OpenSenseMapPublisher::SendPortalForm(WiFiPortalService &portal, const Stri
     portal.sendTemplate("/portal/osem.html", vars);
 }
 
-bool OpenSenseMapPublisher::sendPayload(const String &payload)
+bool OpenSenseMapPublisher::sendPayload(const JsonDocument &payload)
 {
     WiFiClientSecure client;
     client.setTimeout(10000);
@@ -246,24 +250,28 @@ bool OpenSenseMapPublisher::sendPayload(const String &payload)
         return false;
     }
 
-    String path = "/boxes/" + config_.openSenseBoxId + "/data";
-    String request;
-    request.reserve(payload.length() + 200);
-    request += "POST ";
-    request += path;
-    request += " HTTP/1.1\r\nHost: ";
-    request += kHost;
-    request += "\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: ";
-    request += payload.length();
-    request += "\r\n";
-    request += "Authorization: ";
-    request += config_.openSenseApiKey;
-    request += "\r\nUser-Agent: RadPro-WiFi-Bridge/";
-    request += bridgeVersion_;
-    request += "\r\n\r\n";
-    request += payload;
+    const size_t contentLength = measureJson(payload);
 
-    if (client.print(request) != request.length())
+    // Request line and headers
+    client.print(F("POST /boxes/"));
+    client.print(config_.openSenseBoxId);
+    client.println(F("/data HTTP/1.1"));
+    client.print(F("Host: "));
+    client.println(kHost);
+    client.println(F("Connection: close"));
+    client.println(F("Content-Type: application/json"));
+    client.print(F("Content-Length: "));
+    client.println(contentLength);
+    client.print(F("Authorization: "));
+    client.println(config_.openSenseApiKey);
+    client.print(F("User-Agent: RadPro-WiFi-Bridge/"));
+    client.println(bridgeVersion_);
+    client.println();
+
+    // Body
+    serializeJson(payload, client);
+
+    if (client.getWriteError())
     {
         log_.println("OpenSenseMap: failed to write request.");
         return false;
@@ -279,7 +287,7 @@ bool OpenSenseMapPublisher::sendPayload(const String &payload)
         return false;
     }
 
-    int statusCode = status.substring(9).toInt();
+    const int statusCode = status.substring(9).toInt();
     if (statusCode < 200 || statusCode >= 300)
     {
         log_.print("OpenSenseMap: HTTP ");
@@ -288,54 +296,8 @@ bool OpenSenseMapPublisher::sendPayload(const String &payload)
     }
 
     // Consume remainder
-    while (client.connected())
+    while (client.connected() || client.available())
         client.read();
 
     return true;
-}
-
-String OpenSenseMapPublisher::escapeJson(const String &value)
-{
-    String out;
-    out.reserve(value.length());
-    for (size_t i = 0; i < value.length(); ++i)
-    {
-        char c = value[i];
-        switch (c)
-        {
-        case '\\':
-        case '"':
-            out += '\\';
-            out += c;
-            break;
-        case '\b':
-            out += "\\b";
-            break;
-        case '\f':
-            out += "\\f";
-            break;
-        case '\n':
-            out += "\\n";
-            break;
-        case '\r':
-            out += "\\r";
-            break;
-        case '\t':
-            out += "\\t";
-            break;
-        default:
-            if (static_cast<unsigned char>(c) < 0x20)
-            {
-                char buf[7];
-                snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-                out += buf;
-            }
-            else
-            {
-                out += c;
-            }
-            break;
-        }
-    }
-    return out;
 }

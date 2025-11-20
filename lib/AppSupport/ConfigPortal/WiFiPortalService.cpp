@@ -82,6 +82,20 @@ void WiFiPortalService::begin()
     logPortalState("begin");
 }
 
+void WiFiPortalService::setOtaStartCallback(std::function<void()> cb)
+{
+    onOtaStart_ = std::move(cb);
+}
+
+void WiFiPortalService::notifyOtaStart()
+{
+    if (otaHooksFired_)
+        return;
+    otaHooksFired_ = true;
+    if (onOtaStart_)
+        onOtaStart_();
+}
+
 bool WiFiPortalService::connect(bool forcePortal)
 {
     log_.print(F("WiFiPortalService::connect(forcePortal="));
@@ -1067,7 +1081,7 @@ void WiFiPortalService::handleConfigRestore()
 
 String WiFiPortalService::exportConfigJson() const
 {
-    JsonDocument doc;
+    JsonDocument doc(1024);
     doc["schema"] = "radpro-wifi-bridge-config";
     doc["bridgeFirmware"] = BRIDGE_FIRMWARE_VERSION;
     doc["generatedMs"] = millis();
@@ -1101,7 +1115,7 @@ String WiFiPortalService::exportConfigJson() const
 bool WiFiPortalService::importConfigJson(const String &body, String &errorMessage)
 {
     errorMessage = String();
-    JsonDocument doc;
+    JsonDocument doc(1024);
     DeserializationError err = deserializeJson(doc, body);
     if (err)
     {
@@ -1384,11 +1398,13 @@ void WiFiPortalService::handleLogsJson()
     std::vector<DebugLogEntry> entries;
     log_.copyEntries(entries);
 
-    JsonDocument doc;
+    JsonDocument doc(1536);
     JsonArray lines = doc["lines"].to<JsonArray>();
     for (const auto &entry : entries)
     {
         lines.add(entry.text);
+        if (doc.overflowed())
+            break;
     }
     doc["count"] = static_cast<uint32_t>(entries.size());
     doc["latest"] = log_.latestId();
@@ -1478,4 +1494,3 @@ void WiFiPortalService::applyMenuHtmlForLocale(const String &locale)
 
     manager_.setCustomMenuHTML(menuHtmlRendered_.c_str());
 }
-

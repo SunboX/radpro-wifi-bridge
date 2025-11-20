@@ -4,6 +4,7 @@
 #include <WiFiManager.h>
 #include <esp_wifi_types.h>
 #include <vector>
+#include <functional>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include "DeviceInfo/DeviceInfoStore.h"
@@ -28,6 +29,7 @@ public:
     void syncIfRequested();
     void dumpStatus();
     void enableStatusLogging();
+    void setOtaStartCallback(std::function<void()> cb);
 
 private:
     friend class MqttPublisher;
@@ -88,6 +90,7 @@ private:
     void updateOtaBytes(size_t writtenBytes);
     void setOtaMessage(const String &message);
     bool decodeBase64Chunk(const String &input, std::vector<uint8_t> &out, String &error);
+    void notifyOtaStart();
     void refreshLatestRemoteVersion(bool force);
     static void otaTaskThunk(void *param);
     void runRemoteFetchTask();
@@ -150,4 +153,6 @@ private:
     portMUX_TYPE otaLock_ = portMUX_INITIALIZER_UNLOCKED;
     TaskHandle_t manifestTaskHandle_ = nullptr;
     bool manifestForceRefresh_ = false;
+    std::function<void()> onOtaStart_;
+    bool otaHooksFired_ = false;
 };
