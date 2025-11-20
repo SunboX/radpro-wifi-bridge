@@ -23,6 +23,7 @@ public:
     void onCommandResult(DeviceManager::CommandType type, const String &value);
     void setPublishCallback(std::function<void(bool)> cb) { publishCallback_ = std::move(cb); }
     void setBridgeVersion(const String &version);
+    void pause(bool paused);
     static void SendPortalForm(WiFiPortalService &portal, const String &message = String());
     static bool HandlePortalPost(WebServer &server,
                                  AppConfig &config,
@@ -103,4 +104,5 @@ private:
     String bridgeVersion_;
     bool bridgeVersionDirty_ = true;
     bool versionDiscoveryDone_ = false;
+    bool paused_ = false;
 };

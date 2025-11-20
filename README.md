@@ -8,29 +8,32 @@ The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides s
 **Compatibility note:** Tested with **Bosean FS‑600**, **FNIRSI GC‑01** running firmware **“Rad Pro 3.0.1”**. If you encounter problems with other adapters, please open an issue so we can track it. I’m happy to help, but I can’t afford to buy every device — get in touch if you’re able to loan or sponsor hardware for debugging.
 
 **Tested Geiger counters**
-- Bosean FS-600
-- FNIRSI GC-01
+
+-   Bosean FS-600
+-   FNIRSI GC-01
 
 **Not yet tested**
-- FS2011
-- YT-203B
-- Bosean FS-1000
-- Bosean FS-5000
-- JOY-IT JT-RAD01
-- GQ GMC-800
+
+-   FS2011
+-   YT-203B
+-   Bosean FS-1000
+-   Bosean FS-5000
+-   JOY-IT JT-RAD01
+-   GQ GMC-800
 
 ---
 
 ## Highlights
 
-- **TinyUSB host stack** with a CH34x VCP shim so the RadPro enumerates reliably on the ESP32-S3 OTG port.
-- **DeviceManager command queue** that boots the tube, logs identity/metadata, and keeps issuing telemetry `GET` commands.
-- **Wi-Fi configuration portal** (WiFiManager based) that launches an AP when credentials fail, serves the same form at `http://<device-ip>/`, and persists settings to NVS. A one-click “Restart Device” action is exposed in the UI.
-- **Runtime Wi-Fi diagnostics & startup control**: countdown-driven boot with serial overrides, plus SSID/IP/RSSI logging after the main firmware starts.
-- **MQTT publisher** with templated topics. Every successful RadPro response is forwarded at the configured `readIntervalMs`; publish success/failure drives LED pulses and console messages.
-- **Cloud publishers** for MQTT, OpenSenseMap, GMCMap, and Radmon.org with per-service toggles in the web portal.
-- **Home Assistant discovery** payloads so MQTT entities appear automatically once the bridge is online.
-- **RGB LED state machine** (WS2812 on GPIO 48) that communicates boot, Wi-Fi, USB, and error states without needing the serial console.
+-   **TinyUSB host stack** with a CH34x VCP shim so the RadPro enumerates reliably on the ESP32-S3 OTG port.
+-   **DeviceManager command queue** that boots the tube, logs identity/metadata, and keeps issuing telemetry `GET` commands.
+-   **Wi-Fi configuration portal** (WiFiManager based) that launches an AP when credentials fail, serves the same form at `http://<device-ip>/`, and persists settings to NVS. A one-click “Restart Device” action is exposed in the UI.
+-   **Runtime Wi-Fi diagnostics & startup control**: countdown-driven boot with serial overrides, plus SSID/IP/RSSI logging after the main firmware starts.
+-   **MQTT publisher** with templated topics. Every successful RadPro response is forwarded at the configured `readIntervalMs`; publish success/failure drives LED pulses and console messages.
+-   **Cloud publishers** for MQTT, OpenSenseMap, GMCMap, and Radmon.org with per-service toggles in the web portal.
+-   **Home Assistant discovery** payloads so MQTT entities appear automatically once the bridge is online.
+-   **OTA bridge firmware updates** via the web portal (or browser-based ESP Web Tools installer) so you can stay current without reflashing over USB.
+-   **RGB LED state machine** (WS2812 on GPIO 48) that communicates boot, Wi-Fi, USB, and error states without needing the serial console.
 
 ---
 
@@ -44,7 +47,7 @@ Need help soldering the ESP32-S3 jumpers or printing the enclosure? Follow the s
 
 Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/
 
-Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required.
+Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required. OTA updates of the bridge firmware are also available from the web portal once a network connection is active.
 
 ---
 
@@ -53,8 +56,8 @@ Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no loc
 1. Install [PlatformIO](https://platformio.org/) and open this project.
 2. The default environment targets **ESP32-S3 DevKitC-1 (N16R8)** with TinyUSB host support (`platformio.ini`) and a custom `partitions.csv` that provides a 6 MB application slot (make sure that file is present when building).
 3. Connect the board with **two** USB cables:
-   - CP210x (UART) port → logs & commands (`Serial0`, 115200 baud).
-   - Native USB-OTG port → leave free for the RadPro sensor.
+    - CP210x (UART) port → logs & commands (`Serial0`, 115200 baud).
+    - Native USB-OTG port → leave free for the RadPro sensor.
 4. Flash with `platformio run --target upload` (or `--target upload --target monitor` to auto-open the serial monitor).
 
 ---
@@ -112,50 +115,50 @@ Enable the Radmon toggle, enter your station username plus data-sending password
 
 Base modes communicate long-running state (default brightness is gentle to avoid glare):
 
-| Mode             | Pattern / Colour                                  | Meaning |
-|------------------|---------------------------------------------------|---------|
-| `Booting`        | Magenta blink (~0.4 s period)                     | Firmware initialising before the countdown runs. |
-| `WaitingForStart`| Yellow blink (~0.6 s period)                      | Startup delay active; awaiting timeout or `start` command. |
-| `WifiConnecting` | Blue blink (~0.6 s period)                        | Attempting to join the configured WLAN. |
-| `WifiConnected`  | Cyan steady                                       | Wi-Fi joined; USB device not yet ready. |
-| `DeviceReady`    | Bright green steady                               | RadPro enumerated and telemetry queue active. |
-| `Error`          | Amber blink (~0.5 s period)                       | Last device command or MQTT publish failed— check the console. |
+| Mode              | Pattern / Colour              | Meaning                                                        |
+| ----------------- | ----------------------------- | -------------------------------------------------------------- |
+| `Booting`         | Magenta blink (~0.4 s period) | Firmware initialising before the countdown runs.               |
+| `WaitingForStart` | Yellow blink (~0.6 s period)  | Startup delay active; awaiting timeout or `start` command.     |
+| `WifiConnecting`  | Blue blink (~0.6 s period)    | Attempting to join the configured WLAN.                        |
+| `WifiConnected`   | Cyan steady                   | Wi-Fi joined; USB device not yet ready.                        |
+| `DeviceReady`     | Bright green steady           | RadPro enumerated and telemetry queue active.                  |
+| `Error`           | Amber blink (~0.5 s period)   | Last device command or MQTT publish failed— check the console. |
 
 Event pulses temporarily override the base colour:
 
-- **MQTT success:** bright green flash (~150 ms).
-- **MQTT failure / command error:** bright red flash (~250 ms) and a console log (`MQTT publish failed.` or `Device command failed: <id>`).
+-   **MQTT success:** bright green flash (~150 ms).
+-   **MQTT failure / command error:** bright red flash (~250 ms) and a console log (`MQTT publish failed.` or `Device command failed: <id>`).
 
 ### Fault Blink Codes
 
 Certain faults latch a repeating red/orange sequence so you can diagnose issues without watching the serial log. The pattern always starts with **one red blink**, followed by the number of **orange blinks** listed below; the sequence then pauses briefly and repeats.
 
-| Code | Issue | LED pattern |
-|------|-------|-------------|
-| 1 | NVS load failed (preferences missing) | red ×1 → orange ×1 |
-| 2 | NVS write failed (configuration not saved) | red ×1 → orange ×2 |
-| 3 | Wi‑Fi authentication / association error | red ×1 → orange ×3 |
-| 4 | Wi‑Fi connected but no IP (DHCP/gateway) | red ×1 → orange ×4 |
-| 5 | Captive/config portal still required | red ×1 → orange ×5 |
-| 6 | MQTT broker unreachable / DNS failure | red ×1 → orange ×6 |
-| 7 | MQTT authentication failure | red ×1 → orange ×7 |
-| 8 | MQTT connection reset while publishing | red ×1 → orange ×8 |
-| 9 | MQTT discovery payload exceeded buffer | red ×1 → orange ×9 |
-| 10 | USB device disconnected / CDC error | red ×1 → orange ×10 |
-| 11 | USB interface descriptor parse failure | red ×1 → orange ×11 |
-| 12 | TinyUSB handshake unsupported | red ×1 → orange ×12 |
-| 13 | `GET deviceId` timed out | red ×1 → orange ×13 |
-| 14 | Command queue timeout / retries exhausted | red ×1 → orange ×14 |
-| 15 | Tube sensitivity missing (dose rate unavailable) | red ×1 → orange ×15 |
-| 16 | Wi‑Fi reconnect after config save still failing | red ×1 → orange ×16 |
-| 17 | Captive portal resource exhaustion | red ×1 → orange ×17 |
-| 18 | LED controller stuck in Wi‑Fi mode | red ×1 → orange ×18 |
-| 19 | Application image larger than partition | red ×1 → orange ×19 |
-| 20 | Upload attempted on wrong serial port | red ×1 → orange ×20 |
-| 21 | Home Assistant using stale discovery state | red ×1 → orange ×21 |
-| 22 | Home Assistant broker without retained discovery | red ×1 → orange ×22 |
-| 23 | Last reset caused by brownout | red ×1 → orange ×23 |
-| 24 | Last reset caused by watchdog | red ×1 → orange ×24 |
+| Code | Issue                                            | LED pattern         |
+| ---- | ------------------------------------------------ | ------------------- |
+| 1    | NVS load failed (preferences missing)            | red ×1 → orange ×1  |
+| 2    | NVS write failed (configuration not saved)       | red ×1 → orange ×2  |
+| 3    | Wi‑Fi authentication / association error         | red ×1 → orange ×3  |
+| 4    | Wi‑Fi connected but no IP (DHCP/gateway)         | red ×1 → orange ×4  |
+| 5    | Captive/config portal still required             | red ×1 → orange ×5  |
+| 6    | MQTT broker unreachable / DNS failure            | red ×1 → orange ×6  |
+| 7    | MQTT authentication failure                      | red ×1 → orange ×7  |
+| 8    | MQTT connection reset while publishing           | red ×1 → orange ×8  |
+| 9    | MQTT discovery payload exceeded buffer           | red ×1 → orange ×9  |
+| 10   | USB device disconnected / CDC error              | red ×1 → orange ×10 |
+| 11   | USB interface descriptor parse failure           | red ×1 → orange ×11 |
+| 12   | TinyUSB handshake unsupported                    | red ×1 → orange ×12 |
+| 13   | `GET deviceId` timed out                         | red ×1 → orange ×13 |
+| 14   | Command queue timeout / retries exhausted        | red ×1 → orange ×14 |
+| 15   | Tube sensitivity missing (dose rate unavailable) | red ×1 → orange ×15 |
+| 16   | Wi‑Fi reconnect after config save still failing  | red ×1 → orange ×16 |
+| 17   | Captive portal resource exhaustion               | red ×1 → orange ×17 |
+| 18   | LED controller stuck in Wi‑Fi mode               | red ×1 → orange ×18 |
+| 19   | Application image larger than partition          | red ×1 → orange ×19 |
+| 20   | Upload attempted on wrong serial port            | red ×1 → orange ×20 |
+| 21   | Home Assistant using stale discovery state       | red ×1 → orange ×21 |
+| 22   | Home Assistant broker without retained discovery | red ×1 → orange ×22 |
+| 23   | Last reset caused by brownout                    | red ×1 → orange ×23 |
+| 24   | Last reset caused by watchdog                    | red ×1 → orange ×24 |
 
 The lowest-numbered active fault is displayed. Resolving the root cause (for example, restoring Wi‑Fi credentials or saving NVS successfully) clears that code and reveals any higher-numbered faults that remain. Some codes are reserved for diagnostic scenarios outside normal runtime, but the blink language stays consistent if you raise them manually.
 
@@ -164,7 +167,7 @@ The lowest-numbered active fault is displayed. Resolving the root cause (for exa
 ## Serial Console Commands (`Serial0`)
 
 | Command      | Description                                                   |
-|--------------|---------------------------------------------------------------|
+| ------------ | ------------------------------------------------------------- |
 | `start`      | Skip the remaining startup delay and begin immediately.       |
 | `delay <ms>` | Set a new startup delay (milliseconds) and restart the timer. |
 | `raw on/off` | Enable or disable raw USB frame logging.                      |
@@ -190,31 +193,31 @@ Retries, back-off, and duplicate suppression are handled inside `DeviceManager`.
 
 ## Project Structure
 
-| Path | Purpose |
-|------|---------|
-| `src/main.cpp` | Arduino entry point: startup sequencing, Wi-Fi orchestration, LED updates, telemetry loop. |
-| `components/usb_host_vcp` | ESP-IDF component that wraps TinyUSB + vendor CH34x handling so the RadPro enumerates reliably. |
-| `lib/UsbCdcHost` | High-level USB CDC host wrapper used by `DeviceManager`. |
-| `lib/DeviceManager` | Command queue, response parsing, retries/back-off, publish callbacks. |
-| `lib/AppSupport/*` | Support modules (AppConfig, ConfigPortal, Mqtt, Led, diagnostics helpers). |
-| `docs/assembly.md` | Hardware assembly guide (solder bridges, enclosure, flashing). |
-| `docs/mqtt-home-assistant.md` | Detailed MQTT/Home Assistant setup guide. |
-| `docs/opensensemap.md`, `docs/gmcmap.md`, `docs/radmon.md` | Service-specific publishing guides with screenshots. |
-| `docs/web-install/` | Browser-based installer (ESP Web Tools) plus staged firmware bundle (`firmware/latest`). |
-| `tools/copy_firmware.py` | PlatformIO post-build hook that refreshes the `docs/web-install/firmware/latest/` artifacts. |
-| `platformio.ini` | PlatformIO configuration targeting the ESP32-S3 DevKitC-1 with TinyUSB host support. |
+| Path                                                       | Purpose                                                                                         |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `src/main.cpp`                                             | Arduino entry point: startup sequencing, Wi-Fi orchestration, LED updates, telemetry loop.      |
+| `components/usb_host_vcp`                                  | ESP-IDF component that wraps TinyUSB + vendor CH34x handling so the RadPro enumerates reliably. |
+| `lib/UsbCdcHost`                                           | High-level USB CDC host wrapper used by `DeviceManager`.                                        |
+| `lib/DeviceManager`                                        | Command queue, response parsing, retries/back-off, publish callbacks.                           |
+| `lib/AppSupport/*`                                         | Support modules (AppConfig, ConfigPortal, Mqtt, Led, diagnostics helpers).                      |
+| `docs/assembly.md`                                         | Hardware assembly guide (solder bridges, enclosure, flashing).                                  |
+| `docs/mqtt-home-assistant.md`                              | Detailed MQTT/Home Assistant setup guide.                                                       |
+| `docs/opensensemap.md`, `docs/gmcmap.md`, `docs/radmon.md` | Service-specific publishing guides with screenshots.                                            |
+| `docs/web-install/`                                        | Browser-based installer (ESP Web Tools) plus staged firmware bundle (`firmware/latest`).        |
+| `tools/copy_firmware.py`                                   | PlatformIO post-build hook that refreshes the `docs/web-install/firmware/latest/` artifacts.    |
+| `platformio.ini`                                           | PlatformIO configuration targeting the ESP32-S3 DevKitC-1 with TinyUSB host support.            |
 
 ---
 
 ## Roadmap
 
-- Add configurable reporting thresholds / batching beyond the global interval.
-- Integrate OTA firmware updates.
-- Investigate additional publisher targets:
-  - **Safecast** – large citizen-science network (bGeigie, Safecast:Drive). They provide JSON-based upload flows if you stick to their schema; requires coordination with the Safecast community.
-  - **OpenRadiation** – IRSN/CEA-backed project with a documented REST API (API key required) for user contributors.
-  - **uRADMonitor** – global network with proprietary + DIY kits; includes API protocols for feeding third-party data once a device is registered.
-  - **GammaSense** – Waag/RIVM citizen sensing initiative; API access may require project partnership depending on phase/status.
+-   Add configurable reporting thresholds / batching beyond the global interval.
+-   OTA firmware update of the connected Rad Pro device (bridge already updates itself OTA via the portal).
+-   Investigate additional publisher targets:
+    -   **Safecast** – large citizen-science network (bGeigie, Safecast:Drive). They provide JSON-based upload flows if you stick to their schema; requires coordination with the Safecast community.
+    -   **OpenRadiation** – IRSN/CEA-backed project with a documented REST API (API key required) for user contributors.
+    -   **uRADMonitor** – global network with proprietary + DIY kits; includes API protocols for feeding third-party data once a device is registered.
+    -   **GammaSense** – Waag/RIVM citizen sensing initiative; API access may require project partnership depending on phase/status.
 
 ---
 
