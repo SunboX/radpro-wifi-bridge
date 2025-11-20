@@ -8,3 +8,14 @@ CONFIG_LITTLEFS_CACHE_SIZE=512
 CONFIG_LITTLEFS_BLOCK_CYCLES=512
 CONFIG_LITTLEFS_USE_MTIME=y
 CONFIG_LITTLEFS_MTIME_USE_SECONDS=y
+
+# OTA portal handlers and WiFiManager now allocate larger JSON documents and
+# HTTP buffers inside the main Arduino loop task.  Increase the loop task
+# stack so /ota requests (especially manual ZIP uploads) no longer overflow
+# the default 8 KB stack and reboot the MCU mid-request.  (48 KB)
+CONFIG_ARDUINO_LOOP_STACK_SIZE=65536
+# WiFiManager config portal runs on the ESP-IDF "main" task; bump its stack so
+# route registration and template rendering don't blow the default 3.5 KB.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=12288
+# Keep flash protection enabled; OTA writes go to the inactive slot only.
+CONFIG_SPI_FLASH_DANGEROUS_WRITE_ABORTS=y

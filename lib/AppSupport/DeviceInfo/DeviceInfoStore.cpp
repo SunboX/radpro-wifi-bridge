@@ -100,7 +100,7 @@ DeviceInfoSnapshot DeviceInfoStore::snapshot() const
 String DeviceInfoStore::toJson() const
 {
     DeviceInfoSnapshot snap = snapshot();
-    JsonDocument doc;
+    JsonDocument doc(384);
     doc["manufacturer"] = snap.manufacturer;
     doc["model"] = snap.model;
     doc["firmware"] = snap.firmware;

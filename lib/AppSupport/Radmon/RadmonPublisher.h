@@ -18,6 +18,7 @@ public:
     void updateConfig();
     void loop();
     void onCommandResult(DeviceManager::CommandType type, const String &value);
+    void setPaused(bool paused) { paused_ = paused; }
     static void SendPortalForm(WiFiPortalService &portal, const String &message = String());
     static void HandlePortalPost(WebServer &server,
                                  AppConfig &config,
@@ -42,4 +43,5 @@ private:
     bool publishQueued_ = false;
     unsigned long lastAttemptMs_ = 0;
     unsigned long suppressUntilMs_ = 0;
+    bool paused_ = false;
 };

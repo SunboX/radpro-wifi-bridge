@@ -32,11 +32,15 @@ void RadmonPublisher::updateConfig()
 
 void RadmonPublisher::loop()
 {
+    if (paused_)
+        return;
     publishPending();
 }
 
 void RadmonPublisher::onCommandResult(DeviceManager::CommandType type, const String &value)
 {
+    if (paused_)
+        return;
     switch (type)
     {
     case DeviceManager::CommandType::TubeRate:
@@ -76,6 +80,8 @@ bool RadmonPublisher::isEnabled() const
 
 bool RadmonPublisher::publishPending()
 {
+    if (paused_)
+        return true;
     if (!publishQueued_)
         return false;
 
