@@ -30,7 +30,7 @@ void BridgeInfoPage::handleJson(WiFiManager *manager)
 
 String BridgeInfoPage::collectJson() const
 {
-    JsonDocument doc(320);
+    JsonDocument doc;
     doc["chipRevision"] = ESP.getChipRevision();
     doc["sdkVersion"] = ESP.getSdkVersion();
     doc["bridgeFirmware"] = BRIDGE_FIRMWARE_VERSION;

@@ -18,7 +18,7 @@ bool OtaUpdateService::begin(const String &manifestJson)
         return false;
     }
 
-    JsonDocument doc(3072);
+    JsonDocument doc;
     DeserializationError err = deserializeJson(doc, manifestJson);
     if (err)
     {
@@ -287,6 +287,8 @@ bool OtaUpdateService::finish()
 
     for (const auto &part : parts_)
     {
+        if (part.skip)
+            continue;
         if (!part.received)
         {
             lastError_ = F("Missing part data.");

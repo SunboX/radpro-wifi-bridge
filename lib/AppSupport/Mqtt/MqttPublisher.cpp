@@ -7,7 +7,7 @@ namespace
 {
     JsonDocument &getDiscoveryDoc()
     {
-        static JsonDocument doc(896);
+        static JsonDocument doc;
         return doc;
     }
 }

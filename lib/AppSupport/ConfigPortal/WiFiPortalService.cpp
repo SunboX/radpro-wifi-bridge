@@ -1081,7 +1081,7 @@ void WiFiPortalService::handleConfigRestore()
 
 String WiFiPortalService::exportConfigJson() const
 {
-    JsonDocument doc(1024);
+    JsonDocument doc;
     doc["schema"] = "radpro-wifi-bridge-config";
     doc["bridgeFirmware"] = BRIDGE_FIRMWARE_VERSION;
     doc["generatedMs"] = millis();
@@ -1115,7 +1115,7 @@ String WiFiPortalService::exportConfigJson() const
 bool WiFiPortalService::importConfigJson(const String &body, String &errorMessage)
 {
     errorMessage = String();
-    JsonDocument doc(1024);
+    JsonDocument doc;
     DeserializationError err = deserializeJson(doc, body);
     if (err)
     {
@@ -1398,7 +1398,7 @@ void WiFiPortalService::handleLogsJson()
     std::vector<DebugLogEntry> entries;
     log_.copyEntries(entries);
 
-    JsonDocument doc(1536);
+    JsonDocument doc;
     JsonArray lines = doc["lines"].to<JsonArray>();
     for (const auto &entry : entries)
     {
