@@ -28,18 +28,49 @@ void PeripheralStarter::startIfNeeded(bool wifiConnected, const std::vector<std:
     if (started_ || !wifiConnected)
         return;
 
+    const unsigned long now = millis();
+    // Back off between USB host retries to avoid log spam.
+    if (lastUsbRetryMs_ != 0 && now - lastUsbRetryMs_ < 3000)
+        return;
+
     deviceManager_.begin(vidPidAllowlist);
 
     // Start USB host + CDC listener + TX task
     if (!usbHost_.begin())
     {
-        log_.println("ERROR: usb.begin() failed");
-        led_.activateFault(FaultCode::UsbInterfaceFailure);
+        esp_err_t err = usbHost_.lastError();
+        const bool logNeeded = (err != lastUsbErr_) || lastUsbRetryMs_ == 0;
+        lastUsbErr_ = err;
+
+        // Treat missing host controller (ESP_ERR_NOT_FOUND) as transient; retry later without latching fault.
+        const unsigned long backoffMs = (err == ESP_ERR_NOT_FOUND) ? 10000UL : 3000UL;
+        lastUsbRetryMs_ = now + backoffMs;
+
+        if (logNeeded)
+        {
+            log_.print("ERROR: usb.begin() failed");
+            if (err != ESP_OK)
+            {
+                log_.print(" (");
+                log_.print(esp_err_to_name(err));
+                log_.print(")");
+            }
+            log_.print(" next retry in ");
+            log_.print(backoffMs / 1000);
+            log_.println("s");
+        }
+
+        if (err != ESP_ERR_NOT_FOUND)
+        {
+            led_.activateFault(FaultCode::UsbInterfaceFailure);
+        }
+        return;
     }
     else
     {
         log_.println("usb.begin() OK");
         led_.clearFault(FaultCode::UsbInterfaceFailure);
+        lastUsbErr_ = ESP_OK;
         if (allowEarlyStart_)
         {
             log_.println("Send 'start', 'delay <ms>', or 'raw on/off/toggle' on this port.");
@@ -52,4 +83,5 @@ void PeripheralStarter::startIfNeeded(bool wifiConnected, const std::vector<std:
     gmc_.begin();
     radmon_.begin();
     started_ = true;
+    lastUsbRetryMs_ = 0;
 }

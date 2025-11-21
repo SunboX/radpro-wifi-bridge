@@ -54,6 +54,7 @@ public:
     bool isConnected() const { return dev_ != nullptr || vcp_dev_ != nullptr; }
     uint16_t connectedVid() const { return connected_vid_; }
     uint16_t connectedPid() const { return connected_pid_; }
+    esp_err_t lastError() const { return last_err_; }
 
 private:
     // Tasks
@@ -117,6 +118,7 @@ private:
 
     uint16_t connected_vid_ = 0;
     uint16_t connected_pid_ = 0;
+    esp_err_t last_err_ = ESP_OK;
 
     // Post-connect settle time for first TX
     volatile TickType_t ready_after_tick_ = 0;
