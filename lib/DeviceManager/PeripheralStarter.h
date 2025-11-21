@@ -41,5 +41,6 @@ private:
     const char *firmwareVersion_;
     bool started_ = false;
     unsigned long lastUsbRetryMs_ = 0;
+    unsigned long nextUsbRetryAtMs_ = 0;
     esp_err_t lastUsbErr_ = ESP_OK;
 };
