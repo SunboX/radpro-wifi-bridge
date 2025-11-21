@@ -30,8 +30,10 @@ void PeripheralStarter::startIfNeeded(bool wifiConnected, const std::vector<std:
 
     const unsigned long now = millis();
     // Back off between USB host retries to avoid log spam.
-    if (lastUsbRetryMs_ != 0 && now - lastUsbRetryMs_ < 3000)
+    if (nextUsbRetryAtMs_ != 0 && now < nextUsbRetryAtMs_)
         return;
+
+    lastUsbRetryMs_ = now;
 
     deviceManager_.begin(vidPidAllowlist);
 
@@ -39,12 +41,10 @@ void PeripheralStarter::startIfNeeded(bool wifiConnected, const std::vector<std:
     if (!usbHost_.begin())
     {
         esp_err_t err = usbHost_.lastError();
-        const bool logNeeded = (err != lastUsbErr_) || lastUsbRetryMs_ == 0;
-        lastUsbErr_ = err;
-
-        // Treat missing host controller (ESP_ERR_NOT_FOUND) as transient; retry later without latching fault.
         const unsigned long backoffMs = (err == ESP_ERR_NOT_FOUND) ? 10000UL : 3000UL;
-        lastUsbRetryMs_ = now + backoffMs;
+        nextUsbRetryAtMs_ = now + backoffMs;
+        const bool logNeeded = (err != lastUsbErr_);
+        lastUsbErr_ = err;
 
         if (logNeeded)
         {
@@ -71,6 +71,7 @@ void PeripheralStarter::startIfNeeded(bool wifiConnected, const std::vector<std:
         log_.println("usb.begin() OK");
         led_.clearFault(FaultCode::UsbInterfaceFailure);
         lastUsbErr_ = ESP_OK;
+        nextUsbRetryAtMs_ = 0;
         if (allowEarlyStart_)
         {
             log_.println("Send 'start', 'delay <ms>', or 'raw on/off/toggle' on this port.");
