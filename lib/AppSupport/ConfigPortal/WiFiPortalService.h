@@ -32,6 +32,7 @@ public:
     void setOtaStartCallback(std::function<void()> cb);
 
 private:
+    void prepareConfigPortalAp(const String &ssid);
     friend class MqttPublisher;
     friend class OpenSenseMapPublisher;
     friend class RadmonPublisher;
@@ -132,6 +133,7 @@ private:
     bool pendingReconnect_ = false;
     unsigned long lastReconnectAttemptMs_ = 0;
     unsigned long waitingForIpSinceMs_ = 0;
+    bool onboardingMode_ = false;
     String lastKnownSsid_;
     String lastKnownPass_;
     bool portalPsDisabled_ = false;
