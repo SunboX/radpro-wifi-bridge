@@ -88,6 +88,7 @@ bool UsbCdcHost::begin()
     if (running_)
         return true;
     running_ = true;
+    last_err_ = ESP_OK;
 
 #if __has_include("usb/vcp.hpp")
     static bool vcp_ch34x_registered = false;
@@ -109,6 +110,7 @@ bool UsbCdcHost::begin()
 
     const usb_host_config_t host_cfg = {.skip_phy_setup = false, .intr_flags = ESP_INTR_FLAG_LEVEL1};
     esp_err_t err = usb_host_install(&host_cfg);
+    last_err_ = err;
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
     {
         ESP_LOGE(TAG, "usb_host_install failed: %s", esp_err_to_name(err));
@@ -143,6 +145,7 @@ void UsbCdcHost::stop()
     if (!running_)
         return;
     running_ = false;
+    last_err_ = ESP_OK;
 
     if (tx_task_)
     {

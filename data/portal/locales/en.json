@@ -110,5 +110,5 @@
     "T_MANUAL_BUSY": "An OTA operation is already in progress.",
     "T_MANUAL_UPLOADING": "Uploading {path}…",
     "T_MANUAL_DONE": "Upload complete! The bridge will restart to apply the update.",
-    "T_VERSION_UNKNOWN": "unknown"
+    "T_VERSION_UNKNOWN": "-"
 }
