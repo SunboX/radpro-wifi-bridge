@@ -5,7 +5,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>RadPro WiFi Bridge - Web Installer</title>
-    <script type="module" src="https://unpkg.com/esp-web-tools@9.1.0/dist/web/install-button.js?module"></script>
+    <!-- Use a newer esp-web-tools to reduce spurious timeout errors -->
+    <script type="module" src="https://unpkg.com/esp-web-tools@12.0.0/dist/web/install-button.js?module"></script>
     <style>
         :root {
             color-scheme: light dark;
@@ -103,6 +104,22 @@
             </p>
         </footer>
     </main>
+
+    <script>
+        // Some browsers emit a late InvalidStateError when the serial port is still
+        // held by the esptool stub after a successful flash. Suppress those so the
+        // UI doesn't show a bogus timeout dialog.
+        function suppressSerialInvalidStateError(event) {
+            const msg = event?.message || event?.reason?.message || "";
+            const name = event?.error?.name || event?.reason?.name || "";
+            if (name === "InvalidStateError" || msg.includes("InvalidStateError") || msg.includes("port is already open")) {
+                console.warn("Ignoring spurious SerialPort InvalidStateError after flash", event);
+                event.preventDefault();
+            }
+        }
+        window.addEventListener("error", suppressSerialInvalidStateError);
+        window.addEventListener("unhandledrejection", suppressSerialInvalidStateError);
+    </script>
 </body>
 
 </html>
