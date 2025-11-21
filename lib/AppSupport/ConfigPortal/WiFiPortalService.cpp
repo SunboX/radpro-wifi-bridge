@@ -1174,19 +1174,18 @@ void WiFiPortalService::handleConfigRestore()
     {
         sendConfigBackupPage(F("Configuration restored. The bridge will reconnect with the imported settings."));
 
-        // Apply changes without reboot: close portal, reconnect STA.
+        // Close portal and reboot into the restored configuration for a clean start.
         if (manager_.getConfigPortalActive())
             manager_.stopConfigPortal();
         if (manager_.getWebPortalActive())
             manager_.stopWebPortal();
 
         onboardingMode_ = false;
-        pendingReconnect_ = true;
+        pendingReconnect_ = false;
         lastReconnectAttemptMs_ = 0;
-        waitingForIpSinceMs_ = millis();
+        waitingForIpSinceMs_ = 0;
         hasLoggedIp_ = false;
-        log_.println(F("Reconnecting Wi-Fi after config restore (no reboot)."));
-        attemptReconnect();
+        scheduleRestart("config restore");
     }
     else
     {
