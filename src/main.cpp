@@ -3,6 +3,12 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_ota_ops.h"
+#if defined(__has_include)
+#if __has_include(<esp_app_desc.h>)
+#include <esp_app_desc.h>
+#define HAS_ESP_APP_DESC 1
+#endif
+#endif
 #include <cstring>
 #include <utility>
 #include <vector>
@@ -19,7 +25,9 @@
 #include "GmcMap/GmcMapPublisher.h"
 #include "Radmon/RadmonPublisher.h"
 #include "BridgeDiagnostics.h"
+#include "PeripheralStarter.h"
 #include "DeviceInfo/DeviceInfoStore.h"
+#include "Ota/OtaUpdateService.h"
 #include "FileSystem/BridgeFileSystem.h"
 #include "Logging/DebugLogStream.h"
 
@@ -86,19 +94,7 @@ static bool deviceReady = false;
 static bool deviceError = false;
 static bool mqttError = false;
 static bool updateInProgress = false;
-
-static void enterUpdateMode()
-{
-    if (updateInProgress)
-        return;
-    updateInProgress = true;
-    device_manager.stop();
-    usb.stop();
-    mqttPublisher.pause(true);
-    openSenseMapPublisher.setPaused(true);
-    gmcMapPublisher.setPaused(true);
-    radmonPublisher.setPaused(true);
-}
+static PeripheralStarter peripheralStarter(device_manager, usb, mqttPublisher, openSenseMapPublisher, gmcMapPublisher, radmonPublisher, ledController, DBG, ALLOW_EARLY_START, BRIDGE_FIRMWARE_VERSION);
 
 // =========================
 // Arduino setup / loop
@@ -128,6 +124,37 @@ void setup()
     }
 
     deviceInfoStore.setBridgeFirmware(BRIDGE_FIRMWARE_VERSION);
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    const esp_partition_t *boot = esp_ota_get_boot_partition();
+    if (running && boot)
+    {
+        DBG.print("Partition (running): label=");
+        DBG.print(running->label);
+        DBG.print(" addr=0x");
+        DBG.print(running->address, HEX);
+        DBG.print(" size=");
+        DBG.println(running->size);
+
+        DBG.print("Partition (boot): label=");
+        DBG.print(boot->label);
+        DBG.print(" addr=0x");
+        DBG.print(boot->address, HEX);
+        DBG.print(" size=");
+        DBG.println(boot->size);
+    }
+#ifdef HAS_ESP_APP_DESC
+    if (const esp_app_desc_t *desc = esp_app_get_description())
+    {
+        DBG.print("App description: ");
+        DBG.print(desc->project_name);
+        DBG.print(" v");
+        DBG.print(desc->version);
+        DBG.print(" built ");
+        DBG.print(desc->date);
+        DBG.print(" ");
+        DBG.println(desc->time);
+    }
+#endif
 
     esp_reset_reason_t resetReason = esp_reset_reason();
     if (resetReason == ESP_RST_BROWNOUT)
@@ -208,27 +235,6 @@ void setup()
         radmonPublisher.onCommandResult(type, value);
     });
 
-    device_manager.begin(kSupportedUsbVidPid);
-
-    // Optionally set target baud for CDC device
-    // usb.setBaud(115200);
-
-    // Start USB host + CDC listener + TX task
-    if (!usb.begin())
-    {
-        DBG.println("ERROR: usb.begin() failed");
-        ledController.activateFault(FaultCode::UsbInterfaceFailure);
-    }
-    else
-    {
-        DBG.println("usb.begin() OK");
-        ledController.clearFault(FaultCode::UsbInterfaceFailure);
-        if (ALLOW_EARLY_START)
-        {
-            DBG.println("Send 'start', 'delay <ms>', or 'raw on/off/toggle' on this port.");
-        }
-    }
-
     if (!configStore.load(appConfig))
     {
         DBG.println("Preferences read failed; keeping defaults.");
@@ -240,13 +246,9 @@ void setup()
     }
 
     portalService.begin();
-    portalService.setOtaStartCallback([]()
-                                      { enterUpdateMode(); });
-    mqttPublisher.begin();
-    mqttPublisher.setBridgeVersion(BRIDGE_FIRMWARE_VERSION);
-    openSenseMapPublisher.begin();
-    gmcMapPublisher.begin();
-    radmonPublisher.begin();
+    portalService.setOtaStartCallback([&]()
+                                      { OtaUpdateService::EnterUpdateMode(device_manager, usb, mqttPublisher, openSenseMapPublisher, gmcMapPublisher, radmonPublisher, updateInProgress); });
+    peripheralStarter.startIfNeeded(WiFi.status() == WL_CONNECTED, kSupportedUsbVidPid);
     mqttPublisher.setPublishCallback([&](bool success)
                                      {
         if (success)
@@ -282,6 +284,8 @@ void setup()
 
 void loop()
 {
+    peripheralStarter.startIfNeeded(WiFi.status() == WL_CONNECTED, kSupportedUsbVidPid);
+
     if (!isRunning)
     {
         handleStartupLogic();
@@ -291,14 +295,14 @@ void loop()
         runMainLogic();
     }
 
-    if (!updateInProgress)
+    if (!updateInProgress && peripheralStarter.started())
     {
         device_manager.loop();
     }
     portalService.syncIfRequested();
     portalService.maintain();
     portalService.process();
-    if (!updateInProgress)
+    if (!updateInProgress && peripheralStarter.started())
     {
         mqttPublisher.updateConfig();
         mqttPublisher.loop();
@@ -323,6 +327,12 @@ void loop()
 // =========================
 static void handleStartupLogic()
 {
+    if (!peripheralStarter.started())
+    {
+        ledController.setMode(LedMode::WaitingForStart);
+        return;
+    }
+
     if (!isRunning)
         ledController.setMode(LedMode::WaitingForStart);
 

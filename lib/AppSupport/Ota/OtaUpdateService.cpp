@@ -4,6 +4,12 @@
 #include <esp_flash.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
+#include "DeviceManager.h"
+#include "UsbCdcHost.h"
+#include "Mqtt/MqttPublisher.h"
+#include "OpenSenseMap/OpenSenseMapPublisher.h"
+#include "GmcMap/GmcMapPublisher.h"
+#include "Radmon/RadmonPublisher.h"
 
 namespace
 {
@@ -327,6 +333,26 @@ void OtaUpdateService::abort(const String &message)
 {
     lastError_ = message;
     reset();
+}
+
+void OtaUpdateService::EnterUpdateMode(DeviceManager &deviceManager,
+                                       UsbCdcHost &usbHost,
+                                       MqttPublisher &mqtt,
+                                       OpenSenseMapPublisher &osem,
+                                       GmcMapPublisher &gmc,
+                                       RadmonPublisher &radmon,
+                                       bool &updateFlag)
+{
+    if (updateFlag)
+        return;
+
+    updateFlag = true;
+    deviceManager.stop();
+    usbHost.stop();
+    mqtt.pause(true);
+    osem.setPaused(true);
+    gmc.setPaused(true);
+    radmon.setPaused(true);
 }
 
 OtaUpdateService::Status OtaUpdateService::status() const

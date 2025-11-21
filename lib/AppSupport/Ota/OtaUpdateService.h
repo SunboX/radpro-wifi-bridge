@@ -6,6 +6,13 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 
+class DeviceManager;
+class UsbCdcHost;
+class MqttPublisher;
+class OpenSenseMapPublisher;
+class GmcMapPublisher;
+class RadmonPublisher;
+
 class OtaUpdateService
 {
 public:
@@ -27,6 +34,14 @@ public:
     void reset();
     void abort(const String &message);
     Status status() const;
+
+    static void EnterUpdateMode(DeviceManager &deviceManager,
+                                UsbCdcHost &usbHost,
+                                MqttPublisher &mqtt,
+                                OpenSenseMapPublisher &osem,
+                                GmcMapPublisher &gmc,
+                                RadmonPublisher &radmon,
+                                bool &updateFlag);
 
 private:
     struct PartInfo

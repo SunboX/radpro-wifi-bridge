@@ -57,6 +57,8 @@ void WiFiPortalService::begin()
     manager_.setConnectTimeout(10);
     manager_.setConnectRetries(1);
     manager_.setTitle("RadPro WiFi Bridge Configuration");
+    manager_.setAPStaticIPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
+    manager_.setWiFiAPChannel(1);
     std::vector<const char *> menuEntries = {"wifi", "custom"};
     manager_.setMenu(menuEntries);
     log_.print(F("WiFi portal menu tokens: "));
@@ -105,12 +107,15 @@ bool WiFiPortalService::connect(bool forcePortal)
 
     refreshParameters();
 
+    bool haveStoredCredentials = hasStoredCredentials();
     bool connected = false;
-    if (!forcePortal && !hasStoredCredentials())
+    if (!forcePortal && !haveStoredCredentials)
     {
         forcePortal = true;
         log_.println(F("No saved Wi-Fi credentials detected; forcing configuration portal."));
     }
+
+    onboardingMode_ = forcePortal && !haveStoredCredentials;
 
     if (forcePortal)
     {
@@ -119,6 +124,11 @@ bool WiFiPortalService::connect(bool forcePortal)
         log_.print(F("Starting Wi-Fi configuration portal with SSID '"));
         log_.print(apName);
         log_.println(F("'"));
+        if (onboardingMode_)
+        {
+            log_.println(F("Onboarding: switching to AP-only mode to keep the captive portal stable."));
+            prepareConfigPortalAp(apName);
+        }
         manager_.setConfigPortalTimeout(0);
         connected = manager_.startConfigPortal(apName.c_str());
         log_.println(connected ? F("Configuration portal completed (credentials supplied).") : F("Configuration portal exited without connection."));
@@ -145,6 +155,7 @@ bool WiFiPortalService::connect(bool forcePortal)
     logStatusIfNeeded();
     if (WiFi.status() == WL_CONNECTED)
     {
+        onboardingMode_ = false;
         IPAddress ip = WiFi.localIP();
         if (ip != IPAddress(0, 0, 0, 0))
         {
@@ -164,9 +175,24 @@ bool WiFiPortalService::connect(bool forcePortal)
 
 void WiFiPortalService::maintain()
 {
-    if (WiFi.status() == WL_CONNECTED)
+    const bool connected = WiFi.status() == WL_CONNECTED;
+    const bool configPortalActive = manager_.getConfigPortalActive();
+    const bool webPortalActive = manager_.getWebPortalActive();
+    bool haveStoredCredentials = hasStoredCredentials();
+    if (onboardingMode_ && haveStoredCredentials)
     {
-        if (!manager_.getConfigPortalActive() && !manager_.getWebPortalActive())
+        onboardingMode_ = false;
+        if (!configPortalActive && !connected)
+        {
+            pendingReconnect_ = true;
+            lastReconnectAttemptMs_ = 0;
+        }
+    }
+    const bool onboarding = onboardingMode_ || !haveStoredCredentials;
+
+    if (connected)
+    {
+        if (!configPortalActive && !webPortalActive)
         {
             refreshParameters();
             if (!menuHtml_.length())
@@ -183,11 +209,28 @@ void WiFiPortalService::maintain()
             logPortalState("startWebPortal");
         }
     }
-    else if (manager_.getWebPortalActive())
+    else
     {
-        log_.println(F("Stopping Wi-Fi web portal (station disconnected)."));
-        manager_.stopWebPortal();
-        logPortalState("stopWebPortal");
+        // Stay in AP/config portal when not connected or when onboarding (no creds).
+        if (webPortalActive && (configPortalActive || onboarding))
+        {
+            // Keep the portal running for setup; do not stop.
+            logPortalState("webPortalActive-keep");
+        }
+        else if (webPortalActive)
+        {
+            log_.println(F("Stopping Wi-Fi web portal (station disconnected)."));
+            manager_.stopWebPortal();
+            logPortalState("stopWebPortal");
+        }
+        else if (!webPortalActive && onboarding && !configPortalActive)
+        {
+            // Edge case: lost credentials or first boot – ensure portal is available.
+            ensureMenuHtmlLoaded();
+            log_.println(F("Starting Wi-Fi web portal for onboarding (no credentials detected)."));
+            manager_.startWebPortal();
+            logPortalState("startWebPortalOnboarding");
+        }
     }
 
     logStatusIfNeeded();
@@ -206,23 +249,33 @@ void WiFiPortalService::maintain()
 
     if (pendingReconnect_)
     {
-        wl_status_t status = WiFi.status();
-        if (status == WL_CONNECTED)
+        if (configPortalActive || onboarding)
         {
             pendingReconnect_ = false;
-            hasLoggedIp_ = false;
-            logStatusIfNeeded();
-            log_.println("Wi-Fi reconnect complete.");
-            led_.clearFault(FaultCode::PortalReconnectFailed);
+            lastReconnectAttemptMs_ = 0;
+            waitingForIpSinceMs_ = 0;
+            log_.println(F("Reconnect suppressed while captive portal is active/onboarding."));
         }
         else
         {
-            unsigned long now = millis();
-            if (lastReconnectAttemptMs_ == 0 || now - lastReconnectAttemptMs_ >= 5000)
+            wl_status_t status = WiFi.status();
+            if (status == WL_CONNECTED)
             {
-                attemptReconnect();
-                if (WiFi.status() != WL_CONNECTED)
-                    led_.activateFault(FaultCode::PortalReconnectFailed);
+                pendingReconnect_ = false;
+                hasLoggedIp_ = false;
+                logStatusIfNeeded();
+                log_.println("Wi-Fi reconnect complete.");
+                led_.clearFault(FaultCode::PortalReconnectFailed);
+            }
+            else
+            {
+                unsigned long now = millis();
+                if (lastReconnectAttemptMs_ == 0 || now - lastReconnectAttemptMs_ >= 5000)
+                {
+                    attemptReconnect();
+                    if (WiFi.status() != WL_CONNECTED)
+                        led_.activateFault(FaultCode::PortalReconnectFailed);
+                }
             }
         }
     }
@@ -702,6 +755,32 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
         logPortalState("event:AP_STOP");
         restorePortalPowerSave();
         break;
+    case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+    {
+        char mac[18] = {0};
+        snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 info.wifi_ap_staconnected.mac[0], info.wifi_ap_staconnected.mac[1], info.wifi_ap_staconnected.mac[2],
+                 info.wifi_ap_staconnected.mac[3], info.wifi_ap_staconnected.mac[4], info.wifi_ap_staconnected.mac[5]);
+        log_.print(F("AP client connected: "));
+        log_.print(mac);
+        log_.print(F(" AID="));
+        log_.println(info.wifi_ap_staconnected.aid);
+        logPortalState("event:AP_STACONNECTED");
+        break;
+    }
+    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+    {
+        char mac[18] = {0};
+        snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 info.wifi_ap_stadisconnected.mac[0], info.wifi_ap_stadisconnected.mac[1], info.wifi_ap_stadisconnected.mac[2],
+                 info.wifi_ap_stadisconnected.mac[3], info.wifi_ap_stadisconnected.mac[4], info.wifi_ap_stadisconnected.mac[5]);
+        log_.print(F("AP client disconnected: "));
+        log_.print(mac);
+        log_.print(F(" AID="));
+        log_.println(info.wifi_ap_stadisconnected.aid);
+        logPortalState("event:AP_STADISCONNECTED");
+        break;
+    }
     case ARDUINO_EVENT_WIFI_STA_CONNECTED:
     {
         char ssid[33] = {0};
@@ -733,6 +812,18 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
         lastStatus_ = WL_DISCONNECTED;
         hasLoggedIp_ = false;
         lastIp_ = IPAddress();
+        {
+            bool portalActive = manager_.getConfigPortalActive();
+            bool onboarding = onboardingMode_ || !hasStoredCredentials();
+            if (portalActive || onboarding)
+            {
+                log_.println(F("Ignoring STA disconnect while captive portal is active/onboarding."));
+                pendingReconnect_ = false;
+                lastReconnectAttemptMs_ = 0;
+                waitingForIpSinceMs_ = 0;
+                break;
+            }
+        }
         pendingReconnect_ = true;
         lastReconnectAttemptMs_ = 0;
         waitingForIpSinceMs_ = 0;
@@ -919,6 +1010,16 @@ bool WiFiPortalService::hasStoredCredentials() const
     return false;
 }
 
+void WiFiPortalService::prepareConfigPortalAp(const String &ssid)
+{
+    pendingReconnect_ = false;
+    lastReconnectAttemptMs_ = 0;
+    waitingForIpSinceMs_ = 0;
+    log_.print(F("Preparing config portal AP for SSID '"));
+    log_.print(ssid);
+    log_.println(F("' (manager will start AP)."));
+}
+
 void WiFiPortalService::scheduleRestart(const char *reason)
 {
     restartScheduled_ = true;
@@ -946,6 +1047,7 @@ void WiFiPortalService::disablePortalPowerSave()
     {
         portalPsDisabled_ = true;
         log_.println("Wi-Fi power save disabled for captive portal.");
+        esp_wifi_set_max_tx_power(78); // ~19.5 dBm
     }
 }
 
@@ -1071,7 +1173,20 @@ void WiFiPortalService::handleConfigRestore()
     if (importConfigJson(body, error))
     {
         sendConfigBackupPage(F("Configuration restored. The bridge will reconnect with the imported settings."));
-        scheduleRestart("config restore");
+
+        // Apply changes without reboot: close portal, reconnect STA.
+        if (manager_.getConfigPortalActive())
+            manager_.stopConfigPortal();
+        if (manager_.getWebPortalActive())
+            manager_.stopWebPortal();
+
+        onboardingMode_ = false;
+        pendingReconnect_ = true;
+        lastReconnectAttemptMs_ = 0;
+        waitingForIpSinceMs_ = millis();
+        hasLoggedIp_ = false;
+        log_.println(F("Reconnecting Wi-Fi after config restore (no reboot)."));
+        attemptReconnect();
     }
     else
     {
