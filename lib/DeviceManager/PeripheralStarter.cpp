@@ -64,6 +64,11 @@ void PeripheralStarter::startIfNeeded(bool wifiConnected, const std::vector<std:
         {
             led_.activateFault(FaultCode::UsbInterfaceFailure);
         }
+        else
+        {
+            // If the controller was previously faulted but is now just missing VBUS, clear the latched fault.
+            led_.clearFault(FaultCode::UsbInterfaceFailure);
+        }
         return;
     }
     else

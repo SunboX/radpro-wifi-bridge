@@ -43,6 +43,9 @@ private:
     bool pendingPublish_ = false;
     unsigned long lastAttemptMs_ = 0;
     unsigned long suppressUntilMs_ = 0;
+    uint8_t consecutiveFailures_ = 0;
+    int lastTlsErrorCode_ = 0;
+    String lastTlsErrorText_;
     bool paused_ = false;
     JsonDocument payloadDoc_;
 };

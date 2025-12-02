@@ -76,6 +76,7 @@ private:
     Color colorForPulse(LedPulse pulse) const;
     void applyColor(const Color &color);
     void resetFaultPattern();
+    void expireFaults(uint32_t now);
     void updateFaultPattern(uint32_t now, FaultCode code);
 
     LedMode mode_ = LedMode::Booting;
@@ -84,6 +85,7 @@ private:
     uint8_t brightness_ = 8;
     Color lastColor_{0, 0, 0};
     std::array<bool, static_cast<size_t>(FaultCode::FaultCount)> faultActive_{};
+    std::array<uint32_t, static_cast<size_t>(FaultCode::FaultCount)> faultActivatedAtMs_{};
     uint8_t faultStep_ = 0;
     uint32_t faultNextMs_ = 0;
 };

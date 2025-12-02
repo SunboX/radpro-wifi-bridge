@@ -47,6 +47,30 @@ namespace
     constexpr uint16_t kPort = 443;
     constexpr unsigned long kMinPublishGapMs = 4000;
     constexpr unsigned long kRetryBackoffMs = 10000;
+    constexpr unsigned long kMaxRetryBackoffMs = 60000;
+
+    int logTlsError(Print &log, WiFiClientSecure &client, const char *context, String *errText = nullptr)
+    {
+        char err[128] = {0};
+        int code = client.lastError(err, sizeof(err));
+        if (errText)
+            *errText = err;
+        if (code == 0)
+            return 0;
+
+        log.print(F("OpenSenseMap: "));
+        log.print(context);
+        log.print(F(" TLS error "));
+        log.print(code);
+        if (err[0])
+        {
+            log.print(F(" ("));
+            log.print(err);
+            log.print(F(")"));
+        }
+        log.println();
+        return code;
+    }
 }
 
 OpenSenseMapPublisher::OpenSenseMapPublisher(AppConfig &config, Print &log, const char *bridgeVersion)
@@ -153,6 +177,8 @@ bool OpenSenseMapPublisher::publishPending()
     log_.print(" dose=");
     log_.println(pendingDoseValue_);
 
+    lastTlsErrorCode_ = 0;
+    lastTlsErrorText_.clear();
     lastAttemptMs_ = now;
     bool ok = sendPayload(payloadDoc_);
     if (ok)
@@ -161,10 +187,37 @@ bool OpenSenseMapPublisher::publishPending()
         haveTubeValue_ = false;
         haveDoseValue_ = false;
         lastAttemptMs_ = millis();
+        consecutiveFailures_ = 0;
+        suppressUntilMs_ = 0;
     }
     else
     {
-        suppressUntilMs_ = millis() + kRetryBackoffMs;
+        if (consecutiveFailures_ < 8)
+            ++consecutiveFailures_;
+
+        unsigned long backoff = kRetryBackoffMs;
+        for (uint8_t i = 1; i < consecutiveFailures_; ++i)
+        {
+            if (backoff >= kMaxRetryBackoffMs)
+                break;
+            backoff = backoff * 2;
+            if (backoff > kMaxRetryBackoffMs)
+            {
+                backoff = kMaxRetryBackoffMs;
+                break;
+            }
+        }
+
+        backoff += static_cast<unsigned long>(random(0, 1000)); // add small jitter
+        suppressUntilMs_ = millis() + backoff;
+        log_.print(F("OpenSenseMap: will retry in "));
+        log_.print(backoff / 1000);
+        log_.println(F("s"));
+
+        if (lastTlsErrorCode_ == -0x0038 || lastTlsErrorCode_ == 56 || lastTlsErrorCode_ == -56)
+        {
+            log_.println(F("OpenSenseMap: TLS CTR_DRBG input-too-large; reboot or check Wi-Fi stability/time sync. This is an ESP32 mbedTLS quirk."));
+        }
     }
     return true;
 }
@@ -246,6 +299,7 @@ bool OpenSenseMapPublisher::sendPayload(const JsonDocument &payload)
     if (!client.connect(kHost, kPort))
     {
         log_.println("OpenSenseMap: connect failed.");
+        lastTlsErrorCode_ = logTlsError(log_, client, "connect", &lastTlsErrorText_);
         return false;
     }
 
@@ -273,6 +327,7 @@ bool OpenSenseMapPublisher::sendPayload(const JsonDocument &payload)
     if (client.getWriteError())
     {
         log_.println("OpenSenseMap: failed to write request.");
+        lastTlsErrorCode_ = logTlsError(log_, client, "write", &lastTlsErrorText_);
         return false;
     }
 
@@ -282,7 +337,8 @@ bool OpenSenseMapPublisher::sendPayload(const JsonDocument &payload)
     if (!status.startsWith("HTTP/1.1 "))
     {
         log_.print("OpenSenseMap: unexpected status line: ");
-        log_.println(status);
+        log_.println(status.length() ? status : String("<empty>"));
+        lastTlsErrorCode_ = logTlsError(log_, client, "status", &lastTlsErrorText_);
         return false;
     }
 
