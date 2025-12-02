@@ -4,6 +4,11 @@
 #define RGB_BUILTIN 48
 #endif
 
+namespace
+{
+    constexpr uint32_t FAULT_AUTO_CLEAR_MS = 120000; // silence latched faults after 2 minutes if not re-triggered
+}
+
 void LedController::begin()
 {
     applyColor({0, 0, 0});
@@ -29,6 +34,7 @@ void LedController::activateFault(FaultCode code)
         return;
     bool hadFault = hasFault();
     faultActive_[idx] = true;
+    faultActivatedAtMs_[idx] = millis();
     if (!hadFault || currentFault() == code)
         resetFaultPattern();
 }
@@ -40,6 +46,7 @@ void LedController::clearFault(FaultCode code)
         return;
     bool wasCurrent = (currentFault() == code);
     faultActive_[idx] = false;
+    faultActivatedAtMs_[idx] = 0;
     if (wasCurrent)
         resetFaultPattern();
 }
@@ -47,6 +54,7 @@ void LedController::clearFault(FaultCode code)
 void LedController::clearAllFaults()
 {
     faultActive_.fill(false);
+    faultActivatedAtMs_.fill(0);
     resetFaultPattern();
 }
 
@@ -109,6 +117,7 @@ void LedController::applyColor(const Color &color)
 void LedController::update()
 {
     uint32_t now = millis();
+    expireFaults(now);
     FaultCode fault = currentFault();
     if (fault != FaultCode::None)
     {
@@ -137,6 +146,26 @@ void LedController::resetFaultPattern()
 {
     faultStep_ = 0;
     faultNextMs_ = 0;
+}
+
+void LedController::expireFaults(uint32_t now)
+{
+    bool cleared = false;
+    for (size_t i = 1; i < faultActive_.size(); ++i)
+    {
+        if (!faultActive_[i])
+            continue;
+        uint32_t activated = faultActivatedAtMs_[i];
+        if (activated != 0 && static_cast<int32_t>(now - activated) >= static_cast<int32_t>(FAULT_AUTO_CLEAR_MS))
+        {
+            faultActive_[i] = false;
+            faultActivatedAtMs_[i] = 0;
+            cleared = true;
+        }
+    }
+
+    if (cleared)
+        resetFaultPattern();
 }
 
 void LedController::updateFaultPattern(uint32_t now, FaultCode code)
@@ -169,15 +198,15 @@ void LedController::updateFaultPattern(uint32_t now, FaultCode code)
                 color = {static_cast<uint8_t>(brightness_ * 3), static_cast<uint8_t>(brightness_ * 2), 0};
             }
             applyColor(color);
-            faultNextMs_ = now + 180;
+            faultNextMs_ = now + 320; // slower on-time
         }
         else
         {
             applyColor({0, 0, 0});
             if (faultStep_ == totalSteps - 1)
-                faultNextMs_ = now + 500;
+                faultNextMs_ = now + 900; // slower pause between sequences
             else
-                faultNextMs_ = now + 140;
+                faultNextMs_ = now + 250; // slower off-time inside sequence
         }
 
         ++faultStep_;

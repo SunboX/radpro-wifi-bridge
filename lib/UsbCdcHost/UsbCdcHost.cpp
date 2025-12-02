@@ -108,8 +108,17 @@ bool UsbCdcHost::begin()
         return false;
     }
 
-    const usb_host_config_t host_cfg = {.skip_phy_setup = false, .intr_flags = ESP_INTR_FLAG_LEVEL1};
+    // Try to install the USB host with level-1 IRQ affinity first; if that IRQ line
+    // is already taken (ESP_ERR_NOT_FOUND), fall back to the default allocation.
+    usb_host_config_t host_cfg = {.skip_phy_setup = false, .intr_flags = ESP_INTR_FLAG_LEVEL1};
     esp_err_t err = usb_host_install(&host_cfg);
+    if (err == ESP_ERR_NOT_FOUND)
+    {
+        host_cfg.intr_flags = 0; // let esp_intr_alloc choose any low/med level
+        err = usb_host_install(&host_cfg);
+        if (err == ESP_OK)
+            ESP_LOGW(TAG, "usb_host_install fallback succeeded with intr_flags=0");
+    }
     last_err_ = err;
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
     {
