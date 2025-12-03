@@ -26,6 +26,7 @@
 #include "Radmon/RadmonPublisher.h"
 #include "BridgeDiagnostics.h"
 #include "PeripheralStarter.h"
+#include "Time/TimeSync.h"
 #include "DeviceInfo/DeviceInfoStore.h"
 #include "Ota/OtaUpdateService.h"
 #include "FileSystem/BridgeFileSystem.h"
@@ -93,6 +94,7 @@ static MqttPublisher mqttPublisher(appConfig, DBG, ledController);
 static OpenSenseMapPublisher openSenseMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
 static GmcMapPublisher gmcMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
 static RadmonPublisher radmonPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
+static TimeSync timeSync(DBG);
 static bool deviceReady = false;
 static bool deviceError = false;
 static bool mqttError = false;
@@ -264,7 +266,8 @@ void setup()
     portalService.begin();
     portalService.setOtaStartCallback([&]()
                                       { OtaUpdateService::EnterUpdateMode(device_manager, usb, mqttPublisher, openSenseMapPublisher, gmcMapPublisher, radmonPublisher, updateInProgress); });
-    peripheralStarter.startIfNeeded(WiFi.status() == WL_CONNECTED, kSupportedUsbVidPid);
+    timeSync.loop(WiFi.status() == WL_CONNECTED);
+    peripheralStarter.startIfNeeded(WiFi.status() == WL_CONNECTED, timeSync.synced(), kSupportedUsbVidPid);
     mqttPublisher.setPublishCallback([&](bool success)
                                      {
         if (success)
@@ -289,6 +292,7 @@ void setup()
         DBG.println("Auto-connect or portal timed out; starting configuration portal.");
         portalService.connect(true);
     }
+    timeSync.loop(WiFi.status() == WL_CONNECTED);
     mqttPublisher.updateConfig();
     openSenseMapPublisher.updateConfig();
     gmcMapPublisher.updateConfig();
@@ -307,7 +311,9 @@ void setup()
 
 void loop()
 {
-    peripheralStarter.startIfNeeded(WiFi.status() == WL_CONNECTED, kSupportedUsbVidPid);
+    const bool wifiConnected = WiFi.status() == WL_CONNECTED;
+    timeSync.loop(wifiConnected);
+    peripheralStarter.startIfNeeded(wifiConnected, timeSync.synced(), kSupportedUsbVidPid);
 
     if (!isRunning)
     {
