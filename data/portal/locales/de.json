@@ -109,6 +109,5 @@
     "T_MANUAL_BAD_ZIP": "manifest.json oder einzelne Binärdateien fehlen in der ZIP.",
     "T_MANUAL_BUSY": "Es läuft bereits ein OTA-Vorgang.",
     "T_MANUAL_UPLOADING": "{path} wird hochgeladen…",
-    "T_MANUAL_DONE": "Upload abgeschlossen! Die Bridge startet neu.",
-    "T_VERSION_UNKNOWN": "-"
+    "T_MANUAL_DONE": "Upload abgeschlossen! Die Bridge startet neu."
 }

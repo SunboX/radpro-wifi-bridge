@@ -38,6 +38,7 @@ public:
 
     // Line coding (ignored if device doesn’t support it)
     bool setBaud(uint32_t baud);
+    bool restart();
 
     // App callbacks
     void setDeviceCallbacks(DeviceCb on_connected, DeviceCb on_disconnected);

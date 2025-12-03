@@ -65,6 +65,8 @@ static unsigned long startupStartTime = 0;
 // Forward declarations
 static void handleStartupLogic();
 static void runMainLogic();
+static const char *commandTypeName(DeviceManager::CommandType type);
+static const char *ledModeName(LedMode mode);
 
 // =========================
 // USB Host wrapper
@@ -82,6 +84,7 @@ static const std::vector<std::pair<uint16_t, uint16_t>> kSupportedUsbVidPid = {
 static LedController ledController;
 static BridgeDiagnostics diagnostics(DBG, ledController);
 static DeviceInfoStore deviceInfoStore;
+static bool lastDeviceReadyLogged = false;
 
 static AppConfig appConfig;
 static AppConfigStore configStore;
@@ -95,6 +98,7 @@ static bool deviceError = false;
 static bool mqttError = false;
 static bool updateInProgress = false;
 static PeripheralStarter peripheralStarter(device_manager, usb, mqttPublisher, openSenseMapPublisher, gmcMapPublisher, radmonPublisher, ledController, DBG, ALLOW_EARLY_START, BRIDGE_FIRMWARE_VERSION);
+static LedMode lastLoggedMode = LedMode::Booting;
 
 // =========================
 // Arduino setup / loop
@@ -180,6 +184,11 @@ void setup()
     device_manager.setCommandResultHandler([&](DeviceManager::CommandType type, const String &value, bool success) {
         if (!success)
         {
+            DBG.print("Device command failed: ");
+            DBG.print(commandTypeName(type));
+            DBG.print(" (");
+            DBG.print(static_cast<int>(type));
+            DBG.println(")");
             bool transient = (type == DeviceManager::CommandType::TubePulseCount ||
                                type == DeviceManager::CommandType::TubeRate ||
                                type == DeviceManager::CommandType::DeviceBatteryVoltage ||
@@ -189,9 +198,10 @@ void setup()
             {
                 deviceError = true;
                 if (type == DeviceManager::CommandType::DeviceId)
+                {
                     deviceReady = false;
-                DBG.print("Device command failed: ");
-                DBG.println(static_cast<int>(type));
+                    DBG.println("DeviceReady cleared after DeviceId failure.");
+                }
                 ledController.triggerPulse(LedPulse::MqttFailure, 250);
                 if (type == DeviceManager::CommandType::DeviceId)
                     ledController.activateFault(FaultCode::DeviceIdTimeout);
@@ -206,7 +216,13 @@ void setup()
         {
             deviceReady = value.length() > 0;
             if (deviceReady)
+            {
                 ledController.clearFault(FaultCode::DeviceIdTimeout);
+                if (!lastDeviceReadyLogged)
+                {
+                    DBG.println("DeviceReady set after DeviceId response.");
+                }
+            }
         }
 
         if (type == DeviceManager::CommandType::DeviceSensitivity)
@@ -279,6 +295,13 @@ void setup()
     radmonPublisher.updateConfig();
     portalService.maintain();
     diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
+    LedMode currentMode = ledController.currentModeForDebug();
+    if (currentMode != lastLoggedMode)
+    {
+        DBG.print("LED mode -> ");
+        DBG.println(ledModeName(currentMode));
+        lastLoggedMode = currentMode;
+    }
     ledController.update();
 }
 
@@ -314,7 +337,18 @@ void loop()
         radmonPublisher.loop();
     }
     if (!usb.isConnected())
+    {
+        if (deviceReady)
+        {
+            DBG.println("DeviceReady cleared: USB disconnected.");
+        }
         deviceReady = false;
+        lastDeviceReadyLogged = false;
+    }
+    else if (deviceReady)
+    {
+        lastDeviceReadyLogged = true;
+    }
     diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
     ledController.update();
 
@@ -433,4 +467,74 @@ static void runMainLogic()
         lastStatsRequest = now;
         device_manager.requestStats();
     }
+}
+
+static const char *commandTypeName(DeviceManager::CommandType type)
+{
+    switch (type)
+    {
+    case DeviceManager::CommandType::DeviceId:
+        return "DeviceId";
+    case DeviceManager::CommandType::DeviceModel:
+        return "DeviceModel";
+    case DeviceManager::CommandType::DeviceFirmware:
+        return "DeviceFirmware";
+    case DeviceManager::CommandType::DeviceLocale:
+        return "DeviceLocale";
+    case DeviceManager::CommandType::DevicePower:
+        return "DevicePower";
+    case DeviceManager::CommandType::DeviceBatteryVoltage:
+        return "DeviceBatteryVoltage";
+    case DeviceManager::CommandType::DeviceBatteryPercent:
+        return "DeviceBatteryPercent";
+    case DeviceManager::CommandType::DeviceTime:
+        return "DeviceTime";
+    case DeviceManager::CommandType::DeviceTimeZone:
+        return "DeviceTimeZone";
+    case DeviceManager::CommandType::DeviceSensitivity:
+        return "DeviceSensitivity";
+    case DeviceManager::CommandType::TubeTime:
+        return "TubeTime";
+    case DeviceManager::CommandType::TubePulseCount:
+        return "TubePulseCount";
+    case DeviceManager::CommandType::TubeRate:
+        return "TubeRate";
+    case DeviceManager::CommandType::TubeDoseRate:
+        return "TubeDoseRate";
+    case DeviceManager::CommandType::TubeDeadTime:
+        return "TubeDeadTime";
+    case DeviceManager::CommandType::TubeDeadTimeCompensation:
+        return "TubeDeadTimeCompensation";
+    case DeviceManager::CommandType::TubeHVFrequency:
+        return "TubeHVFrequency";
+    case DeviceManager::CommandType::TubeHVDutyCycle:
+        return "TubeHVDutyCycle";
+    case DeviceManager::CommandType::RandomData:
+        return "RandomData";
+    case DeviceManager::CommandType::DataLog:
+        return "DataLog";
+    case DeviceManager::CommandType::Generic:
+        return "Generic";
+    }
+    return "Unknown";
+}
+
+static const char *ledModeName(LedMode mode)
+{
+    switch (mode)
+    {
+    case LedMode::Booting:
+        return "Booting";
+    case LedMode::WaitingForStart:
+        return "WaitingForStart";
+    case LedMode::WifiConnecting:
+        return "WifiConnecting";
+    case LedMode::WifiConnected:
+        return "WifiConnected";
+    case LedMode::DeviceReady:
+        return "DeviceReady";
+    case LedMode::Error:
+        return "Error";
+    }
+    return "Unknown";
 }
