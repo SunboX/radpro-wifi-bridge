@@ -25,7 +25,7 @@ public:
                       bool allowEarlyStart,
                       const char *firmwareVersion);
 
-    void startIfNeeded(bool wifiConnected, const std::vector<std::pair<uint16_t, uint16_t>> &vidPidAllowlist);
+    void startIfNeeded(bool wifiConnected, bool timeSynced, const std::vector<std::pair<uint16_t, uint16_t>> &vidPidAllowlist);
     bool started() const { return started_; }
 
 private:
