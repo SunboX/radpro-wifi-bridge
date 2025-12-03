@@ -261,6 +261,15 @@ bool UsbCdcHost::send(const uint8_t *data, size_t len, uint32_t timeout_ms)
 {
     return enqueueRaw(data, len, timeout_ms);
 }
+
+bool UsbCdcHost::restart()
+{
+    ESP_LOGW(TAG, "Restarting USB host by request.");
+    stop();
+    vTaskDelay(pdMS_TO_TICKS(50));
+    return begin();
+}
+
 bool UsbCdcHost::sendLine(const String &line, uint32_t timeout_ms)
 {
     return enqueueRaw(reinterpret_cast<const uint8_t *>(line.c_str()), line.length(), timeout_ms);

@@ -107,10 +107,12 @@ private:
     bool enabled_ = false;
     bool device_id_logged_ = false;
     bool device_details_logged_ = false;
+    bool zero_vidpid_recovery_done_ = false; // reserved; currently not used for restart
     bool awaiting_response_ = false;
     bool has_current_command_ = false;
     PendingCommand current_command_{};
     std::vector<PendingCommand> command_queue_;
     unsigned long last_request_ms_ = 0;
     float device_sensitivity_cpm_per_uSv_ = 0.0f;
+    bool initial_deviceid_recovery_done_ = false;
 };

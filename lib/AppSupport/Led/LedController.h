@@ -63,6 +63,7 @@ public:
     void clearAllFaults();
     bool hasFault() const;
     FaultCode currentFault() const;
+    LedMode currentModeForDebug() const { return mode_; }
 
 private:
     struct Color
