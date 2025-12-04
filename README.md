@@ -9,15 +9,15 @@ The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides s
 
 **Tested Geiger counters**
 
--   Bosean FS-600
 -   FNIRSI GC-01
+-   Bosean FS-600
+-   Bosean FS-5000 (tested by @wern0r)
 
 **Not yet tested**
 
 -   FS2011
 -   YT-203B
 -   Bosean FS-1000
--   Bosean FS-5000
 -   JOY-IT JT-RAD01
 -   GQ GMC-800
 
@@ -45,7 +45,7 @@ Need help soldering the ESP32-S3 jumpers or printing the enclosure? Follow the s
 
 ## Web Installer (ESP Web Tools)
 
-Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.11.1)
+Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.12.0)
 
 Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required. OTA updates of the bridge firmware are also available from the web portal once a network connection is active.
 
