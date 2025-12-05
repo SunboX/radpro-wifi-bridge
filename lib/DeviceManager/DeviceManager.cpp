@@ -152,6 +152,10 @@ void DeviceManager::loop()
 
     if (!host_.isConnected())
     {
+        if (line_handler_ && (awaiting_response_ || has_current_command_ || !command_queue_.empty()))
+        {
+            line_handler_(String("USB not connected; clearing pending commands. queued=") + command_queue_.size());
+        }
         awaiting_response_ = false;
         has_current_command_ = false;
         command_queue_.clear();
@@ -161,7 +165,30 @@ void DeviceManager::loop()
     if (awaiting_response_)
     {
         if ((millis() - last_request_ms_) > DEVICE_ID_RESPONSE_TIMEOUT_MS)
+        {
+            if (line_handler_)
+            {
+                String cmdLabel = current_command_.command.length()
+                                      ? current_command_.command
+                                      : String("type=") + String(static_cast<int>(current_command_.type));
+                line_handler_(String("Command timeout: ") + cmdLabel + " retry=" + current_command_.retry);
+            }
+
+            if (current_command_.type == CommandType::DeviceId && !device_id_logged_ && current_command_.retry == 0 && !initial_deviceid_recovery_done_)
+            {
+                // First DeviceId timeout immediately after attach: force a single host restart to re-enumerate cleanly.
+                initial_deviceid_recovery_done_ = true;
+                if (line_handler_)
+                    line_handler_(String("DeviceId timed out immediately after attach; restarting USB host once."));
+                awaiting_response_ = false;
+                has_current_command_ = false;
+                command_queue_.clear();
+                current_command_ = PendingCommand{};
+                host_.restart();
+                return;
+            }
             handleError();
+        }
         return;
     }
 
@@ -172,9 +199,10 @@ void DeviceManager::onConnected()
 {
     device_id_logged_ = false;
     device_details_logged_ = false;
-    command_queue_.clear();
+    initial_deviceid_recovery_done_ = false;
     awaiting_response_ = false;
     has_current_command_ = false;
+    command_queue_.clear();
     current_command_ = PendingCommand{};
 
     if (enabled_)
@@ -643,6 +671,10 @@ void DeviceManager::handleError()
         retry.retry++;
         retry.ready_ms = millis() + DEVICE_ID_RETRY_DELAY_MS;
         command_queue_.insert(command_queue_.begin(), retry);
+        if (line_handler_)
+        {
+            line_handler_(String("Retrying DeviceId (attempt ") + String(retry.retry + 1) + "/" + String(DEVICE_ID_MAX_RETRY + 1) + ")");
+        }
     }
     else if ((current_command_.type == CommandType::TubePulseCount || current_command_.type == CommandType::TubeRate ||
               current_command_.type == CommandType::DeviceBatteryVoltage || current_command_.type == CommandType::DeviceBatteryPercent) &&

@@ -23,9 +23,9 @@ PeripheralStarter::PeripheralStarter(DeviceManager &deviceManager,
 {
 }
 
-void PeripheralStarter::startIfNeeded(bool wifiConnected, const std::vector<std::pair<uint16_t, uint16_t>> &vidPidAllowlist)
+void PeripheralStarter::startIfNeeded(bool wifiConnected, bool timeSynced, const std::vector<std::pair<uint16_t, uint16_t>> &vidPidAllowlist)
 {
-    if (started_ || !wifiConnected)
+    if (started_ || !wifiConnected || !timeSynced)
         return;
 
     const unsigned long now = millis();

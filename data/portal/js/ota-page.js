@@ -126,12 +126,12 @@
         const busy = !!(ota.busy || ota.taskActive)
 
         if (els.currentVersion) {
-            const current = payload.currentVersion || portalTranslate('T_VERSION_UNKNOWN')
+            const current = payload.currentVersion || '—'
             els.currentVersion.textContent = current
         }
 
         if (els.latestVersion) {
-            const latest = payload.latestVersion || portalTranslate('T_VERSION_UNKNOWN')
+            const latest = payload.latestVersion || '—'
             els.latestVersion.textContent = latest
         }
 
