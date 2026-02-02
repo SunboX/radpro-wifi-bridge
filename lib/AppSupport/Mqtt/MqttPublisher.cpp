@@ -565,19 +565,20 @@ void MqttPublisher::publishDiscovery()
         const char *stateClass;
         const char *payloadOn;
         const char *payloadOff;
+        const char *icon;
     };
 
     static const DiscoveryEntry kEntities[] = {
-        {DeviceManager::CommandType::DevicePower, "binary_sensor", "power", "Power", nullptr, "power", nullptr, "ON", "OFF"},
-        {DeviceManager::CommandType::DeviceBatteryVoltage, "sensor", "battery_voltage", "Battery Voltage", "V", "voltage", "measurement", nullptr, nullptr},
-        {DeviceManager::CommandType::DeviceBatteryPercent, "sensor", "battery", "Battery", "%", "battery", "measurement", nullptr, nullptr},
-        {DeviceManager::CommandType::TubeRate, "sensor", "tube_rate", "Tube Rate", "cpm", nullptr, "measurement", nullptr, nullptr},
-        {DeviceManager::CommandType::TubeDoseRate, "sensor", "tube_dose_rate", "Dose Rate", "µSv/h", nullptr, "measurement", nullptr, nullptr},
-        {DeviceManager::CommandType::TubePulseCount, "sensor", "tube_pulse_count", "Tube Pulse Count", nullptr, nullptr, "total_increasing", nullptr, nullptr},
-        {DeviceManager::CommandType::DeviceSensitivity, "sensor", "tube_sensitivity", "Tube Sensitivity", "cpm/µSv/h", nullptr, nullptr, nullptr, nullptr},
-        {DeviceManager::CommandType::TubeDeadTime, "sensor", "tube_dead_time", "Tube Dead Time", "s", nullptr, nullptr, nullptr, nullptr},
-        {DeviceManager::CommandType::TubeHVFrequency, "sensor", "tube_hv_frequency", "Tube HV Frequency", "Hz", "frequency", "measurement", nullptr, nullptr},
-        {DeviceManager::CommandType::TubeHVDutyCycle, "sensor", "tube_hv_duty_cycle", "Tube HV Duty Cycle", nullptr, nullptr, nullptr, nullptr, nullptr}};
+        {DeviceManager::CommandType::DevicePower, "binary_sensor", "power", "Power", nullptr, "power", nullptr, "ON", "OFF", "mdi:power-plug"},
+        {DeviceManager::CommandType::DeviceBatteryVoltage, "sensor", "battery_voltage", "Battery Voltage", "V", "voltage", "measurement", nullptr, nullptr, "mdi:flash"},
+        {DeviceManager::CommandType::DeviceBatteryPercent, "sensor", "battery", "Battery", "%", "battery", "measurement", nullptr, nullptr, "mdi:battery"},
+        {DeviceManager::CommandType::TubeRate, "sensor", "tube_rate", "Tube Rate", "cpm", nullptr, "measurement", nullptr, nullptr, "mdi:chart-line"},
+        {DeviceManager::CommandType::TubeDoseRate, "sensor", "tube_dose_rate", "Dose Rate", "µSv/h", nullptr, "measurement", nullptr, nullptr, "mdi:radioactive"},
+        {DeviceManager::CommandType::TubePulseCount, "sensor", "tube_pulse_count", "Tube Pulse Count", nullptr, nullptr, "total_increasing", nullptr, nullptr, "mdi:pulse"},
+        {DeviceManager::CommandType::DeviceSensitivity, "sensor", "tube_sensitivity", "Tube Sensitivity", "cpm/µSv/h", nullptr, nullptr, nullptr, nullptr, "mdi:tune-vertical"},
+        {DeviceManager::CommandType::TubeDeadTime, "sensor", "tube_dead_time", "Tube Dead Time", "s", nullptr, nullptr, nullptr, nullptr, "mdi:timer-outline"},
+        {DeviceManager::CommandType::TubeHVFrequency, "sensor", "tube_hv_frequency", "Tube HV Frequency", "Hz", "frequency", "measurement", nullptr, nullptr, "mdi:waveform"},
+        {DeviceManager::CommandType::TubeHVDutyCycle, "sensor", "tube_hv_duty_cycle", "Tube HV Duty Cycle", nullptr, nullptr, nullptr, nullptr, nullptr, "mdi:sine-wave"}};
 
     size_t entityCount = sizeof(kEntities) / sizeof(kEntities[0]);
     if (discoveryIndex_ >= entityCount)
@@ -600,7 +601,8 @@ void MqttPublisher::publishDiscovery()
                                entry.deviceClass,
                                entry.stateClass,
                                entry.payloadOn,
-                               entry.payloadOff))
+                               entry.payloadOff,
+                               entry.icon))
     {
         discoveryIndex_++;
         if (discoveryIndex_ >= entityCount)
@@ -617,6 +619,7 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
                                            const char *stateClass,
                                            const char *payloadOn,
                                            const char *payloadOff,
+                                           const char *icon,
                                            const char *entityCategory,
                                            const char *leafOverride)
 {
@@ -663,6 +666,8 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
         doc["device_class"] = deviceClass;
     if (stateClass && *stateClass)
         doc["state_class"] = stateClass;
+    if (icon && *icon)
+        doc["icon"] = icon;
     if (payloadOn && *payloadOn)
     {
         doc["payload_on"] = payloadOn;
@@ -733,6 +738,7 @@ bool MqttPublisher::publishVersionDiscovery()
                                   nullptr,
                                   nullptr,
                                   nullptr,
+                                  "mdi:chip",
                                   "diagnostic",
                                   "bridgeVersion");
 }
