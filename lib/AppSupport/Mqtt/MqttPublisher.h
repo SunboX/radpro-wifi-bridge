@@ -45,6 +45,7 @@ private:
                                 const char *stateClass,
                                 const char *payloadOn,
                                 const char *payloadOff,
+                                const char *icon = nullptr,
                                 const char *entityCategory = nullptr,
                                 const char *leafOverride = nullptr);
     String buildTopic(const String &leaf) const;
