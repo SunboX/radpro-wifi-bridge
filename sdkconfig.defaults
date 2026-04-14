@@ -9,6 +9,13 @@ CONFIG_LITTLEFS_BLOCK_CYCLES=512
 CONFIG_LITTLEFS_USE_MTIME=y
 CONFIG_LITTLEFS_MTIME_USE_SECONDS=y
 
+# Match the default dual-OTA + 2 MB LittleFS layout used by partitions.csv.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_PARTITION_TABLE_TWO_OTA=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
 # OTA portal handlers and WiFiManager now allocate larger JSON documents and
 # HTTP buffers inside the main Arduino loop task.  Increase the loop task
 # stack so /ota requests (especially manual ZIP uploads) no longer overflow
