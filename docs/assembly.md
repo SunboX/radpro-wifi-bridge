@@ -2,19 +2,33 @@
 
 ![ESP32-S3 DevKitC with USB cables and RGB status LED](pictures/radpro_wifi_bridge.jpg)
 
-The RadPro WiFi Bridge is an ESP32‑S3 DevKitC‑1‑N16R8V running the RadPro WiFi Bridge firmware. Acting as the gateway, it hosts a RadPro-enabled Geiger counter over the USB Type‑C OTG port, translates the USB/Serial data stream, and forwards readings via Wi‑Fi to MQTT and cloud publishers while the WS2812 RGB LED provides status feedback. The 16 MB flash and 8 MB PSRAM give the dual (Arduino + ESP-IDF) firmware plenty of headroom.
+The RadPro WiFi Bridge is built around an ESP32‑S3 DevKitC‑1 board running the
+RadPro WiFi Bridge firmware. The currently recommended variant is
+`ESP32-S3-DevKitC-1-N16R8`, while the older `N16R8V` remains compatible. Acting
+as the gateway, it hosts a RadPro-enabled Geiger counter over the USB Type‑C
+OTG port, translates the USB/Serial data stream, and forwards readings via
+Wi‑Fi to MQTT and cloud publishers while the WS2812 RGB LED provides status
+feedback. The default firmware layout expects `16 MB` flash; PSRAM is helpful
+headroom but not currently required by the source tree.
 
 ## Hardware Overview
 
-- **Recommended board:** ESP32-S3-DevKitC-1-N16R8V (16 MB Flash, 8 MB PSRAM) for plenty of headroom for the dual-framework (Arduino + ESP-IDF) firmware.  
-- **Ports:** Two USB‑C connectors — one OTG port for the detector and one power/debug port.  
-- **Indicators:** On-board WS2812 RGB LED is driven by the firmware for status/error pulses.  
+- **Recommended board:** `ESP32-S3-DevKitC-1-N16R8` (16 MB Flash, 8 MB PSRAM). `N16R8V` is also compatible.
+- **Minimum default-build requirement:** `16 MB` flash, USB OTG host capability, and routing/jumpers equivalent to the DevKitC board shown below.
+- **Ports:** Two USB‑C connectors are strongly recommended — one OTG port for the detector and one power/debug port.
+- **Indicators:** The on-board WS2812 on `GPIO48` is used for status/error pulses, but the current firmware does not require PSRAM.
 
 ![Annotated ESP32-S3 board highlighting USB ports, RGB LED, and solder bridges](pictures/esp32-s3_annotated_photo.jpg)
 
 ## Assembly Checklist
 
-To enable USB host mode and the WS2812 LED you must close three solder jumpers on the DevKitC. Use a fine tip iron, plenty of flux, and verify continuity with a multimeter before powering the board. If you can’t solder the bridges yourself, check the nearest makerspace or FabLab—community workshops often have the right tools and volunteers who can help. Useful directories:
+To enable USB host mode and the WS2812 LED you must close three solder jumpers
+on the DevKitC. Use a fine tip iron, plenty of flux, and verify continuity with
+a multimeter before powering the board. If you are evaluating a different
+ESP32-S3 board, first compare it against [board-requirements.md](board-requirements.md).
+If you can’t solder the bridges yourself, check the nearest makerspace or
+FabLab—community workshops often have the right tools and volunteers who can
+help. Useful directories:
 
 - [FabLabs.io](https://www.fablabs.io/labs) – official Fab Lab network map (list + JSON export).
 - [Hackerspaces.org](https://wiki.hackerspaces.org/List_of_Hacker_Spaces) – global hacker/maker space directory.

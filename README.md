@@ -39,7 +39,21 @@ The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides s
 
 ## Hardware Assembly
 
-Need help soldering the ESP32-S3 jumpers or printing the enclosure? Follow the step-by-step guide in [docs/assembly.md](docs/assembly.md).
+Need help soldering the ESP32-S3 jumpers or printing the enclosure? Follow the step-by-step guide in [docs/assembly.md](docs/assembly.md). If you are sourcing your own board, see [docs/board-requirements.md](docs/board-requirements.md) for the recommended model and the minimum requirements for the default build.
+
+---
+
+## Board Requirements
+
+The default setup now targets **ESP32-S3-DevKitC-1-N16R8**. The discontinued
+**ESP32-S3-DevKitC-1-N16R8V** remains compatible, but it is no longer treated as
+the only valid choice.
+
+- **Recommended board:** `ESP32-S3-DevKitC-1-N16R8` (16 MB flash, 8 MB PSRAM, two USB ports, onboard WS2812).
+- **Default build requirement:** `16 MB` flash, because the repository ships a dual-OTA layout plus a `2 MB` LittleFS partition.
+- **Current firmware requirement:** PSRAM is optional for the current source tree; the default firmware builds without enabling PSRAM-specific support.
+
+See [docs/board-requirements.md](docs/board-requirements.md) if you want to compare alternative boards or port the firmware to a smaller flash layout.
 
 ---
 
@@ -54,7 +68,7 @@ Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no loc
 ## PlatformIO Install
 
 1. Install [PlatformIO](https://platformio.org/) and open this project.
-2. The default environment targets **ESP32-S3 DevKitC-1 (N16R8)** with TinyUSB host support (`platformio.ini`) and a custom `partitions.csv` that provides a 6 MB application slot (make sure that file is present when building).
+2. The default environment targets the project-local **ESP32-S3 DevKitC-1 (N16R8)** profile with TinyUSB host support (`platformio.ini`) and a custom `partitions.csv` that provides two OTA slots plus a `2 MB` LittleFS partition on `16 MB` flash.
 3. Connect the board with **two** USB cables:
     - CP210x (UART) port → logs & commands (`Serial0`, 115200 baud).
     - Native USB-OTG port → leave free for the RadPro sensor.
