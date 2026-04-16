@@ -91,13 +91,15 @@ void BridgeDiagnostics::applyUsbLogLevels(bool announce)
 
 void BridgeDiagnostics::updateLedStatus(bool running, bool deviceError, bool mqttError, bool deviceReady)
 {
+    (void)mqttError;
+
     if (!running)
     {
         led_.setMode(LedMode::WaitingForStart);
         return;
     }
 
-    if (deviceError || mqttError)
+    if (deviceError)
     {
         led_.setMode(LedMode::Error);
         return;

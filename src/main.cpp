@@ -278,10 +278,7 @@ void setup()
         }
         else
         {
-            mqttError = true;
-            DBG.println("MQTT publish failed.");
-            ledController.triggerPulse(LedPulse::MqttFailure, 250);
-            ledController.activateFault(FaultCode::MqttConnectionReset);
+            mqttError = false;
         } });
 
     WiFi.mode(WIFI_STA);

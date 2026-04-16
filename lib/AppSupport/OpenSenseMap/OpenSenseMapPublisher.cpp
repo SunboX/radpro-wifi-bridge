@@ -1,4 +1,5 @@
 #include "OpenSenseMap/OpenSenseMapPublisher.h"
+#include "OpenSenseMap/OpenSenseMapPortalLinks.h"
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include "ConfigPortal/WiFiPortalService.h"
@@ -277,14 +278,28 @@ void OpenSenseMapPublisher::SendPortalForm(WiFiPortalService &portal, const Stri
         return;
 
     String notice = WiFiPortalService::htmlEscape(message);
+    const String boxUrl = OpenSenseMapPortalLinks::buildOpenSenseMapBoxUrl(
+        portal.config_.openSenseBoxId);
+    const String rateSettingsUrl = OpenSenseMapPortalLinks::buildOpenSenseMapSensorSettingsUrl(
+        portal.config_.openSenseBoxId,
+        portal.config_.openSenseTubeRateSensorId);
+    const String doseSettingsUrl = OpenSenseMapPortalLinks::buildOpenSenseMapSensorSettingsUrl(
+        portal.config_.openSenseBoxId,
+        portal.config_.openSenseDoseRateSensorId);
     WiFiPortalService::TemplateReplacements vars = {
         {"{{NOTICE_CLASS}}", notice.length() ? String() : String("hidden")},
         {"{{NOTICE_TEXT}}", notice},
         {"{{OSEM_ENABLED_CHECKED}}", portal.config_.openSenseMapEnabled ? String("checked") : String()},
         {"{{OSEM_BOX_ID}}", WiFiPortalService::htmlEscape(portal.config_.openSenseBoxId)},
+        {"{{OSEM_BOX_LINK_CLASS}}", boxUrl.length() ? String() : String("hidden")},
+        {"{{OSEM_BOX_URL}}", WiFiPortalService::htmlEscape(boxUrl)},
         {"{{OSEM_API_KEY}}", WiFiPortalService::htmlEscape(portal.config_.openSenseApiKey)},
         {"{{OSEM_RATE_ID}}", WiFiPortalService::htmlEscape(portal.config_.openSenseTubeRateSensorId)},
-        {"{{OSEM_DOSE_ID}}", WiFiPortalService::htmlEscape(portal.config_.openSenseDoseRateSensorId)}};
+        {"{{OSEM_DOSE_ID}}", WiFiPortalService::htmlEscape(portal.config_.openSenseDoseRateSensorId)},
+        {"{{OSEM_RATE_SETTINGS_CLASS}}", rateSettingsUrl.length() ? String() : String("hidden")},
+        {"{{OSEM_RATE_SETTINGS_URL}}", WiFiPortalService::htmlEscape(rateSettingsUrl)},
+        {"{{OSEM_DOSE_SETTINGS_CLASS}}", doseSettingsUrl.length() ? String() : String("hidden")},
+        {"{{OSEM_DOSE_SETTINGS_URL}}", WiFiPortalService::htmlEscape(doseSettingsUrl)}};
 
     portal.appendCommonTemplateVars(vars);
     portal.sendTemplate("/portal/osem.html", vars);

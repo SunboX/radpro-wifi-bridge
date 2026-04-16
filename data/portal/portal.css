@@ -142,6 +142,15 @@ button:hover::before {
     color: #ff7676;
 }
 
+.field-link {
+    margin: -6px 0 4px;
+    font-size: 0.9rem;
+}
+
+.field-link.hidden {
+    display: none;
+}
+
 dl {
     display: grid;
     grid-template-columns: minmax(120px, 1fr) minmax(180px, 2fr);

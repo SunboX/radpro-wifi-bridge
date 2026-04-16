@@ -59,7 +59,7 @@ See [docs/board-requirements.md](docs/board-requirements.md) if you want to comp
 
 ## Web Installer (ESP Web Tools)
 
-Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.12.0)
+Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.12.1)
 
 Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required. OTA updates of the bridge firmware are also available from the web portal once a network connection is active.
 
@@ -97,7 +97,7 @@ Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no loc
 
 Need a step-by-step walkthrough? See [docs/mqtt-home-assistant.md](docs/mqtt-home-assistant.md) for detailed MQTT broker setup and Home Assistant discovery notes.
 
-The `MqttPublisher` mirrors every RadPro response to MQTT once you enable it in the portal. Topics are templated (`stat/radpro/<deviceid>/<leaf>` by default), retained, and paired with Home Assistant discovery payloads so entities appear automatically. Successful publishes pulse the LED green; failures pulse red and are logged to the console.
+The `MqttPublisher` mirrors every RadPro response to MQTT once you enable it in the portal. Topics are templated (`stat/radpro/<deviceid>/<leaf>` by default), retained, and paired with Home Assistant discovery payloads so entities appear automatically. Successful publishes pulse the LED green; routine broker outages stay in the console so the bridge can keep showing its healthy USB/Wi-Fi state on the LED. Authentication or configuration problems still surface as fault codes.
 
 ---
 
@@ -136,12 +136,14 @@ Base modes communicate long-running state (default brightness is gentle to avoid
 | `WifiConnecting`  | Blue blink (~0.6 s period)    | Attempting to join the configured WLAN.                        |
 | `WifiConnected`   | Cyan steady                   | Wi-Fi joined; USB device not yet ready.                        |
 | `DeviceReady`     | Bright green steady           | RadPro enumerated and telemetry queue active.                  |
-| `Error`           | Amber blink (~0.5 s period)   | Last device command or MQTT publish failed— check the console. |
+| `Error`           | Amber blink (~0.5 s period)   | Device communication failed; check the console for the command that timed out. |
 
 Event pulses temporarily override the base colour:
 
 -   **MQTT success:** bright green flash (~150 ms).
--   **MQTT failure / command error:** bright red flash (~250 ms) and a console log (`MQTT publish failed.` or `Device command failed: <id>`).
+-   **MQTT success:** bright green flash (~150 ms).
+-   **Device command error:** bright red flash (~250 ms) and a console log (`Device command failed: <id>`).
+-   **Routine MQTT disconnects:** logged to the console, but they no longer force the LED into the red/amber fault pattern while Wi‑Fi + USB + detector are otherwise healthy.
 
 ### Fault Blink Codes
 

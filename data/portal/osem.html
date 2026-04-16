@@ -17,12 +17,21 @@
                 </label>
                 <label for="osemBoxId" data-i18n="T_LABEL_BOX_ID">Box ID</label>
                 <input id="osemBoxId" name="osemBoxId" type="text" value="{{OSEM_BOX_ID}}" />
+                <p class="field-link {{OSEM_BOX_LINK_CLASS}}">
+                    <a href="{{OSEM_BOX_URL}}" target="_blank" rel="noopener noreferrer" data-i18n="T_OSEM_OPEN_BOX">Open box in OpenSenseMap</a>
+                </p>
                 <label for="osemApiKey" data-i18n="T_LABEL_ACCESS_TOKEN">Access Token</label>
                 <input id="osemApiKey" name="osemApiKey" type="text" value="{{OSEM_API_KEY}}" />
                 <label for="osemRate" data-i18n="T_LABEL_RATE_SENSOR">Tube Rate (cpm) - Geiger Sensor ID</label>
                 <input id="osemRate" name="osemRate" type="text" value="{{OSEM_RATE_ID}}" />
+                <p class="field-link {{OSEM_RATE_SETTINGS_CLASS}}">
+                    <a href="{{OSEM_RATE_SETTINGS_URL}}" target="_blank" rel="noopener noreferrer" data-i18n="T_OSEM_OPEN_SENSOR_SETTINGS">Open sensor settings in OpenSenseMap</a>
+                </p>
                 <label for="osemDose" data-i18n="T_LABEL_DOSE_SENSOR">Dose Rate (µSv/h) - Dose Sensor ID</label>
                 <input id="osemDose" name="osemDose" type="text" value="{{OSEM_DOSE_ID}}" />
+                <p class="field-link {{OSEM_DOSE_SETTINGS_CLASS}}">
+                    <a href="{{OSEM_DOSE_SETTINGS_URL}}" target="_blank" rel="noopener noreferrer" data-i18n="T_OSEM_OPEN_SENSOR_SETTINGS">Open sensor settings in OpenSenseMap</a>
+                </p>
                 <button type="submit" data-i18n="T_BUTTON_SAVE_OSEM">Save OpenSenseMap Settings</button>
             </form>
             <form action="/" method="get" class="back-form">

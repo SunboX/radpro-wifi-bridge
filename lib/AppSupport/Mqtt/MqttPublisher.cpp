@@ -1,6 +1,7 @@
 #include "MqttPublisher.h"
 #include <ArduinoJson.h>
 #include "ConfigPortal/WiFiPortalService.h"
+#include "Mqtt/MqttFaultPolicy.h"
 #include <WebServer.h>
 
 namespace
@@ -72,6 +73,9 @@ void MqttPublisher::updateConfig()
     {
         if (mqtt_client_.connected())
             mqtt_client_.disconnect();
+        led_.clearFault(FaultCode::MqttUnreachable);
+        led_.clearFault(FaultCode::MqttAuthFailure);
+        led_.clearFault(FaultCode::MqttConnectionReset);
         if (configValid_)
         {
             log_.println("MQTT disabled; publisher idle.");
@@ -313,18 +317,13 @@ bool MqttPublisher::ensureConnected()
     {
         log_.print("MQTT connect failed: ");
         log_.println(state);
-        if (state == 5)
-        {
-            led_.activateFault(FaultCode::MqttAuthFailure);
-        }
-        else if (state == -2 || state == -4)
-        {
-            led_.activateFault(FaultCode::MqttUnreachable);
-        }
-        else if (state == -3 || state == -1)
-        {
-            led_.activateFault(FaultCode::MqttConnectionReset);
-        }
+        led_.clearFault(FaultCode::MqttUnreachable);
+        led_.clearFault(FaultCode::MqttAuthFailure);
+        led_.clearFault(FaultCode::MqttConnectionReset);
+
+        FaultCode fault = faultCodeForMqttConnectState(state);
+        if (fault != FaultCode::None)
+            led_.activateFault(fault);
     }
 
     return connected;
@@ -505,7 +504,6 @@ bool MqttPublisher::publish(const String &leaf, const String &payload, bool reta
             log_.println("MQTT publish skipped: Wi-Fi disconnected.");
             lastPublishWarning_ = now;
         }
-        led_.activateFault(FaultCode::MqttConnectionReset);
         return false;
     }
 
@@ -524,10 +522,6 @@ bool MqttPublisher::publish(const String &leaf, const String &payload, bool reta
 
     String topic = buildTopic(leaf);
     bool ok = mqtt_client_.publish(topic.c_str(), payload.c_str(), retain);
-    if (!ok)
-        led_.activateFault(FaultCode::MqttConnectionReset);
-    else
-        led_.clearFault(FaultCode::MqttConnectionReset);
     if (publishCallback_)
         publishCallback_(ok);
     return ok;
@@ -705,7 +699,6 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
     {
         log_.print("MQTT discovery publish begin failed for ");
         log_.println(discoveryTopic);
-        led_.activateFault(FaultCode::MqttConnectionReset);
         return false;
     }
 
@@ -715,7 +708,6 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
     {
         log_.print("MQTT discovery publish failed for ");
         log_.println(discoveryTopic);
-        led_.activateFault(FaultCode::MqttConnectionReset);
     }
     else
     {
