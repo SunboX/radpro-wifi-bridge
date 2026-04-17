@@ -59,7 +59,7 @@ inline bool UpdateStringIfChanged(String &target, const char *value)
 {
     String trimmed = value ? String(value) : String();
     trimmed.trim();
-    if (std::string(trimmed) == std::string(target))
+    if (trimmed == target)
         return false;
     target = trimmed;
     return true;
