@@ -30,4 +30,18 @@ inline void clearMeasurementWindow(MeasurementWindowState &state)
     state.startTime = String();
     state.startPulseCount = String();
 }
+
+inline void replaceMeasurementWindow(MeasurementWindowState &state,
+                                     const String &startTime,
+                                     const String &startPulseCount)
+{
+    if (!startTime.length())
+    {
+        clearMeasurementWindow(state);
+        return;
+    }
+
+    state.startTime = startTime;
+    state.startPulseCount = startPulseCount;
+}
 } // namespace OpenRadiationMeasurementWindow

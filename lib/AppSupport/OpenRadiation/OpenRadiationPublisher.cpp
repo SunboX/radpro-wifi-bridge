@@ -84,14 +84,17 @@ void OpenRadiationPublisher::onCommandResult(DeviceManager::CommandType type, co
                 suppressUntilMs_ = 0;
 
                 String queuedTimestamp;
+                const DeviceInfoSnapshot info = deviceInfo_.snapshot();
                 if (makeIsoTimestamp(queuedTimestamp))
-                {
-                    const DeviceInfoSnapshot info = deviceInfo_.snapshot();
-                    OpenRadiationMeasurementWindow::armMeasurementWindow(
+                    OpenRadiationMeasurementWindow::replaceMeasurementWindow(
                         measurementWindow_,
                         queuedTimestamp,
                         info.tubePulseCount);
-                }
+                else
+                    OpenRadiationMeasurementWindow::replaceMeasurementWindow(
+                        measurementWindow_,
+                        String(),
+                        String());
             }
         }
         break;
