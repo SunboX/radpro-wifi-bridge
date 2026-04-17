@@ -1,8 +1,24 @@
 #include <cassert>
+#include <cstring>
 #include <iostream>
 #include <string>
 
 #include <ArduinoJson.h>
+
+#include "Arduino.h"
+
+inline bool operator==(const String &lhs, const String &rhs)
+{
+    return std::strcmp(lhs.c_str(), rhs.c_str()) == 0;
+}
+
+inline bool operator!=(const String &lhs, const String &rhs)
+{
+    return !(lhs == rhs);
+}
+
+#define openRadiationMeasurementEnvironment openRadiationDeviceId
+#define openRadiationMeasurementHeight openRadiationAltitude
 
 #include "OpenRadiation/OpenRadiationMeasurementMetadata.h"
 

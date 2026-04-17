@@ -7,22 +7,7 @@
 #include <cstring>
 #include <cstdlib>
 
-inline bool operator==(const String &lhs, const String &rhs)
-{
-    return std::strcmp(lhs.c_str(), rhs.c_str()) == 0;
-}
-
-inline bool operator!=(const String &lhs, const String &rhs)
-{
-    return !(lhs == rhs);
-}
-
 #include "AppConfig/AppConfig.h"
-
-// Temporary compatibility aliases: the current AppConfig host shape does not
-// yet expose the measurement-specific fields from the task description.
-#define openRadiationMeasurementEnvironment openRadiationDeviceId
-#define openRadiationMeasurementHeight openRadiationAltitude
 
 namespace OpenRadiationMeasurementMetadata
 {
