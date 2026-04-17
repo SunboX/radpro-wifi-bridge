@@ -3,9 +3,12 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
+#include <cerrno>
+#include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <limits>
 
 #include "AppConfig/AppConfig.h"
 
@@ -36,10 +39,22 @@ inline bool tryParsePulseCount(const String &value, uint32_t &out)
     const char *raw = value.c_str();
     if (!raw || !*raw)
         return false;
-    char *end = nullptr;
-    const unsigned long parsed = std::strtoul(raw, &end, 10);
-    if (!end || *end != '\0')
+    if (*raw == '+' || *raw == '-')
         return false;
+    for (const char *cursor = raw; *cursor; ++cursor)
+    {
+        if (!std::isdigit(static_cast<unsigned char>(*cursor)))
+            return false;
+    }
+
+    errno = 0;
+    char *end = nullptr;
+    const unsigned long long parsed = std::strtoull(raw, &end, 10);
+    if (errno == ERANGE || !end || *end != '\0')
+        return false;
+    if (parsed > std::numeric_limits<uint32_t>::max())
+        return false;
+
     out = static_cast<uint32_t>(parsed);
     return true;
 }

@@ -43,6 +43,8 @@ void testComputesHitsNumberFromPulseDelta()
     assert(hits == 42);
     assert(!tryComputeHitsNumber("150", "142", hits));
     assert(!tryComputeHitsNumber("abc", "142", hits));
+    assert(!tryComputeHitsNumber("-2", "-1", hits));
+    assert(!tryComputeHitsNumber("4294967296", "4294967297", hits));
 }
 
 void testAppendsOptionalFieldsToPayload()
@@ -62,6 +64,24 @@ void testAppendsOptionalFieldsToPayload()
     assert(std::string(data["endTime"].as<const char *>()) == "2026-04-17T18:11:00Z");
     assert(data["hitsNumber"].as<uint32_t>() == 42);
 }
+
+void testOmitsInvalidOptionalFieldsFromPayload()
+{
+    AppConfig config;
+    config.openRadiationMeasurementEnvironment = "forest";
+    config.openRadiationMeasurementHeight = 0.0f;
+    config.openRadiationAccuracy = -1.0f;
+
+    JsonDocument doc;
+    JsonObject data = doc.to<JsonObject>();
+    appendOptionalFields(data, config, "", "100", "142");
+
+    assert(data["measurementEnvironment"].isNull());
+    assert(data["measurementHeight"].isNull());
+    assert(data["altitudeAccuracy"].isNull());
+    assert(data["endTime"].isNull());
+    assert(data["hitsNumber"].as<uint32_t>() == 42);
+}
 } // namespace
 
 int main()
@@ -71,6 +91,7 @@ int main()
     testClampsMeasurementHeightToSupportedRange();
     testComputesHitsNumberFromPulseDelta();
     testAppendsOptionalFieldsToPayload();
+    testOmitsInvalidOptionalFieldsFromPayload();
     std::cout << "openradiation measurement metadata tests passed\n";
     return 0;
 }
