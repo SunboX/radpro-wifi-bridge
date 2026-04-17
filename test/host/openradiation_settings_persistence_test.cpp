@@ -54,6 +54,12 @@ void testBackupJsonRejectsInvalidEnvironmentAndKeepsPreviousValue()
     OpenRadiationBackupJson::applyMeasurementConfig(input.as<JsonVariantConst>(), updated);
 
     assert(std::string(updated.openRadiationMeasurementEnvironment.c_str()) == "city");
+
+    input.clear();
+    input["openRadiationMeasurementEnvironment"] = "";
+    OpenRadiationBackupJson::applyMeasurementConfig(input.as<JsonVariantConst>(), updated);
+
+    assert(std::string(updated.openRadiationMeasurementEnvironment.c_str()) == "city");
 }
 } // namespace
 

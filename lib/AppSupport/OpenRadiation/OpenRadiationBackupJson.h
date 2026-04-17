@@ -20,11 +20,7 @@ inline void applyMeasurementConfig(JsonVariantConst root, AppConfig &config)
         const char *rawEnvironment = root["openRadiationMeasurementEnvironment"].as<const char *>();
         String environment = rawEnvironment ? String(rawEnvironment) : String();
         environment.trim();
-        if (!environment.length())
-        {
-            config.openRadiationMeasurementEnvironment = String();
-        }
-        else if (OpenRadiationMeasurementMetadata::isValidMeasurementEnvironment(environment))
+        if (OpenRadiationMeasurementMetadata::isValidMeasurementEnvironment(environment))
         {
             config.openRadiationMeasurementEnvironment = environment;
         }
