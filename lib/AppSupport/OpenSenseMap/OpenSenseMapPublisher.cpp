@@ -1,5 +1,8 @@
 #include "OpenSenseMap/OpenSenseMapPublisher.h"
+#include "OpenSenseMap/OpenSenseMapBackoff.h"
+#include "OpenSenseMap/OpenSenseMapTls.h"
 #include "OpenSenseMap/OpenSenseMapPortalLinks.h"
+#include "Publishing/HttpPublishResponse.h"
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include "ConfigPortal/WiFiPortalService.h"
@@ -49,11 +52,13 @@ namespace
     constexpr unsigned long kMinPublishGapMs = 4000;
     constexpr unsigned long kRetryBackoffMs = 10000;
     constexpr unsigned long kMaxRetryBackoffMs = 60000;
+    constexpr unsigned long kResponseWaitMs = 10000;
 
     int logTlsError(Print &log, WiFiClientSecure &client, const char *context, String *errText = nullptr)
     {
         char err[128] = {0};
-        int code = client.lastError(err, sizeof(err));
+        int code = OpenSenseMapTls::normalizeMbedTlsErrorCode(
+            client.lastError(err, sizeof(err)));
         if (errText)
             *errText = err;
         if (code == 0)
@@ -74,29 +79,47 @@ namespace
     }
 }
 
-OpenSenseMapPublisher::OpenSenseMapPublisher(AppConfig &config, Print &log, const char *bridgeVersion)
+OpenSenseMapPublisher::OpenSenseMapPublisher(AppConfig &config, Print &log, const char *bridgeVersion, PublisherHealth &health)
     : config_(config),
       log_(log),
-      bridgeVersion_(bridgeVersion ? bridgeVersion : "")
+      bridgeVersion_(bridgeVersion ? bridgeVersion : ""),
+      health_(health)
 {
 }
 
 void OpenSenseMapPublisher::begin()
 {
     updateConfig();
+    syncHealthState();
 }
 
 void OpenSenseMapPublisher::updateConfig()
 {
     // No-op for now; pending values are populated via onCommandResult.
     // Leaving this hook in case we need to react to config changes later.
+    syncHealthState();
 }
 
 void OpenSenseMapPublisher::loop()
 {
+    syncHealthState();
     if (paused_)
         return;
     publishPending();
+}
+
+void OpenSenseMapPublisher::clearPendingData()
+{
+    pendingTubeValue_ = "";
+    pendingDoseValue_ = "";
+    haveTubeValue_ = false;
+    haveDoseValue_ = false;
+    pendingPublish_ = false;
+    suppressUntilMs_ = 0;
+    consecutiveFailures_ = 0;
+    lastTlsErrorCode_ = 0;
+    lastTlsErrorText_.clear();
+    syncHealthState();
 }
 
 void OpenSenseMapPublisher::onCommandResult(DeviceManager::CommandType type, const String &value)
@@ -119,12 +142,15 @@ void OpenSenseMapPublisher::onCommandResult(DeviceManager::CommandType type, con
         if (haveTubeValue_)
         {
             pendingPublish_ = true;
-            suppressUntilMs_ = 0;
+            suppressUntilMs_ = OpenSenseMapBackoff::preserveActiveSuppression(
+                millis(),
+                suppressUntilMs_);
         }
         break;
     default:
         break;
     }
+    syncHealthState();
 }
 
 bool OpenSenseMapPublisher::isEnabled() const
@@ -141,26 +167,45 @@ bool OpenSenseMapPublisher::isEnabled() const
 bool OpenSenseMapPublisher::publishPending()
 {
     if (paused_)
+    {
+        syncHealthState();
         return true;
+    }
     if (!pendingPublish_)
+    {
+        syncHealthState();
         return false;
+    }
 
     if (!isEnabled())
+    {
+        syncHealthState();
         return true; // treat as handled to avoid spinning
+    }
 
     if (WiFi.status() != WL_CONNECTED)
+    {
+        syncHealthState();
         return true;
+    }
 
     unsigned long now = millis();
     if (suppressUntilMs_ && now < suppressUntilMs_)
+    {
+        syncHealthState();
         return true;
+    }
 
     if (now - lastAttemptMs_ < kMinPublishGapMs)
+    {
+        syncHealthState();
         return true;
+    }
 
     if (!haveTubeValue_ || !haveDoseValue_)
     {
         pendingPublish_ = false;
+        syncHealthState();
         return true;
     }
 
@@ -181,6 +226,7 @@ bool OpenSenseMapPublisher::publishPending()
     lastTlsErrorCode_ = 0;
     lastTlsErrorText_.clear();
     lastAttemptMs_ = now;
+    health_.noteAttempt(now);
     bool ok = sendPayload(payloadDoc_);
     if (ok)
     {
@@ -215,12 +261,20 @@ bool OpenSenseMapPublisher::publishPending()
         log_.print(backoff / 1000);
         log_.println(F("s"));
 
-        if (lastTlsErrorCode_ == -0x0038 || lastTlsErrorCode_ == 56 || lastTlsErrorCode_ == -56)
+        if (OpenSenseMapTls::isCtrDrbgInputTooLarge(lastTlsErrorCode_))
         {
             log_.println(F("OpenSenseMap: TLS CTR_DRBG input-too-large; reboot or check Wi-Fi stability/time sync. This is an ESP32 mbedTLS quirk."));
         }
     }
+    syncHealthState();
     return true;
+}
+
+void OpenSenseMapPublisher::syncHealthState()
+{
+    health_.setEnabled(isEnabled());
+    health_.setPaused(paused_);
+    health_.setPending(pendingPublish_);
 }
 
 void OpenSenseMapPublisher::HandlePortalPost(WebServer &server,
@@ -315,6 +369,12 @@ bool OpenSenseMapPublisher::sendPayload(const JsonDocument &payload)
     {
         log_.println("OpenSenseMap: connect failed.");
         lastTlsErrorCode_ = logTlsError(log_, client, "connect", &lastTlsErrorText_);
+        health_.noteFailure(
+            millis(),
+            lastTlsErrorText_.length() ? lastTlsErrorText_ : String("connect failed"),
+            0,
+            String(),
+            lastTlsErrorText_);
         return false;
     }
 
@@ -342,28 +402,59 @@ bool OpenSenseMapPublisher::sendPayload(const JsonDocument &payload)
     if (client.getWriteError())
     {
         log_.println("OpenSenseMap: failed to write request.");
-        lastTlsErrorCode_ = logTlsError(log_, client, "write", &lastTlsErrorText_);
+        health_.noteFailure(millis(), "write failed");
         return false;
     }
 
-    // Read status line
-    String status = client.readStringUntil('\n');
-    status.trim();
-    if (!status.startsWith("HTTP/1.1 "))
+    client.flush();
+
+    const auto response = HttpPublishResponse::readStatus(
+        client,
+        kResponseWaitMs,
+        []() { return millis(); },
+        []() {
+            delay(10);
+            yield();
+        });
+
+    if (!response.success)
     {
-        log_.print("OpenSenseMap: unexpected status line: ");
-        log_.println(status.length() ? status : String("<empty>"));
-        lastTlsErrorCode_ = logTlsError(log_, client, "status", &lastTlsErrorText_);
+        switch (response.failure)
+        {
+        case HttpPublishResponse::FailureKind::NoResponse:
+            log_.print(F("OpenSenseMap: no response before "));
+            if (client.connected())
+                log_.println(F("timeout"));
+            else
+                log_.println(F("disconnect"));
+            health_.noteFailure(millis(), "no response", 0, response.statusLine, response.trace);
+            break;
+        case HttpPublishResponse::FailureKind::InvalidStatusLine:
+            log_.print("OpenSenseMap: unexpected status line: ");
+            log_.println(response.statusLine.length() ? response.statusLine : String("<empty>"));
+            if (response.trace.length())
+            {
+                log_.print("OpenSenseMap: response trace: ");
+                log_.println(response.trace);
+            }
+            health_.noteFailure(millis(), "invalid status line", 0, response.statusLine, response.trace);
+            break;
+        case HttpPublishResponse::FailureKind::HttpError:
+            log_.print("OpenSenseMap: HTTP ");
+            log_.println(response.statusCode);
+            health_.noteFailure(millis(), "http error", response.statusCode, response.statusLine, response.trace);
+            break;
+        case HttpPublishResponse::FailureKind::ReadError:
+            log_.println("OpenSenseMap: response read error.");
+            health_.noteFailure(millis(), "read error", 0, response.statusLine, response.trace);
+            break;
+        case HttpPublishResponse::FailureKind::None:
+            break;
+        }
         return false;
     }
 
-    const int statusCode = status.substring(9).toInt();
-    if (statusCode < 200 || statusCode >= 300)
-    {
-        log_.print("OpenSenseMap: HTTP ");
-        log_.println(statusCode);
-        return false;
-    }
+    health_.noteSuccess(millis(), response.statusCode, response.statusLine);
 
     // Consume remainder
     while (client.connected() || client.available())

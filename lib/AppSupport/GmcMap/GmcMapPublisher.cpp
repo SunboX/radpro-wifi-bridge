@@ -6,6 +6,7 @@
 #include "Led/LedController.h"
 #include <WiFiClient.h>
 #include <cmath>
+#include "Publishing/HttpPublishResponse.h"
 
 namespace
 {
@@ -16,28 +17,46 @@ namespace
     constexpr unsigned long kAcpmWindowMs = 60000;
 }
 
-GmcMapPublisher::GmcMapPublisher(AppConfig &config, Print &log, const char *bridgeVersion)
+GmcMapPublisher::GmcMapPublisher(AppConfig &config, Print &log, const char *bridgeVersion, PublisherHealth &health)
     : config_(config),
       log_(log),
-      bridgeVersion_(bridgeVersion ? bridgeVersion : "")
+      bridgeVersion_(bridgeVersion ? bridgeVersion : ""),
+      health_(health)
 {
 }
 
 void GmcMapPublisher::begin()
 {
     updateConfig();
+    syncHealthState();
 }
 
 void GmcMapPublisher::updateConfig()
 {
     // nothing dynamic yet – placeholder for future settings
+    syncHealthState();
 }
 
 void GmcMapPublisher::loop()
 {
+    syncHealthState();
     if (paused_)
         return;
     publishPending();
+}
+
+void GmcMapPublisher::clearPendingData()
+{
+    pendingCpm_ = "";
+    pendinguSv_ = "";
+    pendingCpmValue_ = 0.0f;
+    haveCpm_ = false;
+    haveuSv_ = false;
+    publishQueued_ = false;
+    suppressUntilMs_ = 0;
+    rateSamples_.clear();
+    rateSampleSum_ = 0.0f;
+    syncHealthState();
 }
 
 void GmcMapPublisher::onCommandResult(DeviceManager::CommandType type, const String &value)
@@ -70,6 +89,7 @@ void GmcMapPublisher::onCommandResult(DeviceManager::CommandType type, const Str
     default:
         break;
     }
+    syncHealthState();
 }
 
 bool GmcMapPublisher::isEnabled() const
@@ -86,27 +106,46 @@ bool GmcMapPublisher::isEnabled() const
 bool GmcMapPublisher::publishPending()
 {
     if (paused_)
+    {
+        syncHealthState();
         return true;
+    }
     if (!publishQueued_)
+    {
+        syncHealthState();
         return false;
+    }
 
     if (!isEnabled())
+    {
+        syncHealthState();
         return true;
+    }
 
     if (!haveCpm_ || !haveuSv_)
     {
         publishQueued_ = false;
+        syncHealthState();
         return true;
     }
 
     if (WiFi.status() != WL_CONNECTED)
+    {
+        syncHealthState();
         return true;
+    }
 
     unsigned long now = millis();
     if (suppressUntilMs_ && now < suppressUntilMs_)
+    {
+        syncHealthState();
         return true;
+    }
     if (now - lastAttemptMs_ < kMinPublishGapMs)
+    {
+        syncHealthState();
         return true;
+    }
 
     String query;
     query.reserve(160);
@@ -135,6 +174,7 @@ bool GmcMapPublisher::publishPending()
     log_.println(query);
 
     lastAttemptMs_ = now;
+    health_.noteAttempt(now);
     bool ok = sendRequest(query);
     if (ok)
     {
@@ -147,7 +187,15 @@ bool GmcMapPublisher::publishPending()
     {
         suppressUntilMs_ = millis() + kRetryBackoffMs;
     }
+    syncHealthState();
     return true;
+}
+
+void GmcMapPublisher::syncHealthState()
+{
+    health_.setEnabled(isEnabled());
+    health_.setPaused(paused_);
+    health_.setPending(publishQueued_);
 }
 
 void GmcMapPublisher::addRateSample(float cpm, unsigned long now)
@@ -276,9 +324,11 @@ String GmcMapPublisher::formatFloat(float value, uint8_t decimals)
 bool GmcMapPublisher::sendRequest(const String &query)
 {
     WiFiClient client;
+    client.setTimeout(10000);
     if (!client.connect(kHost, kPort))
     {
         log_.println("GMCMap: connect failed.");
+        health_.noteFailure(millis(), "connect failed");
         return false;
     }
 
@@ -295,28 +345,66 @@ bool GmcMapPublisher::sendRequest(const String &query)
     if (client.print(request) != request.length())
     {
         log_.println("GMCMap: send failed.");
+        health_.noteFailure(millis(), "send failed");
         return false;
     }
 
-    // Read status line
-    String status = client.readStringUntil('\n');
-    status.trim();
-    if (!status.startsWith("HTTP/1.1 "))
+    client.flush();
+
+    const auto response = HttpPublishResponse::readStatus(
+        client,
+        10000,
+        []() { return millis(); },
+        []() {
+            delay(10);
+            yield();
+        });
+
+    if (!response.success)
     {
-        log_.print("GMCMap: unexpected status line: ");
-        log_.println(status);
+        switch (response.failure)
+        {
+        case HttpPublishResponse::FailureKind::NoResponse:
+            log_.print("GMCMap: no response before ");
+            if (client.connected())
+                log_.println("timeout");
+            else
+                log_.println("disconnect");
+            health_.noteFailure(millis(), "no response", 0, response.statusLine, response.trace);
+            break;
+        case HttpPublishResponse::FailureKind::InvalidStatusLine:
+            log_.print("GMCMap: unexpected status line: ");
+            log_.println(response.statusLine.length() ? response.statusLine : String("<empty>"));
+            if (response.trace.length())
+            {
+                log_.print("GMCMap: response trace: ");
+                log_.println(response.trace);
+            }
+            health_.noteFailure(millis(), "invalid status line", 0, response.statusLine, response.trace);
+            break;
+        case HttpPublishResponse::FailureKind::HttpError:
+            log_.print("GMCMap: HTTP ");
+            log_.println(response.statusCode);
+            if (response.trace.length())
+            {
+                log_.print("GMCMap: response trace: ");
+                log_.println(response.trace);
+            }
+            health_.noteFailure(millis(), "http error", response.statusCode, response.statusLine, response.trace);
+            break;
+        case HttpPublishResponse::FailureKind::ReadError:
+            log_.println("GMCMap: response read error.");
+            health_.noteFailure(millis(), "read error", 0, response.statusLine, response.trace);
+            break;
+        case HttpPublishResponse::FailureKind::None:
+            break;
+        }
         return false;
     }
 
-    int statusCode = status.substring(9).toInt();
-    if (statusCode < 200 || statusCode >= 300)
-    {
-        log_.print("GMCMap: HTTP ");
-        log_.println(statusCode);
-        return false;
-    }
+    health_.noteSuccess(millis(), response.statusCode, response.statusLine);
 
-    while (client.connected())
+    while (client.connected() || client.available())
         client.read();
 
     return true;

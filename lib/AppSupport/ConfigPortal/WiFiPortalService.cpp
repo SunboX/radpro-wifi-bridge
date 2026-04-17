@@ -6,6 +6,7 @@
 #include "OpenSenseMap/OpenSenseMapPublisher.h"
 #include "GmcMap/GmcMapPublisher.h"
 #include "Radmon/RadmonPublisher.h"
+#include "Logging/LogCursorWindow.h"
 
 #include <Arduino.h>
 #include <algorithm>
@@ -14,12 +15,19 @@
 #include <esp_wifi.h>
 #include <ArduinoJson.h>
 
-WiFiPortalService::WiFiPortalService(AppConfig &config, AppConfigStore &store, DeviceInfoStore &info, DebugLogStream &logPort, LedController &led)
+WiFiPortalService::WiFiPortalService(AppConfig &config,
+                                     AppConfigStore &store,
+                                     DeviceInfoStore &info,
+                                     DebugLogStream &logPort,
+                                     LedController &led,
+                                     const PublisherHealth &openSenseMapHealth,
+                                     const PublisherHealth &gmcMapHealth,
+                                     const PublisherHealth &radmonHealth)
     : config_(config),
       store_(store),
       deviceInfo_(info),
       deviceInfoPage_(info),
-      bridgeInfoPage_(),
+      bridgeInfoPage_(openSenseMapHealth, gmcMapHealth, radmonHealth),
       manager_(),
       log_(logPort),
       led_(led),
@@ -1509,19 +1517,28 @@ void WiFiPortalService::handleLogsJson()
     if (!manager_.server)
         return;
 
+    uint32_t afterId = 0;
+    if (manager_.server->hasArg("after"))
+        afterId = static_cast<uint32_t>(strtoul(manager_.server->arg("after").c_str(), nullptr, 10));
+
     std::vector<DebugLogEntry> entries;
     log_.copyEntries(entries);
+    const auto window = LogCursorWindow::select(entries, afterId);
 
     JsonDocument doc;
     JsonArray lines = doc["lines"].to<JsonArray>();
-    for (const auto &entry : entries)
+    for (size_t i = window.startIndex; i < entries.size(); ++i)
     {
+        const auto &entry = entries[i];
         lines.add(entry.text);
         if (doc.overflowed())
             break;
     }
     doc["count"] = static_cast<uint32_t>(entries.size());
+    doc["returnedCount"] = static_cast<uint32_t>(lines.size());
+    doc["oldest"] = window.oldestId;
     doc["latest"] = log_.latestId();
+    doc["reset"] = window.reset;
 
     String body;
     serializeJson(doc, body);

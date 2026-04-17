@@ -28,6 +28,7 @@ public:
 
     void update(DeviceManager::CommandType type, const String &value);
     void setBridgeFirmware(const String &version);
+    void clearLiveData();
 
     DeviceInfoSnapshot snapshot() const;
     String toJson() const;

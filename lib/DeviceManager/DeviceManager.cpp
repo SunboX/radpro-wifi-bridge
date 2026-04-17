@@ -9,6 +9,80 @@ namespace
     constexpr uint32_t DEVICE_ID_RESPONSE_TIMEOUT_MS = 12000;
     constexpr uint8_t DEVICE_ID_MAX_RETRY = 4;
     constexpr const char *DEVICE_KEEPALIVE_LINE = "Main loop is running.";
+
+    class StateLockGuard
+    {
+    public:
+        explicit StateLockGuard(SemaphoreHandle_t mutex)
+            : mutex_(mutex),
+              locked_(mutex_ && xSemaphoreTake(mutex_, portMAX_DELAY) == pdTRUE)
+        {
+        }
+
+        ~StateLockGuard()
+        {
+            if (locked_)
+                xSemaphoreGive(mutex_);
+        }
+
+    private:
+        SemaphoreHandle_t mutex_;
+        bool locked_;
+    };
+
+    String extractPayload(const String &trimmed, bool allowBareValue = false)
+    {
+        if (trimmed.startsWith("OK "))
+        {
+            String value = trimmed.substring(3);
+            value.trim();
+            return value;
+        }
+        if (allowBareValue)
+        {
+            String value = trimmed;
+            value.trim();
+            return value;
+        }
+        return String();
+    }
+
+    bool isStrictNumericString(const String &value, bool allowDecimal, bool allowSign = false)
+    {
+        if (!value.length())
+            return false;
+
+        bool sawDigit = false;
+        bool sawDecimal = false;
+        for (size_t i = 0; i < value.length(); ++i)
+        {
+            char c = value[i];
+            if (c >= '0' && c <= '9')
+            {
+                sawDigit = true;
+                continue;
+            }
+            if (allowDecimal && c == '.' && !sawDecimal)
+            {
+                sawDecimal = true;
+                continue;
+            }
+            if (allowSign && i == 0 && (c == '-' || c == '+'))
+                continue;
+            return false;
+        }
+        return sawDigit;
+    }
+
+    bool isUnsignedIntegerString(const String &value)
+    {
+        return isStrictNumericString(value, false, false);
+    }
+
+    bool isDecimalString(const String &value, bool allowSign = false)
+    {
+        return isStrictNumericString(value, true, allowSign);
+    }
 }
 
 DeviceManager *DeviceManager::instance_ = nullptr;
@@ -41,6 +115,7 @@ DeviceManager::DeviceManager(UsbCdcHost &host)
     : host_(host)
 {
     instance_ = this;
+    state_mutex_ = xSemaphoreCreateMutex();
 }
 
 void DeviceManager::begin(uint16_t vid, uint16_t pid)
@@ -50,6 +125,7 @@ void DeviceManager::begin(uint16_t vid, uint16_t pid)
 
 void DeviceManager::begin(const std::vector<std::pair<uint16_t, uint16_t>> &vid_pid_allowlist)
 {
+    StateLockGuard lock(state_mutex_);
     instance_ = this;
 
     host_.setDeviceCallbacks(&DeviceManager::HandleConnected, &DeviceManager::HandleDisconnected);
@@ -88,6 +164,7 @@ void DeviceManager::stop()
 
 void DeviceManager::enable(bool active)
 {
+    StateLockGuard lock(state_mutex_);
     if (enabled_ == active)
         return;
 
@@ -109,6 +186,7 @@ void DeviceManager::enable(bool active)
 
 void DeviceManager::requestStats()
 {
+    StateLockGuard lock(state_mutex_);
     if (!enabled_ || !host_.isConnected() || !device_id_logged_)
         return;
 
@@ -124,6 +202,7 @@ void DeviceManager::requestStats()
 
 void DeviceManager::requestRandomData()
 {
+    StateLockGuard lock(state_mutex_);
     if (!enabled_ || !host_.isConnected())
         return;
     if (!isCommandPending("GET randomData"))
@@ -133,6 +212,7 @@ void DeviceManager::requestRandomData()
 
 void DeviceManager::requestDataLog(const String &args)
 {
+    StateLockGuard lock(state_mutex_);
     if (!enabled_ || !host_.isConnected())
         return;
     String cmd = "GET datalog";
@@ -147,6 +227,7 @@ void DeviceManager::requestDataLog(const String &args)
 
 void DeviceManager::loop()
 {
+    StateLockGuard lock(state_mutex_);
     if (!enabled_)
         return;
 
@@ -158,12 +239,22 @@ void DeviceManager::loop()
         }
         awaiting_response_ = false;
         has_current_command_ = false;
+        current_command_ = PendingCommand{};
         command_queue_.clear();
         return;
     }
 
     if (awaiting_response_)
     {
+        if (!has_current_command_ || !current_command_.command.length())
+        {
+            awaiting_response_ = false;
+            has_current_command_ = false;
+            current_command_ = PendingCommand{};
+            processQueue();
+            return;
+        }
+
         if ((millis() - last_request_ms_) > DEVICE_ID_RESPONSE_TIMEOUT_MS)
         {
             if (line_handler_)
@@ -197,6 +288,7 @@ void DeviceManager::loop()
 
 void DeviceManager::onConnected()
 {
+    StateLockGuard lock(state_mutex_);
     device_id_logged_ = false;
     device_details_logged_ = false;
     initial_deviceid_recovery_done_ = false;
@@ -221,10 +313,12 @@ void DeviceManager::onConnected()
 
 void DeviceManager::onDisconnected()
 {
+    StateLockGuard lock(state_mutex_);
     device_id_logged_ = false;
     device_details_logged_ = false;
     awaiting_response_ = false;
     has_current_command_ = false;
+    current_command_ = PendingCommand{};
     command_queue_.clear();
     device_sensitivity_cpm_per_uSv_ = 0.0f;
 
@@ -237,6 +331,7 @@ void DeviceManager::onDisconnected()
 
 void DeviceManager::onLine(const String &line)
 {
+    StateLockGuard lock(state_mutex_);
     if (verbose_logging_enabled_ && line_handler_)
         line_handler_(String("<- Line: ") + line);
 
@@ -354,105 +449,94 @@ void DeviceManager::onLine(const String &line)
     }
     case CommandType::DevicePower:
     {
-        if (trimmed.startsWith("OK "))
-        {
-            String value = trimmed.substring(3);
-            value.trim();
-            if (line_handler_)
-                line_handler_(String("Device Power: ") + (value == "1" ? "ON" : "OFF"));
-            emitResult(CommandType::DevicePower, value, true);
-        }
+        String value = extractPayload(trimmed);
+        if (value != "0" && value != "1")
+            return;
+        if (line_handler_)
+            line_handler_(String("Device Power: ") + (value == "1" ? "ON" : "OFF"));
+        emitResult(CommandType::DevicePower, value, true);
         handleSuccess();
         break;
     }
     case CommandType::DeviceBatteryVoltage:
     {
-        if (trimmed.startsWith("OK "))
-        {
-            String value = trimmed.substring(3);
-            value.trim();
-            if (line_handler_)
-                line_handler_(String("Battery Voltage: ") + value + " V");
-            emitResult(CommandType::DeviceBatteryVoltage, value, true);
+        String value = extractPayload(trimmed);
+        if (!isDecimalString(value))
+            return;
+        if (line_handler_)
+            line_handler_(String("Battery Voltage: ") + value + " V");
+        emitResult(CommandType::DeviceBatteryVoltage, value, true);
 
-            float voltage = value.toFloat();
-            float percent = (voltage - 3.0f) * (100.0f / (4.2f - 3.0f));
-            if (percent < 0.0f)
-                percent = 0.0f;
-            if (percent > 100.0f)
-                percent = 100.0f;
-            uint8_t percentInt = static_cast<uint8_t>(percent + 0.5f);
-            if (line_handler_)
-                line_handler_(String("Battery Percent: ") + percentInt + " %");
-            emitResult(CommandType::DeviceBatteryPercent, String(percentInt), true);
-        }
+        float voltage = value.toFloat();
+        float percent = (voltage - 3.0f) * (100.0f / (4.2f - 3.0f));
+        if (percent < 0.0f)
+            percent = 0.0f;
+        if (percent > 100.0f)
+            percent = 100.0f;
+        uint8_t percentInt = static_cast<uint8_t>(percent + 0.5f);
+        if (line_handler_)
+            line_handler_(String("Battery Percent: ") + percentInt + " %");
+        emitResult(CommandType::DeviceBatteryPercent, String(percentInt), true);
         handleSuccess();
         break;
     }
     case CommandType::DeviceTime:
     {
-        if (trimmed.startsWith("OK "))
+        String value = extractPayload(trimmed);
+        if (!isUnsignedIntegerString(value))
+            return;
+        if (line_handler_)
         {
-            String value = trimmed.substring(3);
-            value.trim();
-            if (line_handler_)
-            {
-                time_t ts = static_cast<time_t>(value.toInt());
-                struct tm tm_info;
-                gmtime_r(&ts, &tm_info);
-                char buf[32];
-                strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S UTC", &tm_info);
-                line_handler_(String("Device Time: ") + buf + " (" + value + ")");
-            }
-            emitResult(CommandType::DeviceTime, value, true);
+            time_t ts = static_cast<time_t>(value.toInt());
+            struct tm tm_info;
+            gmtime_r(&ts, &tm_info);
+            char buf[32];
+            strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S UTC", &tm_info);
+            line_handler_(String("Device Time: ") + buf + " (" + value + ")");
         }
+        emitResult(CommandType::DeviceTime, value, true);
         handleSuccess();
         break;
     }
     case CommandType::DeviceTimeZone:
     {
-        if (trimmed.startsWith("OK "))
-        {
-            String zone = trimmed.substring(3);
-            zone.trim();
-            if (line_handler_)
-                line_handler_(String("Device Time Zone: ") + zone);
-            emitResult(CommandType::DeviceTimeZone, zone, true);
-        }
+        String zone = extractPayload(trimmed);
+        if (!isDecimalString(zone, true))
+            return;
+        if (line_handler_)
+            line_handler_(String("Device Time Zone: ") + zone);
+        emitResult(CommandType::DeviceTimeZone, zone, true);
         handleSuccess();
         break;
     }
     case CommandType::DeviceSensitivity:
     {
-        if (trimmed.startsWith("OK "))
-        {
-            String sens = trimmed.substring(3);
-            sens.trim();
-            if (line_handler_)
-                line_handler_(String("Tube Sensitivity: ") + sens + " cpm/µSv/h");
-            emitResult(CommandType::DeviceSensitivity, sens, true);
-            device_sensitivity_cpm_per_uSv_ = sens.toFloat();
-        }
+        String sens = extractPayload(trimmed);
+        if (!isDecimalString(sens))
+            return;
+        if (line_handler_)
+            line_handler_(String("Tube Sensitivity: ") + sens + " cpm/µSv/h");
+        emitResult(CommandType::DeviceSensitivity, sens, true);
+        device_sensitivity_cpm_per_uSv_ = sens.toFloat();
         handleSuccess();
         break;
     }
     case CommandType::TubeTime:
     {
-        if (trimmed.startsWith("OK "))
-        {
-            String value = trimmed.substring(3);
-            value.trim();
-            if (line_handler_)
-                line_handler_(String("Tube Lifetime: ") + value + " s");
-            emitResult(CommandType::TubeTime, value, true);
-        }
+        String value = extractPayload(trimmed);
+        if (!isUnsignedIntegerString(value))
+            return;
+        if (line_handler_)
+            line_handler_(String("Tube Lifetime: ") + value + " s");
+        emitResult(CommandType::TubeTime, value, true);
         handleSuccess();
         break;
     }
     case CommandType::TubePulseCount:
     {
-        String value = trimmed.startsWith("OK ") ? trimmed.substring(3) : trimmed;
-        value.trim();
+        String value = extractPayload(trimmed, true);
+        if (!isUnsignedIntegerString(value))
+            return;
         if (line_handler_)
             line_handler_(String("Tube Pulse Count: ") + value);
         emitResult(CommandType::TubePulseCount, value, true);
@@ -461,8 +545,9 @@ void DeviceManager::onLine(const String &line)
     }
     case CommandType::TubeRate:
     {
-        String value = trimmed.startsWith("OK ") ? trimmed.substring(3) : trimmed;
-        value.trim();
+        String value = extractPayload(trimmed, true);
+        if (!isDecimalString(value))
+            return;
         if (line_handler_)
             line_handler_(String("Tube Rate: ") + value + " cpm");
         emitResult(CommandType::TubeRate, value, true);
@@ -484,53 +569,45 @@ void DeviceManager::onLine(const String &line)
     }
     case CommandType::TubeDeadTime:
     {
-        if (trimmed.startsWith("OK "))
-        {
-            String value = trimmed.substring(3);
-            value.trim();
-            if (line_handler_)
-                line_handler_(String("Tube Dead Time: ") + value + " s");
-            emitResult(CommandType::TubeDeadTime, value, true);
-        }
+        String value = extractPayload(trimmed);
+        if (!isDecimalString(value))
+            return;
+        if (line_handler_)
+            line_handler_(String("Tube Dead Time: ") + value + " s");
+        emitResult(CommandType::TubeDeadTime, value, true);
         handleSuccess();
         break;
     }
     case CommandType::TubeDeadTimeCompensation:
     {
-        if (trimmed.startsWith("OK "))
-        {
-            String value = trimmed.substring(3);
-            value.trim();
-            if (line_handler_)
-                line_handler_(String("Dead Time Compensation: ") + value + " s");
-            emitResult(CommandType::TubeDeadTimeCompensation, value, true);
-        }
+        String value = extractPayload(trimmed);
+        if (!isDecimalString(value))
+            return;
+        if (line_handler_)
+            line_handler_(String("Dead Time Compensation: ") + value + " s");
+        emitResult(CommandType::TubeDeadTimeCompensation, value, true);
         handleSuccess();
         break;
     }
     case CommandType::TubeHVFrequency:
     {
-        if (trimmed.startsWith("OK "))
-        {
-            String value = trimmed.substring(3);
-            value.trim();
-            if (line_handler_)
-                line_handler_(String("HV Frequency: ") + value + " Hz");
-            emitResult(CommandType::TubeHVFrequency, value, true);
-        }
+        String value = extractPayload(trimmed);
+        if (!isDecimalString(value))
+            return;
+        if (line_handler_)
+            line_handler_(String("HV Frequency: ") + value + " Hz");
+        emitResult(CommandType::TubeHVFrequency, value, true);
         handleSuccess();
         break;
     }
     case CommandType::TubeHVDutyCycle:
     {
-        if (trimmed.startsWith("OK "))
-        {
-            String value = trimmed.substring(3);
-            value.trim();
-            if (line_handler_)
-                line_handler_(String("HV Duty Cycle: ") + value);
-            emitResult(CommandType::TubeHVDutyCycle, value, true);
-        }
+        String value = extractPayload(trimmed);
+        if (!isDecimalString(value))
+            return;
+        if (line_handler_)
+            line_handler_(String("HV Duty Cycle: ") + value);
+        emitResult(CommandType::TubeHVDutyCycle, value, true);
         handleSuccess();
         break;
     }
@@ -583,7 +660,11 @@ void DeviceManager::scheduleDeviceId(uint32_t delay_ms, bool announce)
 
 void DeviceManager::enqueueCommand(const String &cmd, CommandType type, uint32_t delay_ms, bool announce)
 {
-    PendingCommand entry{cmd, type, announce, 0, millis() + delay_ms};
+    PendingCommand entry;
+    entry.command = cmd;
+    entry.type = type;
+    entry.announce = announce;
+    entry.ready_ms = millis() + delay_ms;
     command_queue_.push_back(entry);
 }
 
@@ -656,6 +737,14 @@ void DeviceManager::handleError()
 {
     awaiting_response_ = false;
 
+    if (!has_current_command_ || !current_command_.command.length())
+    {
+        has_current_command_ = false;
+        current_command_ = PendingCommand{};
+        processQueue();
+        return;
+    }
+
     // If the device dropped mid-command, just reset state quietly.
     if (!host_.isConnected())
     {
@@ -677,6 +766,7 @@ void DeviceManager::handleError()
         }
     }
     else if ((current_command_.type == CommandType::TubePulseCount || current_command_.type == CommandType::TubeRate ||
+              current_command_.type == CommandType::DevicePower ||
               current_command_.type == CommandType::DeviceBatteryVoltage || current_command_.type == CommandType::DeviceBatteryPercent) &&
              current_command_.retry < 1)
     {

@@ -14,13 +14,21 @@
 #include "Led/LedController.h"
 #include "Ota/OtaUpdateService.h"
 #include "Logging/DebugLogStream.h"
+#include "Publishing/PublisherHealth.h"
 
 class WiFiPortalService
 {
 public:
     using TemplateReplacements = std::vector<std::pair<String, String>>;
 
-    WiFiPortalService(AppConfig &config, AppConfigStore &store, DeviceInfoStore &info, DebugLogStream &logPort, LedController &led);
+    WiFiPortalService(AppConfig &config,
+                      AppConfigStore &store,
+                      DeviceInfoStore &info,
+                      DebugLogStream &logPort,
+                      LedController &led,
+                      const PublisherHealth &openSenseMapHealth,
+                      const PublisherHealth &gmcMapHealth,
+                      const PublisherHealth &radmonHealth);
 
     void begin();
     bool connect(bool forcePortal);

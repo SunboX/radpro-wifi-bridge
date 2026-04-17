@@ -10,6 +10,25 @@
     let autoScroll = true
     let refreshHandle = null
     let isFetching = false
+    let lastSeenId = 0
+
+    function lineCountLimit(payload) {
+        if (payload && Number.isFinite(payload.count) && payload.count > 0) return payload.count
+        return 400
+    }
+
+    function trimConsole(limit) {
+        while (consoleEl.childElementCount > limit) {
+            consoleEl.removeChild(consoleEl.firstChild)
+        }
+    }
+
+    function entriesToLines(payload) {
+        if (Array.isArray(payload.entries) && payload.entries.length) {
+            return payload.entries.map((entry) => entry.text || '')
+        }
+        return Array.isArray(payload.lines) ? payload.lines : []
+    }
 
     function scheduleNextFetch(delay = 2000) {
         if (document.hidden) return
@@ -40,17 +59,41 @@
         }
     }
 
+    function append(lines, limit) {
+        if (!lines.length) return
+        const fragment = document.createDocumentFragment()
+        lines.forEach((line) => {
+            const div = document.createElement('div')
+            div.className = 'log-line'
+            div.textContent = line || '\u00A0'
+            fragment.appendChild(div)
+        })
+        consoleEl.appendChild(fragment)
+        trimConsole(limit)
+        if (autoScroll) {
+            consoleEl.scrollTop = consoleEl.scrollHeight
+        }
+    }
+
     function fetchLogs() {
         if (isFetching) return
         isFetching = true
-        fetch('/logs.json', { cache: 'no-store' })
+        const url = lastSeenId > 0 ? `/logs.json?after=${encodeURIComponent(lastSeenId)}` : '/logs.json'
+        fetch(url, { cache: 'no-store' })
             .then((resp) => {
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
                 return resp.json()
             })
             .then((payload) => {
-                const lines = Array.isArray(payload.lines) ? payload.lines : []
-                render(lines)
+                const lines = entriesToLines(payload)
+                if (payload.reset || lastSeenId === 0) {
+                    render(lines)
+                } else {
+                    append(lines, lineCountLimit(payload))
+                }
+                if (Number.isFinite(payload.latest)) {
+                    lastSeenId = payload.latest
+                }
                 const time = new Date().toLocaleTimeString()
                 setStatus('T_LOG_STATUS_UPDATED', { time })
             })
@@ -109,6 +152,7 @@
     if (clearBtn) {
         clearBtn.addEventListener('click', () => {
             consoleEl.innerHTML = ''
+            lastSeenId = 0
             setStatus('T_LOG_STATUS_CLEARED')
         })
     }

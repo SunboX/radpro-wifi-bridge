@@ -5,6 +5,7 @@
 #include <vector>
 #include "AppConfig/AppConfig.h"
 #include "DeviceManager.h"
+#include "Publishing/PublisherHealth.h"
 
 class WebServer;
 class LedController;
@@ -13,12 +14,13 @@ class WiFiPortalService;
 class GmcMapPublisher
 {
 public:
-    GmcMapPublisher(AppConfig &config, Print &log, const char *bridgeVersion);
+    GmcMapPublisher(AppConfig &config, Print &log, const char *bridgeVersion, PublisherHealth &health);
 
     void begin();
     void updateConfig();
     void loop();
     void onCommandResult(DeviceManager::CommandType type, const String &value);
+    void clearPendingData();
     void setPaused(bool paused) { paused_ = paused; }
     static void SendPortalForm(WiFiPortalService &portal, const String &message = String());
     static void HandlePortalPost(WebServer &server,
@@ -32,6 +34,7 @@ private:
     bool isEnabled() const;
     bool publishPending();
     bool sendRequest(const String &query);
+    void syncHealthState();
     void addRateSample(float cpm, unsigned long now);
     void pruneSamples(unsigned long now);
     bool computeAcpm(float &out);
@@ -40,6 +43,7 @@ private:
     AppConfig &config_;
     Print &log_;
     String bridgeVersion_;
+    PublisherHealth &health_;
     String pendingCpm_;
     String pendinguSv_;
     float pendingCpmValue_ = 0.0f;

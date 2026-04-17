@@ -69,10 +69,10 @@ private:
     struct PendingCommand
     {
         String command;
-        CommandType type;
-        bool announce;
-        uint8_t retry;
-        unsigned long ready_ms;
+        CommandType type = CommandType::Generic;
+        bool announce = false;
+        uint8_t retry = 0;
+        unsigned long ready_ms = 0;
     };
 
     static DeviceManager *instance_;
@@ -112,6 +112,7 @@ private:
     bool has_current_command_ = false;
     PendingCommand current_command_{};
     std::vector<PendingCommand> command_queue_;
+    SemaphoreHandle_t state_mutex_ = nullptr;
     unsigned long last_request_ms_ = 0;
     float device_sensitivity_cpm_per_uSv_ = 0.0f;
     bool initial_deviceid_recovery_done_ = false;

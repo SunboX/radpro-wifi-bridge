@@ -31,6 +31,8 @@
 #include "Ota/OtaUpdateService.h"
 #include "FileSystem/BridgeFileSystem.h"
 #include "Logging/DebugLogStream.h"
+#include "Publishing/PublisherHealth.h"
+#include "UsbRecoveryPolicy.h"
 
 #ifndef BRIDGE_FIRMWARE_VERSION
 #define BRIDGE_FIRMWARE_VERSION "0.0.0"
@@ -89,16 +91,21 @@ static bool lastDeviceReadyLogged = false;
 
 static AppConfig appConfig;
 static AppConfigStore configStore;
-static WiFiPortalService portalService(appConfig, configStore, deviceInfoStore, DBG, ledController);
+static PublisherHealth openSenseMapHealth;
+static PublisherHealth gmcMapHealth;
+static PublisherHealth radmonHealth;
+static WiFiPortalService portalService(appConfig, configStore, deviceInfoStore, DBG, ledController, openSenseMapHealth, gmcMapHealth, radmonHealth);
 static MqttPublisher mqttPublisher(appConfig, DBG, ledController);
-static OpenSenseMapPublisher openSenseMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
-static GmcMapPublisher gmcMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
-static RadmonPublisher radmonPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION);
+static OpenSenseMapPublisher openSenseMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION, openSenseMapHealth);
+static GmcMapPublisher gmcMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION, gmcMapHealth);
+static RadmonPublisher radmonPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION, radmonHealth);
 static TimeSync timeSync(DBG);
 static bool deviceReady = false;
 static bool deviceError = false;
 static bool mqttError = false;
 static bool updateInProgress = false;
+static unsigned long usbDisconnectedSinceMs = 0;
+static unsigned long lastUsbRestartAttemptMs = 0;
 static PeripheralStarter peripheralStarter(device_manager, usb, mqttPublisher, openSenseMapPublisher, gmcMapPublisher, radmonPublisher, ledController, DBG, ALLOW_EARLY_START, BRIDGE_FIRMWARE_VERSION);
 static LedMode lastLoggedMode = LedMode::Booting;
 
@@ -193,6 +200,7 @@ void setup()
             DBG.println(")");
             bool transient = (type == DeviceManager::CommandType::TubePulseCount ||
                                type == DeviceManager::CommandType::TubeRate ||
+                               type == DeviceManager::CommandType::DevicePower ||
                                type == DeviceManager::CommandType::DeviceBatteryVoltage ||
                                type == DeviceManager::CommandType::DeviceBatteryPercent ||
                                (type == DeviceManager::CommandType::DeviceId && !deviceReady));
@@ -339,18 +347,49 @@ void loop()
         radmonPublisher.updateConfig();
         radmonPublisher.loop();
     }
-    if (!usb.isConnected())
+
+    const bool usbConnected = usb.isConnected();
+    if (!usbConnected)
     {
+        const unsigned long now = millis();
+        if (usbDisconnectedSinceMs == 0)
+        {
+            usbDisconnectedSinceMs = now;
+            deviceInfoStore.clearLiveData();
+            openSenseMapPublisher.clearPendingData();
+            gmcMapPublisher.clearPendingData();
+            radmonPublisher.clearPendingData();
+        }
+
         if (deviceReady)
         {
             DBG.println("DeviceReady cleared: USB disconnected.");
         }
         deviceReady = false;
         lastDeviceReadyLogged = false;
+
+        if (!updateInProgress &&
+            peripheralStarter.started() &&
+            wifiConnected &&
+            UsbRecoveryPolicy::shouldRestart(now, usbDisconnectedSinceMs, lastUsbRestartAttemptMs))
+        {
+            DBG.println("USB disconnected too long; restarting USB host.");
+            lastUsbRestartAttemptMs = now;
+            if (!usb.restart())
+            {
+                DBG.println("USB host restart failed.");
+            }
+            usbDisconnectedSinceMs = millis();
+        }
     }
     else if (deviceReady)
     {
+        usbDisconnectedSinceMs = 0;
         lastDeviceReadyLogged = true;
+    }
+    else
+    {
+        usbDisconnectedSinceMs = 0;
     }
     diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
     ledController.update();

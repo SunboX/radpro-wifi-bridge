@@ -72,6 +72,19 @@ void DeviceInfoStore::update(DeviceManager::CommandType type, const String &valu
     portEXIT_CRITICAL(&mux_);
 }
 
+void DeviceInfoStore::clearLiveData()
+{
+    portENTER_CRITICAL(&mux_);
+    devicePower_ = "";
+    batteryVoltage_ = "";
+    batteryPercent_ = "";
+    tubeRate_ = "";
+    tubeDoseRate_ = "";
+    tubePulseCount_ = "";
+    measurementUpdatedMs_ = 0;
+    portEXIT_CRITICAL(&mux_);
+}
+
 DeviceInfoSnapshot DeviceInfoStore::snapshot() const
 {
     DeviceInfoSnapshot snap;
