@@ -5,6 +5,7 @@
 #include "AppConfig/AppConfig.h"
 #include "DeviceInfo/DeviceInfoStore.h"
 #include "DeviceManager.h"
+#include "OpenRadiation/OpenRadiationMeasurementWindow.h"
 #include "Publishing/PublisherHealth.h"
 
 class OpenRadiationPublisher
@@ -26,7 +27,13 @@ private:
     bool isEnabled() const;
     bool publishPending();
     bool sendPayload(const String &payload);
-    bool buildPayload(String &outJson, String &outReportUuid, float doseRate, const String &timestamp);
+    bool buildPayload(String &outJson,
+                      String &outReportUuid,
+                      float doseRate,
+                      const String &startTime,
+                      const String &endTime,
+                      const String &startPulseCount,
+                      const String &endPulseCount);
     bool makeIsoTimestamp(String &out) const;
     String resolveApparatusId() const;
     String readResponseBody(WiFiClientSecure &client, unsigned long timeoutMs, size_t maxBytes) const;
@@ -41,6 +48,7 @@ private:
     String pendingDoseValue_;
     String pendingTubeValue_;
     String lastPublishedReportUuid_;
+    OpenRadiationMeasurementWindow::MeasurementWindowState measurementWindow_;
     bool haveDoseValue_ = false;
     bool haveTubeValue_ = false;
     bool publishQueued_ = false;

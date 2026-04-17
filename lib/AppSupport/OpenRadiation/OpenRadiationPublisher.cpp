@@ -1,4 +1,6 @@
 #include "OpenRadiation/OpenRadiationPublisher.h"
+#include "OpenRadiation/OpenRadiationMeasurementMetadata.h"
+#include "OpenRadiation/OpenRadiationMeasurementWindow.h"
 #include "OpenRadiation/OpenRadiationProtocol.h"
 
 #include <ArduinoJson.h>
@@ -52,6 +54,7 @@ void OpenRadiationPublisher::clearPendingData()
 {
     pendingDoseValue_ = String();
     pendingTubeValue_ = String();
+    OpenRadiationMeasurementWindow::clearMeasurementWindow(measurementWindow_);
     haveDoseValue_ = false;
     haveTubeValue_ = false;
     publishQueued_ = false;
@@ -79,6 +82,16 @@ void OpenRadiationPublisher::onCommandResult(DeviceManager::CommandType type, co
             {
                 publishQueued_ = true;
                 suppressUntilMs_ = 0;
+
+                String queuedTimestamp;
+                if (makeIsoTimestamp(queuedTimestamp))
+                {
+                    const DeviceInfoSnapshot info = deviceInfo_.snapshot();
+                    OpenRadiationMeasurementWindow::armMeasurementWindow(
+                        measurementWindow_,
+                        queuedTimestamp,
+                        info.tubePulseCount);
+                }
             }
         }
         break;
@@ -151,17 +164,27 @@ bool OpenRadiationPublisher::publishPending()
         publishQueued_ = false;
         haveDoseValue_ = false;
         haveTubeValue_ = false;
+        OpenRadiationMeasurementWindow::clearMeasurementWindow(measurementWindow_);
         syncHealthState();
         return true;
     }
 
-    String timestamp;
-    if (!makeIsoTimestamp(timestamp))
+    String endTimestamp;
+    if (!makeIsoTimestamp(endTimestamp))
     {
         log_.println("OpenRadiation: waiting for valid system time before publishing.");
         suppressUntilMs_ = now + 10000;
         syncHealthState();
         return true;
+    }
+
+    const DeviceInfoSnapshot info = deviceInfo_.snapshot();
+    if (!OpenRadiationMeasurementWindow::hasMeasurementWindow(measurementWindow_))
+    {
+        OpenRadiationMeasurementWindow::armMeasurementWindow(
+            measurementWindow_,
+            endTimestamp,
+            info.tubePulseCount);
     }
 
     if (fabsf(config_.openRadiationLatitude) < 0.000001f && fabsf(config_.openRadiationLongitude) < 0.000001f)
@@ -174,7 +197,13 @@ bool OpenRadiationPublisher::publishPending()
 
     String payload;
     String reportUuid;
-    if (!buildPayload(payload, reportUuid, doseRate, timestamp))
+    if (!buildPayload(payload,
+                      reportUuid,
+                      doseRate,
+                      measurementWindow_.startTime,
+                      endTimestamp,
+                      measurementWindow_.startPulseCount,
+                      info.tubePulseCount))
     {
         log_.println("OpenRadiation: failed to build payload.");
         suppressUntilMs_ = now + kRetryBackoffMs;
@@ -200,6 +229,7 @@ bool OpenRadiationPublisher::publishPending()
         publishQueued_ = false;
         haveDoseValue_ = false;
         haveTubeValue_ = false;
+        OpenRadiationMeasurementWindow::clearMeasurementWindow(measurementWindow_);
         lastAttemptMs_ = millis();
     }
     else
@@ -213,10 +243,13 @@ bool OpenRadiationPublisher::publishPending()
 bool OpenRadiationPublisher::buildPayload(String &outJson,
                                           String &outReportUuid,
                                           float doseRate,
-                                          const String &timestamp)
+                                          const String &startTime,
+                                          const String &endTime,
+                                          const String &startPulseCount,
+                                          const String &endPulseCount)
 {
     const String apparatusId = resolveApparatusId();
-    if (!apparatusId.length() || !config_.openRadiationApiKey.length())
+    if (!apparatusId.length() || !config_.openRadiationApiKey.length() || !startTime.length())
         return false;
 
     outReportUuid = generateUuid();
@@ -229,7 +262,7 @@ bool OpenRadiationPublisher::buildPayload(String &outJson,
     JsonObject data = doc["data"].to<JsonObject>();
     data["apparatusId"] = apparatusId;
     data["value"] = doseRate;
-    data["startTime"] = timestamp;
+    data["startTime"] = startTime;
     data["latitude"] = config_.openRadiationLatitude;
     data["longitude"] = config_.openRadiationLongitude;
     if (config_.openRadiationAltitude != 0.0f)
@@ -243,6 +276,12 @@ bool OpenRadiationPublisher::buildPayload(String &outJson,
     data["manualReporting"] = false;
     data["organisationReporting"] = OpenRadiationProtocol::buildOrganisationReporting(bridgeVersion_);
     data["reportContext"] = "routine";
+    OpenRadiationMeasurementMetadata::appendOptionalFields(
+        data,
+        config_,
+        endTime,
+        startPulseCount,
+        endPulseCount);
 
     outJson.clear();
     serializeJson(doc, outJson);
