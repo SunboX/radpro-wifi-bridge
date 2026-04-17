@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <cstring>
 
 constexpr uint32_t kMinReadIntervalMs = 500;
 constexpr size_t kDeviceNameParamLen = 32;
@@ -47,6 +48,8 @@ struct AppConfig
     bool openRadiationEnabled = false;
     String openRadiationDeviceId;
     String openRadiationApiKey;
+    String openRadiationMeasurementEnvironment;
+    float openRadiationMeasurementHeight = 0.0f;
     float openRadiationLatitude = 0.0f;
     float openRadiationLongitude = 0.0f;
     float openRadiationAltitude = 0.0f;
@@ -57,7 +60,7 @@ inline bool UpdateStringIfChanged(String &target, const char *value)
 {
     String trimmed = value ? String(value) : String();
     trimmed.trim();
-    if (trimmed == target)
+    if (std::strcmp(trimmed.c_str(), target.c_str()) == 0)
         return false;
     target = trimmed;
     return true;
