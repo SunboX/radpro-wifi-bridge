@@ -5,16 +5,53 @@
 #include "Mqtt/MqttPublisher.h"
 #include "OpenSenseMap/OpenSenseMapPublisher.h"
 #include "GmcMap/GmcMapPublisher.h"
+#include "OpenRadiation/OpenRadiationPortalLinks.h"
+#include "OpenRadiation/OpenRadiationPortalView.h"
+#include "OpenRadiation/OpenRadiationProtocol.h"
 #include "Radmon/RadmonPublisher.h"
 #include "Logging/LogCursorWindow.h"
+#include "Publishing/HttpPublishResponse.h"
 
 #include <Arduino.h>
+#include <WiFiClientSecure.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <vector>
 #include <esp_wifi.h>
 #include <ArduinoJson.h>
+
+namespace
+{
+String readHttpsBody(WiFiClientSecure &client, unsigned long timeoutMs, size_t maxBytes)
+{
+    String body;
+    const unsigned long startedAt = millis();
+    while ((millis() - startedAt) < timeoutMs)
+    {
+        while (client.available() > 0)
+        {
+            const int ch = client.read();
+            if (ch < 0)
+                break;
+            if (body.length() < maxBytes)
+            {
+                const char text[2] = {static_cast<char>(ch), '\0'};
+                body += text;
+            }
+        }
+
+        if (!client.connected() && client.available() <= 0)
+            break;
+
+        delay(10);
+        yield();
+    }
+
+    body.trim();
+    return body;
+}
+} // namespace
 
 WiFiPortalService::WiFiPortalService(AppConfig &config,
                                      AppConfigStore &store,
@@ -33,6 +70,7 @@ WiFiPortalService::WiFiPortalService(AppConfig &config,
       manager_(),
       log_(logPort),
       led_(led),
+      openRadiationHealth_(openRadiationHealth),
       paramDeviceName_("deviceName", "Device Name", "", kDeviceNameParamLen),
       paramMqttHost_("mqttHost", "MQTT Host", "", kMqttHostParamLen),
       paramMqttPort_("mqttPort", "MQTT Port", "", kMqttPortParamLen),
@@ -411,7 +449,7 @@ void WiFiPortalService::attachParameters()
             return;
         }
         routesRegistered_ = true;
-        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /openradiation /gmc /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /logs /logs.json /ota /ota/status /ota/fetch /ota/upload/* /restart"));
+        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /openradiation /openradiation/latest /gmc /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /logs /logs.json /ota /ota/status /ota/fetch /ota/upload/* /restart"));
 
         manager_.server->on("/mqtt", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /mqtt"));
@@ -529,6 +567,11 @@ void WiFiPortalService::attachParameters()
         manager_.server->on("/openradiation", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /openradiation"));
             handleOpenRadiationPost();
+        });
+
+        manager_.server->on("/openradiation/latest", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /openradiation/latest"));
+            handleOpenRadiationLatest();
         });
 
         manager_.server->on("/gmc", HTTP_GET, [this]() {
@@ -1378,8 +1421,14 @@ void WiFiPortalService::sendOpenRadiationForm(const String &message)
     if (!manager_.server)
         return;
 
+    const PublisherHealthSnapshot health = openRadiationHealth_.snapshot();
+    const String mapUrl = OpenRadiationPortalLinks::buildOpenRadiationMapUrl(
+        config_.openRadiationLatitude,
+        config_.openRadiationLongitude);
+    const String latestPath = health.lastReportUuid.length() ? String("/openradiation/latest") : String();
+
     String html;
-    html.reserve(2400);
+    html.reserve(3200);
     html += F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>"
               "<title>Configure OpenRadiation</title>"
               "<style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}"
@@ -1428,6 +1477,7 @@ void WiFiPortalService::sendOpenRadiationForm(const String &message)
     html += String(config_.openRadiationAccuracy, 1);
     html += F("'/>");
 
+    html += OpenRadiationPortalView::buildLinksSection(mapUrl, latestPath);
     html += F("<button type='submit'>Save OpenRadiation Settings</button></form>"
               "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Main menu</button></form>"
               "</div></body></html>");
@@ -1526,6 +1576,111 @@ void WiFiPortalService::handleOpenRadiationPost()
     }
 
     sendOpenRadiationForm(message);
+}
+
+void WiFiPortalService::handleOpenRadiationLatest()
+{
+    if (!manager_.server)
+        return;
+
+    const String reportUuid = openRadiationHealth_.snapshot().lastReportUuid;
+    if (!reportUuid.length())
+    {
+        OpenRadiationPortalView::LatestMeasurementViewModel model;
+        model.errorMessage = "No successful OpenRadiation publish has been recorded yet.";
+        manager_.server->send(404, "text/html", OpenRadiationPortalView::buildLatestMeasurementPage(model));
+        return;
+    }
+
+    const String requestPath = OpenRadiationProtocol::buildMeasurementLookupPath(reportUuid, config_.openRadiationApiKey);
+    if (!requestPath.length())
+    {
+        OpenRadiationPortalView::LatestMeasurementViewModel model;
+        model.errorMessage = "OpenRadiation lookup is unavailable because the API key or report UUID is missing.";
+        manager_.server->send(503, "text/html", OpenRadiationPortalView::buildLatestMeasurementPage(model));
+        return;
+    }
+
+    WiFiClientSecure client;
+    client.setTimeout(15000);
+    client.setInsecure();
+
+    if (!client.connect(OpenRadiationProtocol::kRequestHost, 443))
+    {
+        OpenRadiationPortalView::LatestMeasurementViewModel model;
+        model.errorMessage = "Could not connect to request.openradiation.net.";
+        manager_.server->send(502, "text/html", OpenRadiationPortalView::buildLatestMeasurementPage(model));
+        return;
+    }
+
+    String request;
+    request.reserve(requestPath.length() + 200);
+    request += "GET ";
+    request += requestPath;
+    request += " HTTP/1.1\r\nHost: ";
+    request += OpenRadiationProtocol::kRequestHost;
+    request += "\r\nConnection: close\r\nAccept: ";
+    request += OpenRadiationProtocol::kAccept;
+    request += "\r\nUser-Agent: RadPro-WiFi-Bridge/";
+    request += BRIDGE_FIRMWARE_VERSION;
+    request += "\r\n\r\n";
+
+    if (client.print(request) != request.length())
+    {
+        OpenRadiationPortalView::LatestMeasurementViewModel model;
+        model.errorMessage = "Failed to send the OpenRadiation lookup request.";
+        manager_.server->send(502, "text/html", OpenRadiationPortalView::buildLatestMeasurementPage(model));
+        return;
+    }
+
+    const auto response = HttpPublishResponse::readStatus(
+        client,
+        15000,
+        []() { return millis(); },
+        []() {
+            delay(10);
+            yield();
+        });
+
+    const String body = readHttpsBody(client, 1500, 2048);
+    if (!response.success)
+    {
+        OpenRadiationPortalView::LatestMeasurementViewModel model;
+        model.errorMessage = "OpenRadiation lookup failed with HTTP ";
+        model.errorMessage += String(response.statusCode);
+        model.errorMessage += ".";
+        if (body.length())
+        {
+            model.errorMessage += " Response: ";
+            model.errorMessage += body;
+        }
+        manager_.server->send(response.statusCode == 404 ? 404 : 502, "text/html", OpenRadiationPortalView::buildLatestMeasurementPage(model));
+        return;
+    }
+
+    JsonDocument doc;
+    const DeserializationError error = deserializeJson(doc, body);
+    JsonObject data = doc["data"].as<JsonObject>();
+    if (error || data.isNull())
+    {
+        OpenRadiationPortalView::LatestMeasurementViewModel model;
+        model.errorMessage = "OpenRadiation lookup returned an unexpected JSON payload.";
+        manager_.server->send(502, "text/html", OpenRadiationPortalView::buildLatestMeasurementPage(model));
+        return;
+    }
+
+    OpenRadiationPortalView::LatestMeasurementViewModel model;
+    model.reportUuid = data["reportUuid"] | reportUuid;
+    model.startTime = data["startTime"] | String();
+    model.valueText = String(data["value"] | 0.0f, 4) + " uSv/h";
+    model.qualification = data["qualification"] | String();
+    model.atypical = data["atypical"] | false;
+
+    const float latitude = data["latitude"] | config_.openRadiationLatitude;
+    const float longitude = data["longitude"] | config_.openRadiationLongitude;
+    model.mapUrl = OpenRadiationPortalLinks::buildOpenRadiationMapUrl(latitude, longitude);
+
+    manager_.server->send(200, "text/html", OpenRadiationPortalView::buildLatestMeasurementPage(model));
 }
 
 String WiFiPortalService::htmlEscape(const String &value)

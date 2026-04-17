@@ -57,6 +57,7 @@ private:
     void attemptReconnect();
     void sendOpenRadiationForm(const String &message = String());
     void handleOpenRadiationPost();
+    void handleOpenRadiationLatest();
     void sendConfigBackupPage(const String &message = String());
     void handleConfigDownload();
     void handleConfigRestore();
@@ -118,6 +119,7 @@ private:
     WiFiManager manager_;
     DebugLogStream &log_;
     LedController &led_;
+    const PublisherHealth &openRadiationHealth_;
 
     WiFiManagerParameter paramDeviceName_;
     WiFiManagerParameter paramMqttHost_;

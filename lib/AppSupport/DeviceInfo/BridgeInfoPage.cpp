@@ -106,6 +106,10 @@ String BridgeInfoPage::collectJson() const
             json["lastResponseTrace"] = snapshot.lastResponseTrace;
         else
             json["lastResponseTrace"] = nullptr;
+        if (snapshot.lastReportUuid.length())
+            json["lastReportUuid"] = snapshot.lastReportUuid;
+        else
+            json["lastReportUuid"] = nullptr;
     };
 
     appendHealth("openSenseMap", openSenseMapHealth_.snapshot());

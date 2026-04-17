@@ -26,7 +26,7 @@ private:
     bool isEnabled() const;
     bool publishPending();
     bool sendPayload(const String &payload);
-    bool buildPayload(String &outJson, float doseRate, const String &timestamp);
+    bool buildPayload(String &outJson, String &outReportUuid, float doseRate, const String &timestamp);
     bool makeIsoTimestamp(String &out) const;
     String resolveApparatusId() const;
     String readResponseBody(WiFiClientSecure &client, unsigned long timeoutMs, size_t maxBytes) const;
@@ -40,6 +40,7 @@ private:
     PublisherHealth &health_;
     String pendingDoseValue_;
     String pendingTubeValue_;
+    String lastPublishedReportUuid_;
     bool haveDoseValue_ = false;
     bool haveTubeValue_ = false;
     bool publishQueued_ = false;

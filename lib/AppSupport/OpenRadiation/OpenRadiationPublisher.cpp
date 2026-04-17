@@ -173,7 +173,8 @@ bool OpenRadiationPublisher::publishPending()
     }
 
     String payload;
-    if (!buildPayload(payload, doseRate, timestamp))
+    String reportUuid;
+    if (!buildPayload(payload, reportUuid, doseRate, timestamp))
     {
         log_.println("OpenRadiation: failed to build payload.");
         suppressUntilMs_ = now + kRetryBackoffMs;
@@ -186,6 +187,8 @@ bool OpenRadiationPublisher::publishPending()
     log_.print(doseRate, 4);
     log_.print(" apparatusId=");
     log_.print(apparatusId);
+    log_.print(" reportUuid=");
+    log_.print(reportUuid);
     log_.println();
 
     lastAttemptMs_ = now;
@@ -193,6 +196,7 @@ bool OpenRadiationPublisher::publishPending()
     bool ok = sendPayload(payload);
     if (ok)
     {
+        lastPublishedReportUuid_ = reportUuid;
         publishQueued_ = false;
         haveDoseValue_ = false;
         haveTubeValue_ = false;
@@ -206,11 +210,16 @@ bool OpenRadiationPublisher::publishPending()
     return true;
 }
 
-bool OpenRadiationPublisher::buildPayload(String &outJson, float doseRate, const String &timestamp)
+bool OpenRadiationPublisher::buildPayload(String &outJson,
+                                          String &outReportUuid,
+                                          float doseRate,
+                                          const String &timestamp)
 {
     const String apparatusId = resolveApparatusId();
     if (!apparatusId.length() || !config_.openRadiationApiKey.length())
         return false;
+
+    outReportUuid = generateUuid();
 
     const DeviceInfoSnapshot info = deviceInfo_.snapshot();
 
@@ -230,7 +239,7 @@ bool OpenRadiationPublisher::buildPayload(String &outJson, float doseRate, const
     if (info.firmware.length())
         data["apparatusVersion"] = info.firmware;
     data["apparatusSensorType"] = "geiger";
-    data["reportUuid"] = generateUuid();
+    data["reportUuid"] = outReportUuid;
     data["manualReporting"] = false;
     data["organisationReporting"] = OpenRadiationProtocol::buildOrganisationReporting(bridgeVersion_);
     data["reportContext"] = "routine";
@@ -373,6 +382,7 @@ void OpenRadiationPublisher::syncHealthState()
     health_.setEnabled(isEnabled());
     health_.setPaused(false);
     health_.setPending(publishQueued_);
+    health_.setLastReportUuid(lastPublishedReportUuid_);
 }
 
 bool OpenRadiationPublisher::makeIsoTimestamp(String &out) const

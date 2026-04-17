@@ -49,12 +49,28 @@ void testSuccessResetsConsecutiveFailures()
     assert(std::string(snapshot.lastStatusLine.c_str()) == "HTTP/1.1 204 No Content");
     assert(std::string(snapshot.lastError.c_str()).empty());
 }
+
+void testTracksLastReportUuidSeparatelyFromSuccessCounters()
+{
+    PublisherHealth health;
+    health.setLastReportUuid("report-123");
+    health.noteAttempt(3000);
+    health.noteSuccess(3010, 200, "HTTP/1.1 200 OK");
+
+    const auto snapshot = health.snapshot();
+    assert(std::string(snapshot.lastReportUuid.c_str()) == "report-123");
+    assert(snapshot.successes == 1);
+
+    health.noteFailure(4000, "temporary upstream error");
+    assert(std::string(health.snapshot().lastReportUuid.c_str()) == "report-123");
+}
 } // namespace
 
 int main()
 {
     testFailureTrackingCapturesErrorAndTrace();
     testSuccessResetsConsecutiveFailures();
+    testTracksLastReportUuidSeparatelyFromSuccessCounters();
     std::cout << "publisher health tests passed\n";
     return 0;
 }

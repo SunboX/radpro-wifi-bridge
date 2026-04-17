@@ -18,6 +18,7 @@ struct PublisherHealthSnapshot
     String lastStatusLine;
     String lastError;
     String lastResponseTrace;
+    String lastReportUuid;
 };
 
 class PublisherHealth
@@ -26,6 +27,7 @@ public:
     void setEnabled(bool enabled) { snapshot_.enabled = enabled; }
     void setPaused(bool paused) { snapshot_.paused = paused; }
     void setPending(bool pending) { snapshot_.pending = pending; }
+    void setLastReportUuid(const String &reportUuid) { snapshot_.lastReportUuid = reportUuid; }
 
     void noteAttempt(unsigned long now)
     {
