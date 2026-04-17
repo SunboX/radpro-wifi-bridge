@@ -31,7 +31,7 @@ The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides s
 -   **Wi-Fi configuration portal** (WiFiManager based) that launches an AP when credentials fail, serves the same form at `http://<device-ip>/`, and persists settings to NVS. A one-click “Restart Device” action is exposed in the UI.
 -   **Runtime Wi-Fi diagnostics & startup control**: countdown-driven boot with serial overrides, plus SSID/IP/RSSI logging after the main firmware starts.
 -   **MQTT publisher** with templated topics. Every successful RadPro response is forwarded at the configured `readIntervalMs`; publish success/failure drives LED pulses and console messages.
--   **Cloud publishers** for MQTT, OpenSenseMap, GMCMap, and Radmon.org with per-service toggles in the web portal.
+-   **Cloud publishers** for MQTT, OpenSenseMap, OpenRadiation, GMCMap, and Radmon.org with per-service toggles in the web portal.
 -   **Home Assistant discovery** payloads so MQTT entities appear automatically once the bridge is online.
 -   **OTA bridge firmware updates** via the web portal (or browser-based ESP Web Tools installer) so you can stay current without reflashing over USB.
 -   **RGB LED state machine** (WS2812 on GPIO 48) that communicates boot, Wi-Fi, USB, and error states without needing the serial console.
@@ -60,7 +60,7 @@ See [docs/board-requirements.md](docs/board-requirements.md) if you want to comp
 
 ## Web Installer (ESP Web Tools)
 
-Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.13.0)
+Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.14.0)
 
 Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required. OTA updates of the bridge firmware are also available from the web portal once a network connection is active.
 
@@ -86,7 +86,7 @@ Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no loc
 
 ## Wi-Fi Configuration Portal
 
-`WiFiPortalService` keeps the setup UI reachable whether the bridge is broadcasting a captive portal (`<deviceName> Setup`) or already joined to your LAN (`http://<device-ip>/`). Use it to edit Wi-Fi credentials, toggle MQTT/OpenSenseMap/GMCMap/Radmon publishers, or trigger a remote restart (`/restart`). All changes are persisted to NVS immediately and the console logs SSID/IP/RSSI updates for quick troubleshooting.
+`WiFiPortalService` keeps the setup UI reachable whether the bridge is broadcasting a captive portal (`<deviceName> Setup`) or already joined to your LAN (`http://<device-ip>/`). Use it to edit Wi-Fi credentials, toggle MQTT/OpenSenseMap/OpenRadiation/GMCMap/Radmon publishers, or trigger a remote restart (`/restart`). All changes are persisted to NVS immediately and the console logs SSID/IP/RSSI updates for quick troubleshooting.
 
 ![Wi-Fi portal Main Menu](docs/pictures/radpro_wifi_bridge_screens/Main_Menu.png)
 
@@ -107,6 +107,14 @@ The `MqttPublisher` mirrors every RadPro response to MQTT once you enable it in 
 For screenshots and a full walkthrough see [docs/opensensemap.md](docs/opensensemap.md).
 
 Toggle the feature on via **Configure OpenSenseMap**, paste in your box/token/sensor IDs, and the bridge will bundle tube rate + dose rate readings into HTTPS posts every few seconds. Nothing is transmitted while the toggle is off or IDs are blank.
+
+---
+
+## OpenRadiation Publishing
+
+For the setup flow and field-by-field notes see [docs/openradiation.md](docs/openradiation.md).
+
+Enable **Configure OpenRadiation**, enter your API key, and fill in the station location metadata used by the OpenRadiation API. The bridge can reuse the connected detector's device ID automatically when the optional apparatus ID is left blank, and the page exposes direct links to the public OpenRadiation map plus the latest successfully published measurement.
 
 ---
 
