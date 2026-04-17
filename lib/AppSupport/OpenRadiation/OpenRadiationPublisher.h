@@ -3,12 +3,18 @@
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
 #include "AppConfig/AppConfig.h"
+#include "DeviceInfo/DeviceInfoStore.h"
 #include "DeviceManager.h"
+#include "Publishing/PublisherHealth.h"
 
 class OpenRadiationPublisher
 {
 public:
-    OpenRadiationPublisher(AppConfig &config, Print &log, const char *bridgeVersion);
+    OpenRadiationPublisher(AppConfig &config,
+                           DeviceInfoStore &deviceInfo,
+                           Print &log,
+                           const char *bridgeVersion,
+                           PublisherHealth &health);
 
     void begin();
     void updateConfig();
@@ -20,13 +26,18 @@ private:
     bool isEnabled() const;
     bool publishPending();
     bool sendPayload(const String &payload);
-    bool buildPayload(String &outJson, float doseRate, int hitCount, String &timestamp);
+    bool buildPayload(String &outJson, float doseRate, const String &timestamp);
     bool makeIsoTimestamp(String &out) const;
+    String resolveApparatusId() const;
+    String readResponseBody(WiFiClientSecure &client, unsigned long timeoutMs, size_t maxBytes) const;
+    void syncHealthState();
     static String generateUuid();
 
     AppConfig &config_;
+    DeviceInfoStore &deviceInfo_;
     Print &log_;
     String bridgeVersion_;
+    PublisherHealth &health_;
     String pendingDoseValue_;
     String pendingTubeValue_;
     bool haveDoseValue_ = false;

@@ -23,12 +23,13 @@ WiFiPortalService::WiFiPortalService(AppConfig &config,
                                      LedController &led,
                                      const PublisherHealth &openSenseMapHealth,
                                      const PublisherHealth &gmcMapHealth,
-                                     const PublisherHealth &radmonHealth)
+                                     const PublisherHealth &radmonHealth,
+                                     const PublisherHealth &openRadiationHealth)
     : config_(config),
       store_(store),
       deviceInfo_(info),
       deviceInfoPage_(info),
-      bridgeInfoPage_(openSenseMapHealth, gmcMapHealth, radmonHealth),
+      bridgeInfoPage_(openSenseMapHealth, gmcMapHealth, radmonHealth, openRadiationHealth),
       manager_(),
       log_(logPort),
       led_(led),
@@ -45,7 +46,7 @@ WiFiPortalService::WiFiPortalService(AppConfig &config,
       paramGmcDevice_("gmcDevice", "GMCMap Device ID", "", 24),
       paramRadmonUser_("radmonUser", "Radmon Username", "", kRadmonUserLen),
       paramRadmonPassword_("radmonPass", "Radmon Password", "", kRadmonPasswordLen, "type=\"password\""),
-      paramOpenRadiationDevice_("orDeviceId", "OpenRadiation Device ID", "", kOpenRadiationDeviceIdLen),
+      paramOpenRadiationDevice_("orDeviceId", "OpenRadiation Apparatus ID (optional)", "", kOpenRadiationDeviceIdLen),
       paramOpenRadiationApiKey_("orApiKey", "OpenRadiation API Key", "", kOpenRadiationApiKeyLen, "type=\"password\""),
       paramsAttached_(false),
       lastStatus_(WL_NO_SHIELD),
@@ -1402,9 +1403,10 @@ void WiFiPortalService::sendOpenRadiationForm(const String &message)
         html += F(" checked");
     html += F("> Enable OpenRadiation publishing</label>");
 
-    html += F("<label for='orDeviceId'>Device ID</label><input id='orDeviceId' name='orDeviceId' type='text' value='");
+    html += F("<label for='orDeviceId'>Apparatus ID / Device ID (optional)</label><input id='orDeviceId' name='orDeviceId' type='text' value='");
     html += htmlEscape(config_.openRadiationDeviceId);
     html += F("'/>");
+    html += F("<p style='margin:-4px 0 0 0;color:#bbb;font-size:13px;'>Leave blank to use the connected detector&apos;s device ID automatically.</p>");
 
     html += F("<label for='orApiKey'>API Key</label><input id='orApiKey' name='orApiKey' type='password' value='");
     html += htmlEscape(config_.openRadiationApiKey);

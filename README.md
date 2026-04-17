@@ -60,7 +60,7 @@ See [docs/board-requirements.md](docs/board-requirements.md) if you want to comp
 
 ## Web Installer (ESP Web Tools)
 
-Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.12.2)
+Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.13.0)
 
 Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required. OTA updates of the bridge firmware are also available from the web portal once a network connection is active.
 
@@ -232,7 +232,6 @@ Retries, back-off, and duplicate suppression are handled inside `DeviceManager`.
 -   OTA firmware update of the connected Rad Pro device (bridge already updates itself OTA via the portal).
 -   Investigate additional publisher targets:
     -   **Safecast** – large citizen-science network (bGeigie, Safecast:Drive). They provide JSON-based upload flows if you stick to their schema; requires coordination with the Safecast community.
-    -   **OpenRadiation** – IRSN/CEA-backed project with a documented REST API (API key required) for user contributors.
     -   **uRADMonitor** – global network with proprietary + DIY kits; includes API protocols for feeding third-party data once a device is registered.
     -   **GammaSense** – Waag/RIVM citizen sensing initiative; API access may require project partnership depending on phase/status.
 

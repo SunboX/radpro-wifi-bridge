@@ -1,38 +1,50 @@
 #include "OpenRadiation/OpenRadiationPublisher.h"
+#include "OpenRadiation/OpenRadiationProtocol.h"
 
+#include <ArduinoJson.h>
 #include <WiFi.h>
 #include <time.h>
 #include <esp_system.h>
 #include <cmath>
+#include "Publishing/HttpPublishResponse.h"
 
 namespace
 {
-    constexpr const char *kHost = "submit.open-radiation.net";
     constexpr const char *kPath = "/measurements";
     constexpr uint16_t kPort = 443;
     constexpr unsigned long kMinPublishGapMs = 60000;
     constexpr unsigned long kRetryBackoffMs = 120000;
+    constexpr unsigned long kResponseWaitMs = 15000;
 }
 
-OpenRadiationPublisher::OpenRadiationPublisher(AppConfig &config, Print &log, const char *bridgeVersion)
+OpenRadiationPublisher::OpenRadiationPublisher(AppConfig &config,
+                                               DeviceInfoStore &deviceInfo,
+                                               Print &log,
+                                               const char *bridgeVersion,
+                                               PublisherHealth &health)
     : config_(config),
+      deviceInfo_(deviceInfo),
       log_(log),
-      bridgeVersion_(bridgeVersion ? bridgeVersion : "")
+      bridgeVersion_(bridgeVersion ? bridgeVersion : ""),
+      health_(health)
 {
 }
 
 void OpenRadiationPublisher::begin()
 {
     updateConfig();
+    syncHealthState();
 }
 
 void OpenRadiationPublisher::updateConfig()
 {
     // Placeholder for future dynamic reactions to config changes.
+    syncHealthState();
 }
 
 void OpenRadiationPublisher::loop()
 {
+    syncHealthState();
     publishPending();
 }
 
@@ -44,6 +56,7 @@ void OpenRadiationPublisher::clearPendingData()
     haveTubeValue_ = false;
     publishQueued_ = false;
     suppressUntilMs_ = 0;
+    syncHealthState();
 }
 
 void OpenRadiationPublisher::onCommandResult(DeviceManager::CommandType type, const String &value)
@@ -72,39 +85,64 @@ void OpenRadiationPublisher::onCommandResult(DeviceManager::CommandType type, co
     default:
         break;
     }
+    syncHealthState();
 }
 
 bool OpenRadiationPublisher::isEnabled() const
 {
     if (!config_.openRadiationEnabled)
         return false;
-    if (!config_.openRadiationDeviceId.length())
+    if (!resolveApparatusId().length())
         return false;
     if (!config_.openRadiationApiKey.length())
         return false;
     return true;
 }
 
+String OpenRadiationPublisher::resolveApparatusId() const
+{
+    const DeviceInfoSnapshot info = deviceInfo_.snapshot();
+    return OpenRadiationProtocol::resolveApparatusId(config_.openRadiationDeviceId, info.deviceId);
+}
+
 bool OpenRadiationPublisher::publishPending()
 {
     if (!publishQueued_)
+    {
+        syncHealthState();
         return false;
+    }
 
     if (!isEnabled())
+    {
+        syncHealthState();
         return true;
+    }
 
     if (!haveDoseValue_)
+    {
+        syncHealthState();
         return true;
+    }
 
     if (WiFi.status() != WL_CONNECTED)
+    {
+        syncHealthState();
         return true;
+    }
 
     unsigned long now = millis();
     if (suppressUntilMs_ && now < suppressUntilMs_)
+    {
+        syncHealthState();
         return true;
+    }
 
     if (now - lastAttemptMs_ < kMinPublishGapMs)
+    {
+        syncHealthState();
         return true;
+    }
 
     float doseRate = pendingDoseValue_.toFloat();
     if (!(doseRate > 0.0f))
@@ -113,15 +151,8 @@ bool OpenRadiationPublisher::publishPending()
         publishQueued_ = false;
         haveDoseValue_ = false;
         haveTubeValue_ = false;
+        syncHealthState();
         return true;
-    }
-
-    int hitCount = -1;
-    if (haveTubeValue_ && pendingTubeValue_.length())
-    {
-        hitCount = lroundf(pendingTubeValue_.toFloat());
-        if (hitCount < 0)
-            hitCount = 0;
     }
 
     String timestamp;
@@ -129,6 +160,7 @@ bool OpenRadiationPublisher::publishPending()
     {
         log_.println("OpenRadiation: waiting for valid system time before publishing.");
         suppressUntilMs_ = now + 10000;
+        syncHealthState();
         return true;
     }
 
@@ -136,27 +168,28 @@ bool OpenRadiationPublisher::publishPending()
     {
         log_.println("OpenRadiation: latitude/longitude not configured; skipping publish.");
         suppressUntilMs_ = now + kRetryBackoffMs;
+        syncHealthState();
         return true;
     }
 
     String payload;
-    if (!buildPayload(payload, doseRate, hitCount, timestamp))
+    if (!buildPayload(payload, doseRate, timestamp))
     {
         log_.println("OpenRadiation: failed to build payload.");
         suppressUntilMs_ = now + kRetryBackoffMs;
+        syncHealthState();
         return true;
     }
 
+    const String apparatusId = resolveApparatusId();
     log_.print("OpenRadiation: POST dose=");
     log_.print(doseRate, 4);
-    if (hitCount >= 0)
-    {
-        log_.print(" hits=");
-        log_.print(hitCount);
-    }
+    log_.print(" apparatusId=");
+    log_.print(apparatusId);
     log_.println();
 
     lastAttemptMs_ = now;
+    health_.noteAttempt(now);
     bool ok = sendPayload(payload);
     if (ok)
     {
@@ -169,47 +202,41 @@ bool OpenRadiationPublisher::publishPending()
     {
         suppressUntilMs_ = millis() + kRetryBackoffMs;
     }
+    syncHealthState();
     return true;
 }
 
-bool OpenRadiationPublisher::buildPayload(String &outJson, float doseRate, int hitCount, String &timestamp)
+bool OpenRadiationPublisher::buildPayload(String &outJson, float doseRate, const String &timestamp)
 {
-    if (!config_.openRadiationDeviceId.length() || !config_.openRadiationApiKey.length())
+    const String apparatusId = resolveApparatusId();
+    if (!apparatusId.length() || !config_.openRadiationApiKey.length())
         return false;
 
-    outJson.reserve(512);
-    outJson = "{\"apiKey\":\"";
-    outJson += config_.openRadiationApiKey;
-    outJson += "\",\"data\":{";
-    outJson += "\"apparatusId\":\"";
-    outJson += config_.openRadiationDeviceId;
-    outJson += "\",\"value\":";
-    outJson += String(doseRate, 4);
-    if (hitCount >= 0)
-    {
-        outJson += ",\"hitsNumber\":";
-        outJson += String(hitCount);
-    }
-    outJson += ",\"startTime\":\"";
-    outJson += timestamp;
-    outJson += "\",\"latitude\":";
-    outJson += String(config_.openRadiationLatitude, 6);
-    outJson += ",\"longitude\":";
-    outJson += String(config_.openRadiationLongitude, 6);
+    const DeviceInfoSnapshot info = deviceInfo_.snapshot();
+
+    JsonDocument doc;
+    doc["apiKey"] = config_.openRadiationApiKey;
+
+    JsonObject data = doc["data"].to<JsonObject>();
+    data["apparatusId"] = apparatusId;
+    data["value"] = doseRate;
+    data["startTime"] = timestamp;
+    data["latitude"] = config_.openRadiationLatitude;
+    data["longitude"] = config_.openRadiationLongitude;
     if (config_.openRadiationAltitude != 0.0f)
-    {
-        outJson += ",\"altitude\":";
-        outJson += String(config_.openRadiationAltitude, 1);
-    }
+        data["altitude"] = lroundf(config_.openRadiationAltitude);
     if (config_.openRadiationAccuracy > 0.0f)
-    {
-        outJson += ",\"accuracy\":";
-        outJson += String(config_.openRadiationAccuracy, 1);
-    }
-    outJson += ",\"reportUuid\":\"";
-    outJson += generateUuid();
-    outJson += "\",\"reportContext\":\"routine\"";
-    outJson += "}}";
+        data["accuracy"] = config_.openRadiationAccuracy;
+    if (info.firmware.length())
+        data["apparatusVersion"] = info.firmware;
+    data["apparatusSensorType"] = "geiger";
+    data["reportUuid"] = generateUuid();
+    data["manualReporting"] = false;
+    data["organisationReporting"] = OpenRadiationProtocol::buildOrganisationReporting(bridgeVersion_);
+    data["reportContext"] = "routine";
+
+    outJson.clear();
+    serializeJson(doc, outJson);
     return true;
 }
 
@@ -219,9 +246,10 @@ bool OpenRadiationPublisher::sendPayload(const String &payload)
     client.setTimeout(15000);
     client.setInsecure();
 
-    if (!client.connect(kHost, kPort))
+    if (!client.connect(OpenRadiationProtocol::kSubmitHost, kPort))
     {
         log_.println("OpenRadiation: connect failed.");
+        health_.noteFailure(millis(), "connect failed");
         return false;
     }
 
@@ -230,8 +258,12 @@ bool OpenRadiationPublisher::sendPayload(const String &payload)
     request += "POST ";
     request += kPath;
     request += " HTTP/1.1\r\nHost: ";
-    request += kHost;
-    request += "\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: ";
+    request += OpenRadiationProtocol::kSubmitHost;
+    request += "\r\nConnection: close\r\nContent-Type: ";
+    request += OpenRadiationProtocol::kContentType;
+    request += "\r\nAccept: ";
+    request += OpenRadiationProtocol::kAccept;
+    request += "\r\nContent-Length: ";
     request += payload.length();
     request += "\r\nUser-Agent: RadPro-WiFi-Bridge/";
     request += bridgeVersion_;
@@ -241,30 +273,106 @@ bool OpenRadiationPublisher::sendPayload(const String &payload)
     if (client.print(request) != request.length())
     {
         log_.println("OpenRadiation: failed to write request.");
+        health_.noteFailure(millis(), "send failed");
         return false;
     }
 
-    String status = client.readStringUntil('\n');
-    status.trim();
-    if (!status.startsWith("HTTP/1.1 "))
+    client.flush();
+
+    const auto response = HttpPublishResponse::readStatus(
+        client,
+        kResponseWaitMs,
+        []() { return millis(); },
+        []() {
+            delay(10);
+            yield();
+        });
+
+    if (!response.success)
     {
-        log_.print("OpenRadiation: unexpected status line: ");
-        log_.println(status);
+        String body = readResponseBody(client, 1500, 320);
+        switch (response.failure)
+        {
+        case HttpPublishResponse::FailureKind::NoResponse:
+            log_.print("OpenRadiation: no response before ");
+            if (client.connected())
+                log_.println("timeout");
+            else
+                log_.println("disconnect");
+            health_.noteFailure(millis(), "no response", 0, response.statusLine, response.trace);
+            break;
+        case HttpPublishResponse::FailureKind::InvalidStatusLine:
+            log_.print("OpenRadiation: unexpected status line: ");
+            log_.println(response.statusLine.length() ? response.statusLine : String("<empty>"));
+            if (response.trace.length())
+            {
+                log_.print("OpenRadiation: response trace: ");
+                log_.println(response.trace);
+            }
+            health_.noteFailure(millis(), "invalid status line", 0, response.statusLine, response.trace);
+            break;
+        case HttpPublishResponse::FailureKind::HttpError:
+            log_.print("OpenRadiation: HTTP ");
+            log_.println(response.statusCode);
+            if (body.length())
+            {
+                log_.print("OpenRadiation: response body: ");
+                log_.println(body);
+            }
+            health_.noteFailure(millis(), body.length() ? body : String("http error"), response.statusCode, response.statusLine, body.length() ? body : response.trace);
+            break;
+        case HttpPublishResponse::FailureKind::ReadError:
+            log_.println("OpenRadiation: response read error.");
+            health_.noteFailure(millis(), "read error", 0, response.statusLine, response.trace);
+            break;
+        case HttpPublishResponse::FailureKind::None:
+            break;
+        }
         return false;
     }
 
-    int statusCode = status.substring(9).toInt();
-    if (statusCode < 200 || statusCode >= 300)
-    {
-        log_.print("OpenRadiation: HTTP ");
-        log_.println(statusCode);
-        return false;
-    }
+    health_.noteSuccess(millis(), response.statusCode, response.statusLine);
 
-    while (client.connected())
+    while (client.connected() || client.available())
         client.read();
 
     return true;
+}
+
+String OpenRadiationPublisher::readResponseBody(WiFiClientSecure &client, unsigned long timeoutMs, size_t maxBytes) const
+{
+    String body;
+    const unsigned long startedAt = millis();
+    while ((millis() - startedAt) < timeoutMs)
+    {
+        while (client.available() > 0)
+        {
+            const int ch = client.read();
+            if (ch < 0)
+                break;
+            if (body.length() < maxBytes)
+            {
+                const char text[2] = {static_cast<char>(ch), '\0'};
+                body += text;
+            }
+        }
+
+        if (!client.connected() && client.available() <= 0)
+            break;
+
+        delay(10);
+        yield();
+    }
+
+    body.trim();
+    return body;
+}
+
+void OpenRadiationPublisher::syncHealthState()
+{
+    health_.setEnabled(isEnabled());
+    health_.setPaused(false);
+    health_.setPending(publishQueued_);
 }
 
 bool OpenRadiationPublisher::makeIsoTimestamp(String &out) const

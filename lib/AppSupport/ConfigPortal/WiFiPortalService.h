@@ -28,7 +28,8 @@ public:
                       LedController &led,
                       const PublisherHealth &openSenseMapHealth,
                       const PublisherHealth &gmcMapHealth,
-                      const PublisherHealth &radmonHealth);
+                      const PublisherHealth &radmonHealth,
+                      const PublisherHealth &openRadiationHealth);
 
     void begin();
     bool connect(bool forcePortal);
