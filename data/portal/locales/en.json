@@ -5,6 +5,7 @@
     "T_MENU_CONFIGURE_MQTT": "Configure MQTT",
     "T_MENU_CONFIGURE_OSEM": "Configure OpenSenseMap",
     "T_MENU_CONFIGURE_RADMON": "Configure Radmon",
+    "T_MENU_CONFIGURE_OPENRADIATION": "Configure OpenRadiation",
     "T_MENU_CONFIGURE_GMC": "Configure GMCMap",
     "T_MENU_OTA": "Firmware Update",
     "T_MENU_CONFIGURE_BACKUP": "Configuration Backup & Restore",
