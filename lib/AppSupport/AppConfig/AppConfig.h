@@ -2,7 +2,6 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
-#include <cstring>
 
 constexpr uint32_t kMinReadIntervalMs = 500;
 constexpr size_t kDeviceNameParamLen = 32;
@@ -60,7 +59,7 @@ inline bool UpdateStringIfChanged(String &target, const char *value)
 {
     String trimmed = value ? String(value) : String();
     trimmed.trim();
-    if (std::strcmp(trimmed.c_str(), target.c_str()) == 0)
+    if (std::string(trimmed) == std::string(target))
         return false;
     target = trimmed;
     return true;
