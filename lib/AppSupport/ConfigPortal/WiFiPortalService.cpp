@@ -1482,6 +1482,10 @@ void WiFiPortalService::sendOpenRadiationForm(const String &message)
     html += F("'/>");
 
     html += F("<label for='orMeasurementEnvironment'>Measurement Environment</label><select id='orMeasurementEnvironment' name='orMeasurementEnvironment'>");
+    html += F("<option value=''");
+    if (!config_.openRadiationMeasurementEnvironment.length())
+        html += F(" selected");
+    html += F(">Unset</option>");
     html += OpenRadiationPortalView::buildMeasurementEnvironmentOptions(config_.openRadiationMeasurementEnvironment);
     html += F("</select>");
 
@@ -1583,13 +1587,24 @@ void WiFiPortalService::handleOpenRadiationPost()
         log_.println("OpenRadiation: invalid measurementEnvironment ignored.");
     }
 
-    float parsedMeasurementHeight = 0.0f;
     if (measurementHeightStr.length())
-        parsedMeasurementHeight = OpenRadiationMeasurementMetadata::clampMeasurementHeight(strtof(measurementHeightStr.c_str(), nullptr));
-    if (fabsf(parsedMeasurementHeight - config_.openRadiationMeasurementHeight) > 0.05f)
     {
-        config_.openRadiationMeasurementHeight = parsedMeasurementHeight;
-        changed = true;
+        const char *rawHeight = measurementHeightStr.c_str();
+        char *endHeight = nullptr;
+        float parsedMeasurementHeight = strtof(rawHeight, &endHeight);
+        if (endHeight == rawHeight || !endHeight || *endHeight != '\0' || !std::isfinite(parsedMeasurementHeight))
+        {
+            log_.println("OpenRadiation: invalid measurementHeight ignored.");
+        }
+        else
+        {
+            parsedMeasurementHeight = OpenRadiationMeasurementMetadata::clampMeasurementHeight(parsedMeasurementHeight);
+            if (fabsf(parsedMeasurementHeight - config_.openRadiationMeasurementHeight) > 0.05f)
+            {
+                config_.openRadiationMeasurementHeight = parsedMeasurementHeight;
+                changed = true;
+            }
+        }
     }
 
     String message;
