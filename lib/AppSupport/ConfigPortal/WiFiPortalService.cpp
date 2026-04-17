@@ -5,6 +5,8 @@
 #include "Mqtt/MqttPublisher.h"
 #include "OpenSenseMap/OpenSenseMapPublisher.h"
 #include "GmcMap/GmcMapPublisher.h"
+#include "OpenRadiation/OpenRadiationBackupJson.h"
+#include "OpenRadiation/OpenRadiationMeasurementMetadata.h"
 #include "OpenRadiation/OpenRadiationPortalLinks.h"
 #include "OpenRadiation/OpenRadiationPortalView.h"
 #include "OpenRadiation/OpenRadiationProtocol.h"
@@ -1294,6 +1296,7 @@ String WiFiPortalService::exportConfigJson() const
     doc["openRadiationLongitude"] = config_.openRadiationLongitude;
     doc["openRadiationAltitude"] = config_.openRadiationAltitude;
     doc["openRadiationAccuracy"] = config_.openRadiationAccuracy;
+    OpenRadiationBackupJson::appendMeasurementConfig(doc, config_);
 
     String json;
     serializeJsonPretty(doc, json);
@@ -1395,6 +1398,7 @@ bool WiFiPortalService::importConfigJson(const String &body, String &errorMessag
     setFloat(updated.openRadiationLongitude, doc["openRadiationLongitude"], -180.0f, 180.0f);
     setFloat(updated.openRadiationAltitude, doc["openRadiationAltitude"], -10000.0f, 100000.0f);
     setFloat(updated.openRadiationAccuracy, doc["openRadiationAccuracy"], 0.0f, 100000.0f);
+    OpenRadiationBackupJson::applyMeasurementConfig(doc.as<JsonVariantConst>(), updated);
 
     if (updated.readIntervalMs < kMinReadIntervalMs)
         updated.readIntervalMs = kMinReadIntervalMs;
@@ -1433,7 +1437,7 @@ void WiFiPortalService::sendOpenRadiationForm(const String &message)
               "<title>Configure OpenRadiation</title>"
               "<style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px;display:flex;justify-content:center;}"
               "h1{margin-top:0;}form{display:flex;flex-direction:column;gap:12px;width:100%;}"
-              "label{font-weight:bold;}input{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;}"
+              "label{font-weight:bold;}input,select{padding:8px;border-radius:4px;border:1px solid #666;background:#222;color:#eee;width:100%;}"
               "button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}"
               "button:hover{background:#1976D2;} .wrap{display:inline-block;min-width:260px;max-width:520px;width:100%;text-align:left;}"
               "p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;}"
@@ -1477,6 +1481,14 @@ void WiFiPortalService::sendOpenRadiationForm(const String &message)
     html += String(config_.openRadiationAccuracy, 1);
     html += F("'/>");
 
+    html += F("<label for='orMeasurementEnvironment'>Measurement Environment</label><select id='orMeasurementEnvironment' name='orMeasurementEnvironment'>");
+    html += OpenRadiationPortalView::buildMeasurementEnvironmentOptions(config_.openRadiationMeasurementEnvironment);
+    html += F("</select>");
+
+    html += F("<label for='orMeasurementHeight'>Measurement Height Above Ground (m, optional)</label><input id='orMeasurementHeight' name='orMeasurementHeight' type='number' step='0.1' min='0' max='100' value='");
+    html += String(config_.openRadiationMeasurementHeight, 1);
+    html += F("'/>");
+
     html += OpenRadiationPortalView::buildLinksSection(mapUrl, latestPath);
     html += F("<button type='submit'>Save OpenRadiation Settings</button></form>"
               "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Main menu</button></form>"
@@ -1498,6 +1510,8 @@ void WiFiPortalService::handleOpenRadiationPost()
     String lonStr = server.arg("orLongitude");
     String altStr = server.arg("orAltitude");
     String accStr = server.arg("orAccuracy");
+    String environmentStr = server.arg("orMeasurementEnvironment");
+    String measurementHeightStr = server.arg("orMeasurementHeight");
 
     deviceId.trim();
     apiKey.trim();
@@ -1505,6 +1519,8 @@ void WiFiPortalService::handleOpenRadiationPost()
     lonStr.trim();
     altStr.trim();
     accStr.trim();
+    environmentStr.trim();
+    measurementHeightStr.trim();
 
     bool changed = false;
     if (config_.openRadiationEnabled != enabled)
@@ -1552,6 +1568,28 @@ void WiFiPortalService::handleOpenRadiationPost()
             config_.openRadiationAccuracy = parsedAcc;
             changed = true;
         }
+    }
+
+    if (!environmentStr.length())
+    {
+        changed |= UpdateStringIfChanged(config_.openRadiationMeasurementEnvironment, "");
+    }
+    else if (OpenRadiationMeasurementMetadata::isValidMeasurementEnvironment(environmentStr))
+    {
+        changed |= UpdateStringIfChanged(config_.openRadiationMeasurementEnvironment, environmentStr.c_str());
+    }
+    else
+    {
+        log_.println("OpenRadiation: invalid measurementEnvironment ignored.");
+    }
+
+    float parsedMeasurementHeight = 0.0f;
+    if (measurementHeightStr.length())
+        parsedMeasurementHeight = OpenRadiationMeasurementMetadata::clampMeasurementHeight(strtof(measurementHeightStr.c_str(), nullptr));
+    if (fabsf(parsedMeasurementHeight - config_.openRadiationMeasurementHeight) > 0.05f)
+    {
+        config_.openRadiationMeasurementHeight = parsedMeasurementHeight;
+        changed = true;
     }
 
     String message;
