@@ -7,6 +7,7 @@
 using OpenRadiationPortalView::LatestMeasurementViewModel;
 using OpenRadiationPortalView::buildLatestMeasurementPage;
 using OpenRadiationPortalView::buildLinksSection;
+using OpenRadiationPortalView::buildMeasurementEnvironmentOptions;
 
 namespace
 {
@@ -53,6 +54,14 @@ void testLatestMeasurementSuccessPageShowsMeasurementFields()
     assert(html.find("validated") != std::string::npos);
     assert(html.find("Open on OpenRadiation map") != std::string::npos);
 }
+
+void testMeasurementEnvironmentOptionsMarkSelectedValue()
+{
+    const std::string html = buildMeasurementEnvironmentOptions("city");
+    assert(html.find("<option value='city' selected>City</option>") != std::string::npos);
+    assert(html.find("<option value='countryside'>Countryside</option>") != std::string::npos);
+    assert(html.find("<option value='inside'>Inside</option>") != std::string::npos);
+}
 } // namespace
 
 int main()
@@ -61,6 +70,7 @@ int main()
     testLinksSectionExplainsMissingLatestMeasurement();
     testLatestMeasurementErrorPageShowsBackLink();
     testLatestMeasurementSuccessPageShowsMeasurementFields();
+    testMeasurementEnvironmentOptionsMarkSelectedValue();
     std::cout << "openradiation portal view tests passed\n";
     return 0;
 }

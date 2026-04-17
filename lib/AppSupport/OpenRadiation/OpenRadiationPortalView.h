@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <cstring>
 
 namespace OpenRadiationPortalView
 {
@@ -81,6 +82,37 @@ inline String buildLinksSection(const String &mapUrl, const String &latestPath)
     }
 
     html += "</section>";
+    return html;
+}
+
+inline String buildMeasurementEnvironmentOptions(const String &selectedValue)
+{
+    struct Option
+    {
+        const char *value;
+        const char *label;
+    };
+
+    static constexpr Option kOptions[] = {
+        {"countryside", "Countryside"},
+        {"city", "City"},
+        {"ontheroad", "On the road"},
+        {"inside", "Inside"},
+        {"plane", "Plane"},
+    };
+
+    String html;
+    for (const auto &option : kOptions)
+    {
+        html += "<option value='";
+        html += option.value;
+        html += "'";
+        if (std::strcmp(selectedValue.c_str(), option.value) == 0)
+            html += " selected";
+        html += ">";
+        html += option.label;
+        html += "</option>";
+    }
     return html;
 }
 
