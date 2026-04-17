@@ -58,6 +58,16 @@ public:
         return value_.c_str();
     }
 
+    friend bool operator==(const String &lhs, const String &rhs)
+    {
+        return lhs.value_ == rhs.value_;
+    }
+
+    friend bool operator!=(const String &lhs, const String &rhs)
+    {
+        return !(lhs == rhs);
+    }
+
     operator std::string() const
     {
         return value_;

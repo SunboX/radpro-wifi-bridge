@@ -4,10 +4,12 @@
 
 BridgeInfoPage::BridgeInfoPage(const PublisherHealth &openSenseMapHealth,
                                const PublisherHealth &gmcMapHealth,
-                               const PublisherHealth &radmonHealth)
+                               const PublisherHealth &radmonHealth,
+                               const PublisherHealth &openRadiationHealth)
     : openSenseMapHealth_(openSenseMapHealth),
       gmcMapHealth_(gmcMapHealth),
-      radmonHealth_(radmonHealth)
+      radmonHealth_(radmonHealth),
+      openRadiationHealth_(openRadiationHealth)
 {
 }
 
@@ -104,11 +106,16 @@ String BridgeInfoPage::collectJson() const
             json["lastResponseTrace"] = snapshot.lastResponseTrace;
         else
             json["lastResponseTrace"] = nullptr;
+        if (snapshot.lastReportUuid.length())
+            json["lastReportUuid"] = snapshot.lastReportUuid;
+        else
+            json["lastReportUuid"] = nullptr;
     };
 
     appendHealth("openSenseMap", openSenseMapHealth_.snapshot());
     appendHealth("gmcMap", gmcMapHealth_.snapshot());
     appendHealth("radmon", radmonHealth_.snapshot());
+    appendHealth("openRadiation", openRadiationHealth_.snapshot());
 
     String json;
     serializeJson(doc, json);

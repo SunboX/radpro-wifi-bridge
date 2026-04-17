@@ -24,6 +24,7 @@
 #include "OpenSenseMap/OpenSenseMapPublisher.h"
 #include "GmcMap/GmcMapPublisher.h"
 #include "Radmon/RadmonPublisher.h"
+#include "OpenRadiation/OpenRadiationPublisher.h"
 #include "BridgeDiagnostics.h"
 #include "PeripheralStarter.h"
 #include "Time/TimeSync.h"
@@ -94,11 +95,13 @@ static AppConfigStore configStore;
 static PublisherHealth openSenseMapHealth;
 static PublisherHealth gmcMapHealth;
 static PublisherHealth radmonHealth;
-static WiFiPortalService portalService(appConfig, configStore, deviceInfoStore, DBG, ledController, openSenseMapHealth, gmcMapHealth, radmonHealth);
+static PublisherHealth openRadiationHealth;
+static WiFiPortalService portalService(appConfig, configStore, deviceInfoStore, DBG, ledController, openSenseMapHealth, gmcMapHealth, radmonHealth, openRadiationHealth);
 static MqttPublisher mqttPublisher(appConfig, DBG, ledController);
 static OpenSenseMapPublisher openSenseMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION, openSenseMapHealth);
 static GmcMapPublisher gmcMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION, gmcMapHealth);
 static RadmonPublisher radmonPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION, radmonHealth);
+static OpenRadiationPublisher openRadiationPublisher(appConfig, deviceInfoStore, DBG, BRIDGE_FIRMWARE_VERSION, openRadiationHealth);
 static TimeSync timeSync(DBG);
 static bool deviceReady = false;
 static bool deviceError = false;
@@ -259,6 +262,7 @@ void setup()
         openSenseMapPublisher.onCommandResult(type, value);
         gmcMapPublisher.onCommandResult(type, value);
         radmonPublisher.onCommandResult(type, value);
+        openRadiationPublisher.onCommandResult(type, value);
     });
 
     if (!configStore.load(appConfig))
@@ -272,6 +276,7 @@ void setup()
     }
 
     portalService.begin();
+    openRadiationPublisher.begin();
     portalService.setOtaStartCallback([&]()
                                       { OtaUpdateService::EnterUpdateMode(device_manager, usb, mqttPublisher, openSenseMapPublisher, gmcMapPublisher, radmonPublisher, updateInProgress); });
     timeSync.loop(WiFi.status() == WL_CONNECTED);
@@ -302,6 +307,7 @@ void setup()
     openSenseMapPublisher.updateConfig();
     gmcMapPublisher.updateConfig();
     radmonPublisher.updateConfig();
+    openRadiationPublisher.updateConfig();
     portalService.maintain();
     diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
     LedMode currentMode = ledController.currentModeForDebug();
@@ -346,6 +352,8 @@ void loop()
         gmcMapPublisher.loop();
         radmonPublisher.updateConfig();
         radmonPublisher.loop();
+        openRadiationPublisher.updateConfig();
+        openRadiationPublisher.loop();
     }
 
     const bool usbConnected = usb.isConnected();
@@ -359,6 +367,7 @@ void loop()
             openSenseMapPublisher.clearPendingData();
             gmcMapPublisher.clearPendingData();
             radmonPublisher.clearPendingData();
+            openRadiationPublisher.clearPendingData();
         }
 
         if (deviceReady)

@@ -28,7 +28,8 @@ public:
                       LedController &led,
                       const PublisherHealth &openSenseMapHealth,
                       const PublisherHealth &gmcMapHealth,
-                      const PublisherHealth &radmonHealth);
+                      const PublisherHealth &radmonHealth,
+                      const PublisherHealth &openRadiationHealth);
 
     void begin();
     bool connect(bool forcePortal);
@@ -54,6 +55,9 @@ private:
     void logConnectionDetails(const IPAddress &ip, const IPAddress &gateway, const IPAddress &mask);
     void logStatus();
     void attemptReconnect();
+    void sendOpenRadiationForm(const String &message = String());
+    void handleOpenRadiationPost();
+    void handleOpenRadiationLatest();
     void sendConfigBackupPage(const String &message = String());
     void handleConfigDownload();
     void handleConfigRestore();
@@ -115,6 +119,7 @@ private:
     WiFiManager manager_;
     DebugLogStream &log_;
     LedController &led_;
+    const PublisherHealth &openRadiationHealth_;
 
     WiFiManagerParameter paramDeviceName_;
     WiFiManagerParameter paramMqttHost_;
@@ -129,6 +134,8 @@ private:
     WiFiManagerParameter paramGmcDevice_;
     WiFiManagerParameter paramRadmonUser_;
     WiFiManagerParameter paramRadmonPassword_;
+    WiFiManagerParameter paramOpenRadiationDevice_;
+    WiFiManagerParameter paramOpenRadiationApiKey_;
     bool paramsAttached_;
     String menuHtml_;
     String menuHtmlRendered_;
