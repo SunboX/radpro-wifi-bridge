@@ -64,6 +64,9 @@ bool AppConfigStore::load(AppConfig &cfg)
     cfg.openRadiationDeviceId.trim();
     cfg.openRadiationApiKey = prefs_.getString("orApiKey", cfg.openRadiationApiKey);
     cfg.openRadiationApiKey.trim();
+    cfg.openRadiationMeasurementEnvironment = prefs_.getString("orEnv", cfg.openRadiationMeasurementEnvironment);
+    cfg.openRadiationMeasurementEnvironment.trim();
+    cfg.openRadiationMeasurementHeight = prefs_.getFloat("orHeight", cfg.openRadiationMeasurementHeight);
     cfg.openRadiationLatitude = prefs_.getFloat("orLat", cfg.openRadiationLatitude);
     cfg.openRadiationLongitude = prefs_.getFloat("orLon", cfg.openRadiationLongitude);
     cfg.openRadiationAltitude = prefs_.getFloat("orAlt", cfg.openRadiationAltitude);
@@ -108,6 +111,8 @@ bool AppConfigStore::save(const AppConfig &cfg)
     prefs_.putBool("orEnabled", cfg.openRadiationEnabled);
     prefs_.putString("orDeviceId", cfg.openRadiationDeviceId);
     prefs_.putString("orApiKey", cfg.openRadiationApiKey);
+    prefs_.putString("orEnv", cfg.openRadiationMeasurementEnvironment);
+    prefs_.putFloat("orHeight", cfg.openRadiationMeasurementHeight);
     prefs_.putFloat("orLat", cfg.openRadiationLatitude);
     prefs_.putFloat("orLon", cfg.openRadiationLongitude);
     prefs_.putFloat("orAlt", cfg.openRadiationAltitude);
