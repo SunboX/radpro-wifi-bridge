@@ -9,6 +9,8 @@
 #include "freertos/semphr.h"
 #include "esp_err.h"
 #include "esp_intr_alloc.h"
+#include "UsbAttachDelayPolicy.h"
+#include "UsbDiagnosticMessages.h"
 
 extern "C"
 {
@@ -44,6 +46,7 @@ public:
     void setDeviceCallbacks(DeviceCb on_connected, DeviceCb on_disconnected);
     void setLineCallback(LineCb on_line);
     void setRawCallback(RawCb cb);
+    void setDebugSink(Print *sink) { debug_sink_ = sink; }
 
     // Optional: restrict to specific VID/PID pairs (empty list = ANY)
     void setVidPidFilter(uint16_t vid, uint16_t pid);           // legacy single filter
@@ -77,6 +80,10 @@ private:
     // Helpers
     esp_err_t configureLineCoding(uint32_t baud);
     bool enqueueRaw(const uint8_t *data, size_t len, uint32_t timeout_ms);
+    void emitDebugLine(const String &line);
+    bool matchesAllowlist(uint16_t vid, uint16_t pid) const;
+    uint16_t resolvedVid(uint16_t requestedVid) const;
+    uint16_t resolvedPid(uint16_t requestedPid) const;
 
     static constexpr const char *TAG = "UsbCdcHost";
 
@@ -95,6 +102,7 @@ private:
     DeviceCb on_disconnected_ = nullptr;
     LineCb on_line_ = nullptr;
     RawCb on_raw_ = nullptr;
+    Print *debug_sink_ = nullptr;
 
     // RX line buffer
     String line_buf_;
@@ -131,6 +139,13 @@ private:
     // Descriptor logging client
     usb_host_client_handle_t dbg_client_ = nullptr;
     TaskHandle_t dbg_task_ = nullptr;
+    volatile uint8_t last_observed_addr_ = 0;
+    volatile uint16_t last_observed_vid_ = 0;
+    volatile uint16_t last_observed_pid_ = 0;
+    volatile uint8_t last_observed_class_ = 0;
+    volatile unsigned long observed_device_ready_ms_ = 0;
+    volatile uint32_t observed_device_seq_ = 0;
+    volatile uint32_t reported_open_failure_seq_ = 0;
     static void DbgClientTaskThunk(void *arg);
     static void DbgClientCb(const usb_host_client_event_msg_t *evt, void *arg);
     void dbgClientTask();

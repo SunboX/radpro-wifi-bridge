@@ -46,6 +46,8 @@ namespace
     constexpr size_t kOutBufferSize = 512;
     constexpr size_t kInBufferSize = 512;
     constexpr uint8_t kDefaultInterfaceIndex = 0;
+    constexpr uint8_t kFirstInterfaceCandidate = 0;
+    constexpr uint8_t kLastInterfaceCandidate = 2;
 }
 
 UsbCdcHost::UsbCdcHost() {}
@@ -262,6 +264,43 @@ bool UsbCdcHost::send(const uint8_t *data, size_t len, uint32_t timeout_ms)
     return enqueueRaw(data, len, timeout_ms);
 }
 
+void UsbCdcHost::emitDebugLine(const String &line)
+{
+    if (debug_sink_ && line.length())
+        debug_sink_->println(line);
+}
+
+bool UsbCdcHost::matchesAllowlist(uint16_t vid, uint16_t pid) const
+{
+    if (allowed_devices_.empty())
+        return true;
+
+    for (const auto &entry : allowed_devices_)
+    {
+        if (entry.vid == vid && entry.pid == pid)
+            return true;
+    }
+    return false;
+}
+
+uint16_t UsbCdcHost::resolvedVid(uint16_t requestedVid) const
+{
+    if (requestedVid)
+        return requestedVid;
+    if (last_observed_vid_)
+        return last_observed_vid_;
+    return connected_vid_;
+}
+
+uint16_t UsbCdcHost::resolvedPid(uint16_t requestedPid) const
+{
+    if (requestedPid)
+        return requestedPid;
+    if (last_observed_pid_)
+        return last_observed_pid_;
+    return connected_pid_;
+}
+
 bool UsbCdcHost::restart()
 {
     ESP_LOGW(TAG, "Restarting USB host by request.");
@@ -390,12 +429,22 @@ void UsbCdcHost::cdcTask()
         // If we aren’t open yet, try to find & open a CDC-ACM interface
         if (!dev_ && !vcp_dev_)
         {
+            const unsigned long nowMs = millis();
+            if (!UsbAttachDelayPolicy::isReady(nowMs, observed_device_ready_ms_))
+            {
+                const unsigned long waitMs = observed_device_ready_ms_ - nowMs;
+                vTaskDelay(pdMS_TO_TICKS(waitMs));
+                continue;
+            }
+
             opened_intf_idx_ = kDefaultInterfaceIndex;
-            static const uint8_t kIfaceCandidates[] = {0, 1, 2};
+            static const uint8_t kIfaceCandidates[] = {kFirstInterfaceCandidate, 1, kLastInterfaceCandidate};
 
             auto try_open = [&](uint16_t vid, uint16_t pid) -> bool {
                 const uint16_t open_vid = vid ? vid : CDC_HOST_ANY_VID;
                 const uint16_t open_pid = pid ? pid : CDC_HOST_ANY_PID;
+                const uint16_t actual_vid = resolvedVid(vid);
+                const uint16_t actual_pid = resolvedPid(pid);
 
 #if __has_include("usb/vcp.hpp")
                 // Prefer vendor-specific VCP drivers first
@@ -415,10 +464,14 @@ void UsbCdcHost::cdcTask()
                         {
                             vcp_dev_ = v;
                             use_vcp_ = true;
-                            connected_vid_ = open_vid;
-                            connected_pid_ = open_pid;
+                            connected_vid_ = actual_vid;
+                            connected_pid_ = actual_pid;
                             ESP_LOGI(TAG, "CDC/VCP device opened (iface=%u, VID=0x%04X PID=0x%04X)",
                                      opened_intf_idx_, open_vid, open_pid);
+                            emitDebugLine(UsbDiagnosticMessages::formatOpenSuccess("VCP",
+                                                                                   opened_intf_idx_,
+                                                                                   connected_vid_,
+                                                                                   connected_pid_));
                             (void)vcp_dev_->set_control_line_state(true, true);
                             cdc_acm_line_coding_t lc{};
                             lc.dwDTERate = target_baud_;
@@ -443,10 +496,14 @@ void UsbCdcHost::cdcTask()
                     if (err == ESP_OK && dev_ != nullptr)
                     {
                         use_vcp_ = false;
-                        connected_vid_ = open_vid;
-                        connected_pid_ = open_pid;
+                        connected_vid_ = actual_vid;
+                        connected_pid_ = actual_pid;
                         ESP_LOGI(TAG, "CDC device opened (iface=%u, VID=0x%04X PID=0x%04X)",
                                  opened_intf_idx_, open_vid, open_pid);
+                        emitDebugLine(UsbDiagnosticMessages::formatOpenSuccess("CDC",
+                                                                               opened_intf_idx_,
+                                                                               connected_vid_,
+                                                                               connected_pid_));
                         esp_err_t lerr = cdc_acm_host_set_control_line_state(dev_, true, true);
                         if (lerr != ESP_OK && lerr != ESP_ERR_NOT_SUPPORTED)
                         {
@@ -487,6 +544,17 @@ void UsbCdcHost::cdcTask()
 
             if (!opened)
             {
+                const uint32_t observedSeq = observed_device_seq_;
+                if (observedSeq != 0 && observedSeq != reported_open_failure_seq_)
+                {
+                    reported_open_failure_seq_ = observedSeq;
+                    emitDebugLine(UsbDiagnosticMessages::formatOpenFailureSummary(last_observed_vid_,
+                                                                                  last_observed_pid_,
+                                                                                  last_observed_class_,
+                                                                                  matchesAllowlist(last_observed_vid_, last_observed_pid_),
+                                                                                  kFirstInterfaceCandidate,
+                                                                                  kLastInterfaceCandidate));
+                }
                 // Nothing opened yet; avoid tight loop
                 vTaskDelay(pdMS_TO_TICKS(75));
                 continue;
@@ -647,6 +715,7 @@ void UsbCdcHost::onDevEvent(const cdc_acm_host_dev_event_data_t *event)
         connected_vid_ = 0;
         connected_pid_ = 0;
         ready_after_tick_ = 0;
+        emitDebugLine("USB diag: CDC device disconnected");
         if (!line_buf_.isEmpty() && on_line_)
         {
             on_line_(line_buf_);
@@ -705,8 +774,18 @@ void UsbCdcHost::DbgClientCb(const usb_host_client_event_msg_t *evt, void *arg)
             const usb_device_desc_t *dd = nullptr;
             if (usb_host_get_device_descriptor(devH, &dd) == ESP_OK && dd)
             {
+                self->last_observed_addr_ = evt->new_dev.address;
+                self->last_observed_vid_ = dd->idVendor;
+                self->last_observed_pid_ = dd->idProduct;
+                self->last_observed_class_ = dd->bDeviceClass;
+                self->observed_device_ready_ms_ = UsbAttachDelayPolicy::readyAt(millis());
+                self->observed_device_seq_ += 1;
                 ESP_LOGI(TAG, "NEW DEV addr=%u VID=0x%04X PID=0x%04X class=0x%02X",
                          evt->new_dev.address, dd->idVendor, dd->idProduct, dd->bDeviceClass);
+                self->emitDebugLine(UsbDiagnosticMessages::formatObservedDevice(evt->new_dev.address,
+                                                                                 dd->idVendor,
+                                                                                 dd->idProduct,
+                                                                                 dd->bDeviceClass));
             }
             const usb_config_desc_t *cfg = nullptr;
             if (usb_host_get_active_config_descriptor(devH, &cfg) == ESP_OK && cfg)
@@ -723,12 +802,20 @@ void UsbCdcHost::DbgClientCb(const usb_host_client_event_msg_t *evt, void *arg)
                         auto *ifd = (const usb_intf_desc_t *)p;
                         ESP_LOGI(TAG, "  IF#%u class=0x%02X sub=0x%02X proto=0x%02X",
                                  ifd->bInterfaceNumber, ifd->bInterfaceClass, ifd->bInterfaceSubClass, ifd->bInterfaceProtocol);
+                        self->emitDebugLine(UsbDiagnosticMessages::formatInterfaceDescriptor(ifd->bInterfaceNumber,
+                                                                                              ifd->bInterfaceClass,
+                                                                                              ifd->bInterfaceSubClass,
+                                                                                              ifd->bInterfaceProtocol));
                     }
                     else if (type == USB_B_DESCRIPTOR_TYPE_ENDPOINT && len >= sizeof(usb_ep_desc_t))
                     {
                         auto *ep = (const usb_ep_desc_t *)p;
                         ESP_LOGI(TAG, "    EP addr=0x%02X attr=0x%02X maxPkt=%u interval=%u",
                                  ep->bEndpointAddress, ep->bmAttributes, ep->wMaxPacketSize, ep->bInterval);
+                        self->emitDebugLine(UsbDiagnosticMessages::formatEndpointDescriptor(ep->bEndpointAddress,
+                                                                                             ep->bmAttributes,
+                                                                                             ep->wMaxPacketSize,
+                                                                                             ep->bInterval));
                     }
                     p += len;
                 }
@@ -740,6 +827,8 @@ void UsbCdcHost::DbgClientCb(const usb_host_client_event_msg_t *evt, void *arg)
     case USB_HOST_CLIENT_EVENT_DEV_GONE:
         // IDF 4.4.x: no dev_addr field here; keep it simple and portable
         ESP_LOGI(TAG, "DEV GONE");
+        self->observed_device_ready_ms_ = 0;
+        self->emitDebugLine("USB diag: observed device gone");
         break;
     default:
         break;

@@ -193,6 +193,7 @@ void setup()
 
     device_manager.setLineHandler([&](const String &line) { diagnostics.handleLine(line); });
     device_manager.setRawHandler([&](const uint8_t *data, size_t len) { diagnostics.handleRaw(data, len); });
+    usb.setDebugSink(&DBG);
     device_manager.setCommandResultHandler([&](DeviceManager::CommandType type, const String &value, bool success) {
         if (!success)
         {

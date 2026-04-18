@@ -5,7 +5,7 @@
 Wi-Fi/USB bridge firmware for **Rad Pro class** Geiger counters, built on the excellent open-source Rad Pro firmware from https://github.com/Gissio/radpro.  
 The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides status over the debug UART, keeps a heartbeat on the on-board WS2812, and mirrors telemetry to MQTT. Configuration is handled through a captive portal that stays available as a normal web UI once the device is on the network.
 
-**Compatibility note:** Tested with **Bosean FS‑600**, **FNIRSI GC‑01** running firmware **“Rad Pro 3.0.1”**, and **FNIRSI GC‑03** running firmware **“Rad Pro 3.1test17”**. If you encounter problems with other adapters, please open an issue so we can track it. I’m happy to help, but I can’t afford to buy every device — get in touch if you’re able to loan or sponsor hardware for debugging.
+**Compatibility note:** Tested with **Bosean FS‑600**, **FNIRSI GC‑01** running firmware **“Rad Pro 3.0.1”** and **“Rad Pro 3.1test17”**, and **FNIRSI GC‑03** running firmware **“Rad Pro 3.1test17”**. Recent GC‑01 units that enumerate as standard STM32 CDC devices are supported as well. If you encounter problems with other adapters, please open an issue so we can track it. I’m happy to help, but I can’t afford to buy every device — get in touch if you’re able to loan or sponsor hardware for debugging.
 
 **Tested Geiger counters**
 
@@ -60,7 +60,7 @@ See [docs/board-requirements.md](docs/board-requirements.md) if you want to comp
 
 ## Web Installer (ESP Web Tools)
 
-Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.14.0)
+Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.15.0)
 
 Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required. OTA updates of the bridge firmware are also available from the web portal once a network connection is active.
 
