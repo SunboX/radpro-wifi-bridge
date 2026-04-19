@@ -9,6 +9,7 @@
 #include <esp_system.h>
 #include <cmath>
 #include "Publishing/HttpPublishResponse.h"
+#include "Runtime/CooperativePump.h"
 
 namespace
 {
@@ -334,10 +335,7 @@ bool OpenRadiationPublisher::sendPayload(const String &payload)
         client,
         kResponseWaitMs,
         []() { return millis(); },
-        []() {
-            delay(10);
-            yield();
-        });
+        []() { CooperativePump::service(); });
 
     if (!response.success)
     {
@@ -411,8 +409,7 @@ String OpenRadiationPublisher::readResponseBody(WiFiClientSecure &client, unsign
         if (!client.connected() && client.available() <= 0)
             break;
 
-        delay(10);
-        yield();
+        CooperativePump::service();
     }
 
     body.trim();

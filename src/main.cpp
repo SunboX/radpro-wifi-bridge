@@ -33,6 +33,7 @@
 #include "FileSystem/BridgeFileSystem.h"
 #include "Logging/DebugLogStream.h"
 #include "Publishing/PublisherHealth.h"
+#include "Runtime/CooperativePump.h"
 #include "UsbRecoveryPolicy.h"
 
 #ifndef BRIDGE_FIRMWARE_VERSION
@@ -69,6 +70,7 @@ static unsigned long startupStartTime = 0;
 // Forward declarations
 static void handleStartupLogic();
 static void runMainLogic();
+static void serviceCooperativeTasksDuringNetworkWait();
 static const char *commandTypeName(DeviceManager::CommandType type);
 static const char *ledModeName(LedMode mode);
 
@@ -187,6 +189,7 @@ void setup()
     ledController.update();
 
     diagnostics.initialize();
+    CooperativePump::setCallback(serviceCooperativeTasksDuringNetworkWait);
 
     // Record start time for non-blocking startup delay
     startupStartTime = millis();
@@ -519,6 +522,15 @@ static void runMainLogic()
         lastStatsRequest = now;
         device_manager.requestStats();
     }
+}
+
+static void serviceCooperativeTasksDuringNetworkWait()
+{
+    portalService.process();
+    diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
+    ledController.update();
+    delay(10);
+    yield();
 }
 
 static const char *commandTypeName(DeviceManager::CommandType type)

@@ -3,6 +3,7 @@
 #include "OpenSenseMap/OpenSenseMapTls.h"
 #include "OpenSenseMap/OpenSenseMapPortalLinks.h"
 #include "Publishing/HttpPublishResponse.h"
+#include "Runtime/CooperativePump.h"
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include "ConfigPortal/WiFiPortalService.h"
@@ -412,10 +413,7 @@ bool OpenSenseMapPublisher::sendPayload(const JsonDocument &payload)
         client,
         kResponseWaitMs,
         []() { return millis(); },
-        []() {
-            delay(10);
-            yield();
-        });
+        []() { CooperativePump::service(); });
 
     if (!response.success)
     {

@@ -7,6 +7,7 @@
 #include <WiFiClient.h>
 #include <cmath>
 #include "Publishing/HttpPublishResponse.h"
+#include "Runtime/CooperativePump.h"
 
 namespace
 {
@@ -355,10 +356,7 @@ bool GmcMapPublisher::sendRequest(const String &query)
         client,
         10000,
         []() { return millis(); },
-        []() {
-            delay(10);
-            yield();
-        });
+        []() { CooperativePump::service(); });
 
     if (!response.success)
     {

@@ -60,7 +60,7 @@ See [docs/board-requirements.md](docs/board-requirements.md) if you want to comp
 
 ## Web Installer (ESP Web Tools)
 
-Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.15.0)
+Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.15.1)
 
 Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required. OTA updates of the bridge firmware are also available from the web portal once a network connection is active.
 

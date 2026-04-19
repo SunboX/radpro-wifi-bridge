@@ -146,3 +146,11 @@ public:
         return written + println();
     }
 };
+
+inline void delay(unsigned long)
+{
+}
+
+inline void yield()
+{
+}

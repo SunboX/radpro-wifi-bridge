@@ -5,6 +5,7 @@
 #include <WebServer.h>
 #include "Led/LedController.h"
 #include "Publishing/HttpPublishResponse.h"
+#include "Runtime/CooperativePump.h"
 
 namespace
 {
@@ -217,10 +218,7 @@ bool RadmonPublisher::sendRequest(const String &query)
         client,
         10000,
         []() { return millis(); },
-        []() {
-            delay(10);
-            yield();
-        });
+        []() { CooperativePump::service(); });
 
     if (!response.success)
     {
