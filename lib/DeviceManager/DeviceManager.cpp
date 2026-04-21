@@ -441,8 +441,6 @@ void DeviceManager::onLine(const String &line)
         enqueueCommand("GET tubeSensitivity", CommandType::DeviceSensitivity, 0, true);
         enqueueCommand("GET tubeDeadTime", CommandType::TubeDeadTime, 0, true);
         enqueueCommand("GET tubeDeadTimeCompensation", CommandType::TubeDeadTimeCompensation, 0, true);
-        enqueueCommand("GET tubeHVFrequency", CommandType::TubeHVFrequency, 0, true);
-        enqueueCommand("GET tubeHVDutyCycle", CommandType::TubeHVDutyCycle, 0, true);
 
         handleSuccess();
         break;
