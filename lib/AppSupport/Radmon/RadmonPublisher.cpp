@@ -5,6 +5,7 @@
 #include <WebServer.h>
 #include "Led/LedController.h"
 #include "Publishing/HttpPublishResponse.h"
+#include "Radmon/RadmonLogRedaction.h"
 #include "Runtime/CooperativePump.h"
 
 namespace
@@ -157,7 +158,7 @@ bool RadmonPublisher::publishPending()
     }
 
     log_.print("Radmon: GET ");
-    log_.println(query);
+    log_.println(RadmonLogRedaction::redactQueryForLogs(query));
 
     lastAttemptMs_ = now;
     health_.noteAttempt(now);

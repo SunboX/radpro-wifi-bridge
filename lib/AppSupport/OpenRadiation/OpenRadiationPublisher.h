@@ -33,7 +33,8 @@ private:
                       const String &startTime,
                       const String &endTime,
                       const String &startPulseCount,
-                      const String &endPulseCount);
+                      const String &endPulseCount,
+                      String &outError);
     bool makeIsoTimestamp(String &out) const;
     String resolveApparatusId() const;
     String readResponseBody(WiFiClientSecure &client, unsigned long timeoutMs, size_t maxBytes) const;
@@ -48,6 +49,7 @@ private:
     String pendingDoseValue_;
     String pendingTubeValue_;
     String lastPublishedReportUuid_;
+    String lastConfigError_;
     OpenRadiationMeasurementWindow::MeasurementWindowState measurementWindow_;
     bool haveDoseValue_ = false;
     bool haveTubeValue_ = false;

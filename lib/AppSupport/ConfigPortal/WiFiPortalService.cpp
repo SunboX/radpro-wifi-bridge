@@ -7,6 +7,7 @@
 #include "GmcMap/GmcMapPublisher.h"
 #include "OpenRadiation/OpenRadiationBackupJson.h"
 #include "OpenRadiation/OpenRadiationMeasurementMetadata.h"
+#include "OpenRadiation/OpenRadiationPayload.h"
 #include "OpenRadiation/OpenRadiationPortalLinks.h"
 #include "OpenRadiation/OpenRadiationPortalView.h"
 #include "OpenRadiation/OpenRadiationProtocol.h"
@@ -19,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <time.h>
 #include <vector>
 #include <esp_wifi.h>
 #include <ArduinoJson.h>
@@ -52,6 +54,92 @@ String readHttpsBody(WiFiClientSecure &client, unsigned long timeoutMs, size_t m
 
     body.trim();
     return body;
+}
+
+bool formatUtcTimestamp(time_t epoch, String &out)
+{
+    if (epoch <= 0)
+        return false;
+
+    struct tm tmUtc;
+    if (!gmtime_r(&epoch, &tmUtc))
+        return false;
+
+    char buffer[32];
+    size_t written = strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &tmUtc);
+    if (written == 0)
+        return false;
+
+    out = buffer;
+    return true;
+}
+
+String resolveDryRunTimestamp(time_t epoch, const char *fallback)
+{
+    String timestamp;
+    if (formatUtcTimestamp(epoch, timestamp))
+        return timestamp;
+    return String(fallback ? fallback : "");
+}
+
+void resolveDryRunPulseWindow(const DeviceInfoSnapshot &info, String &startPulseCount, String &endPulseCount)
+{
+    uint32_t livePulseCount = 0;
+    if (OpenRadiationMeasurementMetadata::tryParsePulseCount(info.tubePulseCount, livePulseCount))
+    {
+        endPulseCount = String(livePulseCount);
+        startPulseCount = String(livePulseCount >= 42 ? (livePulseCount - 42) : 0);
+        return;
+    }
+
+    startPulseCount = "100";
+    endPulseCount = "142";
+}
+
+bool buildOpenRadiationDryRunPayload(const AppConfig &config,
+                                     const DeviceInfoSnapshot &info,
+                                     String &outJson,
+                                     String &outError)
+{
+    const String apparatusId = OpenRadiationProtocol::resolveApparatusId(config.openRadiationDeviceId, info.deviceId).length()
+                                   ? OpenRadiationProtocol::resolveApparatusId(config.openRadiationDeviceId, info.deviceId)
+                                   : String("dry-run-preview");
+
+    float doseRate = info.tubeDoseRate.toFloat();
+    if (!(doseRate > 0.0f))
+        doseRate = 0.1234f;
+
+    const time_t now = time(nullptr);
+    const String startTime = resolveDryRunTimestamp(now > 300 ? (now - 300) : now, "2026-04-21T12:00:00Z");
+    const String endTime = resolveDryRunTimestamp(now, "2026-04-21T12:05:00Z");
+
+    String startPulseCount;
+    String endPulseCount;
+    resolveDryRunPulseWindow(info, startPulseCount, endPulseCount);
+
+    JsonDocument doc;
+    const OpenRadiationPayload::BuildError error = OpenRadiationPayload::buildPayloadDocument(
+        doc,
+        config,
+        apparatusId,
+        info.firmware.length() ? info.firmware : String(BRIDGE_FIRMWARE_VERSION),
+        OpenRadiationProtocol::buildOrganisationReporting(BRIDGE_FIRMWARE_VERSION),
+        "11111111-1111-4111-8111-111111111111",
+        doseRate,
+        startTime,
+        endTime,
+        startPulseCount,
+        endPulseCount);
+    if (error != OpenRadiationPayload::BuildError::None)
+    {
+        outError = OpenRadiationPayload::buildErrorText(error);
+        return false;
+    }
+
+    OpenRadiationPayload::redactSecrets(doc);
+    outJson.clear();
+    serializeJsonPretty(doc, outJson);
+    return true;
 }
 } // namespace
 
@@ -451,7 +539,7 @@ void WiFiPortalService::attachParameters()
             return;
         }
         routesRegistered_ = true;
-        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /openradiation /openradiation/latest /gmc /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /logs /logs.json /ota /ota/status /ota/fetch /ota/upload/* /restart"));
+        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /openradiation /openradiation/dry-run /openradiation/latest /gmc /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /logs /logs.json /ota /ota/status /ota/fetch /ota/upload/* /restart"));
 
         manager_.server->on("/mqtt", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /mqtt"));
@@ -569,6 +657,11 @@ void WiFiPortalService::attachParameters()
         manager_.server->on("/openradiation", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /openradiation"));
             handleOpenRadiationPost();
+        });
+
+        manager_.server->on("/openradiation/dry-run", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /openradiation/dry-run"));
+            handleOpenRadiationDryRun();
         });
 
         manager_.server->on("/openradiation/latest", HTTP_GET, [this]() {
@@ -1465,6 +1558,15 @@ void WiFiPortalService::sendOpenRadiationForm(const String &message)
     html += htmlEscape(config_.openRadiationApiKey);
     html += F("'/>");
 
+    html += F("<label for='orUserId'>OpenRadiation User ID / Pseudo</label><input id='orUserId' name='orUserId' type='text' value='");
+    html += htmlEscape(config_.openRadiationUserId);
+    html += F("'/>");
+
+    html += F("<label for='orUserPwd'>OpenRadiation User Password</label><input id='orUserPwd' name='orUserPwd' type='password' value='");
+    html += htmlEscape(config_.openRadiationUserPassword);
+    html += F("'/>");
+    html += F("<p style='margin:-4px 0 0 0;color:#bbb;font-size:13px;'>The bridge stores these credentials locally in NVS, includes them in outgoing measurement payloads, and redacts them in dry-run previews.</p>");
+
     html += F("<label for='orLatitude'>Latitude</label><input id='orLatitude' name='orLatitude' type='number' step='0.000001' min='-90' max='90' value='");
     html += String(config_.openRadiationLatitude, 6);
     html += F("'/>");
@@ -1494,6 +1596,7 @@ void WiFiPortalService::sendOpenRadiationForm(const String &message)
     html += F("'/>");
 
     html += OpenRadiationPortalView::buildLinksSection(mapUrl, latestPath);
+    html += F("<p style='margin:0 0 16px 0;'><a href='/openradiation/dry-run' target='_blank' rel='noopener'>Preview dry-run payload (redacted, no submission)</a></p>");
     html += F("<button type='submit'>Save OpenRadiation Settings</button></form>"
               "<form action='/' method='get' style='margin-top:20px;'><button class='btn btn-primary' type='submit'>Main menu</button></form>"
               "</div></body></html>");
@@ -1510,6 +1613,8 @@ void WiFiPortalService::handleOpenRadiationPost()
     bool enabled = server.hasArg("orEnabled") && server.arg("orEnabled") == "1";
     String deviceId = server.arg("orDeviceId");
     String apiKey = server.arg("orApiKey");
+    String userId = server.arg("orUserId");
+    String userPassword = server.arg("orUserPwd");
     String latStr = server.arg("orLatitude");
     String lonStr = server.arg("orLongitude");
     String altStr = server.arg("orAltitude");
@@ -1519,6 +1624,7 @@ void WiFiPortalService::handleOpenRadiationPost()
 
     deviceId.trim();
     apiKey.trim();
+    userId.trim();
     latStr.trim();
     lonStr.trim();
     altStr.trim();
@@ -1534,6 +1640,12 @@ void WiFiPortalService::handleOpenRadiationPost()
     }
     changed |= UpdateStringIfChanged(config_.openRadiationDeviceId, deviceId.c_str());
     changed |= UpdateStringIfChanged(config_.openRadiationApiKey, apiKey.c_str());
+    changed |= UpdateStringIfChanged(config_.openRadiationUserId, userId.c_str());
+    if (config_.openRadiationUserPassword != userPassword)
+    {
+        config_.openRadiationUserPassword = userPassword;
+        changed = true;
+    }
 
     auto updateFloat = [&](float &target, const String &source, float minValue, float maxValue) {
         if (!source.length())
@@ -1629,6 +1741,26 @@ void WiFiPortalService::handleOpenRadiationPost()
     }
 
     sendOpenRadiationForm(message);
+}
+
+void WiFiPortalService::handleOpenRadiationDryRun()
+{
+    if (!manager_.server)
+        return;
+
+    String payload;
+    String error;
+    if (!buildOpenRadiationDryRunPayload(config_, deviceInfo_.snapshot(), payload, error))
+    {
+        JsonDocument doc;
+        doc["error"] = String("OpenRadiation dry-run unavailable: ") + error;
+        String body;
+        serializeJsonPretty(doc, body);
+        manager_.server->send(503, "application/json", body);
+        return;
+    }
+
+    manager_.server->send(200, "application/json", payload);
 }
 
 void WiFiPortalService::handleOpenRadiationLatest()

@@ -57,6 +57,7 @@ private:
     void attemptReconnect();
     void sendOpenRadiationForm(const String &message = String());
     void handleOpenRadiationPost();
+    void handleOpenRadiationDryRun();
     void handleOpenRadiationLatest();
     void sendConfigBackupPage(const String &message = String());
     void handleConfigDownload();

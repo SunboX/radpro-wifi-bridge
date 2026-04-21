@@ -11,6 +11,8 @@ inline void appendMeasurementConfig(JsonDocument &doc, const AppConfig &config)
 {
     doc["openRadiationMeasurementEnvironment"] = config.openRadiationMeasurementEnvironment;
     doc["openRadiationMeasurementHeight"] = config.openRadiationMeasurementHeight;
+    doc["openRadiationUserId"] = config.openRadiationUserId;
+    doc["openRadiationUserPassword"] = config.openRadiationUserPassword;
 }
 
 inline void applyMeasurementConfig(JsonVariantConst root, AppConfig &config)
@@ -30,6 +32,20 @@ inline void applyMeasurementConfig(JsonVariantConst root, AppConfig &config)
     {
         config.openRadiationMeasurementHeight = OpenRadiationMeasurementMetadata::clampMeasurementHeight(
             root["openRadiationMeasurementHeight"].as<float>());
+    }
+
+    if (!root["openRadiationUserId"].isNull())
+    {
+        const char *rawUserId = root["openRadiationUserId"].as<const char *>();
+        String userId = rawUserId ? String(rawUserId) : String();
+        userId.trim();
+        config.openRadiationUserId = userId;
+    }
+
+    if (!root["openRadiationUserPassword"].isNull())
+    {
+        const char *rawUserPassword = root["openRadiationUserPassword"].as<const char *>();
+        config.openRadiationUserPassword = rawUserPassword ? String(rawUserPassword) : String();
     }
 }
 } // namespace OpenRadiationBackupJson

@@ -1,5 +1,6 @@
 #include "OpenRadiation/OpenRadiationPublisher.h"
 #include "OpenRadiation/OpenRadiationMeasurementMetadata.h"
+#include "OpenRadiation/OpenRadiationPayload.h"
 #include "OpenRadiation/OpenRadiationMeasurementWindow.h"
 #include "OpenRadiation/OpenRadiationProtocol.h"
 
@@ -41,7 +42,20 @@ void OpenRadiationPublisher::begin()
 
 void OpenRadiationPublisher::updateConfig()
 {
-    // Placeholder for future dynamic reactions to config changes.
+    String configError;
+    if (config_.openRadiationEnabled)
+        configError = OpenRadiationPayload::buildRequiredCredentialError(config_);
+
+    if (configError != lastConfigError_)
+    {
+        lastConfigError_ = configError;
+        if (lastConfigError_.length())
+        {
+            log_.print("OpenRadiation: ");
+            log_.println(lastConfigError_);
+        }
+    }
+
     syncHealthState();
 }
 
@@ -111,7 +125,7 @@ bool OpenRadiationPublisher::isEnabled() const
         return false;
     if (!resolveApparatusId().length())
         return false;
-    if (!config_.openRadiationApiKey.length())
+    if (OpenRadiationPayload::buildRequiredCredentialError(config_).length())
         return false;
     return true;
 }
@@ -201,15 +215,18 @@ bool OpenRadiationPublisher::publishPending()
 
     String payload;
     String reportUuid;
+    String buildError;
     if (!buildPayload(payload,
                       reportUuid,
                       doseRate,
                       measurementWindow_.startTime,
                       endTimestamp,
                       measurementWindow_.startPulseCount,
-                      info.tubePulseCount))
+                      info.tubePulseCount,
+                      buildError))
     {
-        log_.println("OpenRadiation: failed to build payload.");
+        log_.print("OpenRadiation: ");
+        log_.println(buildError.length() ? buildError : String("failed to build payload."));
         suppressUntilMs_ = now + kRetryBackoffMs;
         syncHealthState();
         return true;
@@ -250,42 +267,31 @@ bool OpenRadiationPublisher::buildPayload(String &outJson,
                                           const String &startTime,
                                           const String &endTime,
                                           const String &startPulseCount,
-                                          const String &endPulseCount)
+                                          const String &endPulseCount,
+                                          String &outError)
 {
     const String apparatusId = resolveApparatusId();
-    if (!apparatusId.length() || !config_.openRadiationApiKey.length() || !startTime.length())
-        return false;
-
     outReportUuid = generateUuid();
 
     const DeviceInfoSnapshot info = deviceInfo_.snapshot();
-
     JsonDocument doc;
-    doc["apiKey"] = config_.openRadiationApiKey;
-
-    JsonObject data = doc["data"].to<JsonObject>();
-    data["apparatusId"] = apparatusId;
-    data["value"] = doseRate;
-    data["startTime"] = startTime;
-    data["latitude"] = config_.openRadiationLatitude;
-    data["longitude"] = config_.openRadiationLongitude;
-    if (config_.openRadiationAltitude != 0.0f)
-        data["altitude"] = lroundf(config_.openRadiationAltitude);
-    if (config_.openRadiationAccuracy > 0.0f)
-        data["accuracy"] = config_.openRadiationAccuracy;
-    if (info.firmware.length())
-        data["apparatusVersion"] = info.firmware;
-    data["apparatusSensorType"] = "geiger";
-    data["reportUuid"] = outReportUuid;
-    data["manualReporting"] = false;
-    data["organisationReporting"] = OpenRadiationProtocol::buildOrganisationReporting(bridgeVersion_);
-    data["reportContext"] = "routine";
-    OpenRadiationMeasurementMetadata::appendOptionalFields(
-        data,
+    const OpenRadiationPayload::BuildError error = OpenRadiationPayload::buildPayloadDocument(
+        doc,
         config_,
+        apparatusId,
+        info.firmware,
+        OpenRadiationProtocol::buildOrganisationReporting(bridgeVersion_),
+        outReportUuid,
+        doseRate,
+        startTime,
         endTime,
         startPulseCount,
         endPulseCount);
+    if (error != OpenRadiationPayload::BuildError::None)
+    {
+        outError = OpenRadiationPayload::buildErrorText(error);
+        return false;
+    }
 
     outJson.clear();
     serializeJson(doc, outJson);
@@ -418,8 +424,8 @@ String OpenRadiationPublisher::readResponseBody(WiFiClientSecure &client, unsign
 
 void OpenRadiationPublisher::syncHealthState()
 {
-    health_.setEnabled(isEnabled());
-    health_.setPaused(false);
+    health_.setEnabled(config_.openRadiationEnabled);
+    health_.setPaused(config_.openRadiationEnabled && lastConfigError_.length());
     health_.setPending(publishQueued_);
     health_.setLastReportUuid(lastPublishedReportUuid_);
 }

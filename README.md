@@ -60,7 +60,7 @@ See [docs/board-requirements.md](docs/board-requirements.md) if you want to comp
 
 ## Web Installer (ESP Web Tools)
 
-Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.15.2)
+Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.15.5)
 
 Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required. OTA updates of the bridge firmware are also available from the web portal once a network connection is active.
 
@@ -114,7 +114,7 @@ Toggle the feature on via **Configure OpenSenseMap**, paste in your box/token/se
 
 For the setup flow and field-by-field notes see [docs/openradiation.md](docs/openradiation.md).
 
-Enable **Configure OpenRadiation**, enter your API key, and fill in the station location metadata used by the OpenRadiation API. The bridge can reuse the connected detector's device ID automatically when the optional apparatus ID is left blank, and the page exposes direct links to the public OpenRadiation map plus the latest successfully published measurement.
+Enable **Configure OpenRadiation**, enter your API key plus OpenRadiation user ID/password, and fill in the station location metadata used by the OpenRadiation API. The bridge can reuse the connected detector's device ID automatically when the optional apparatus ID is left blank, and the page exposes direct links to the public OpenRadiation map, a redacted dry-run payload preview, and the latest successfully published measurement.
 
 ---
 

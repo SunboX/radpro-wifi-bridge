@@ -20,6 +20,8 @@ constexpr size_t kRadmonUserLen = 48;
 constexpr size_t kRadmonPasswordLen = 48;
 constexpr size_t kOpenRadiationDeviceIdLen = 64;
 constexpr size_t kOpenRadiationApiKeyLen = 96;
+constexpr size_t kOpenRadiationUserIdLen = 64;
+constexpr size_t kOpenRadiationUserPasswordLen = 96;
 
 struct AppConfig
 {
@@ -47,6 +49,8 @@ struct AppConfig
     bool openRadiationEnabled = false;
     String openRadiationDeviceId;
     String openRadiationApiKey;
+    String openRadiationUserId;
+    String openRadiationUserPassword;
     String openRadiationMeasurementEnvironment;
     float openRadiationMeasurementHeight = 0.0f;
     float openRadiationLatitude = 0.0f;

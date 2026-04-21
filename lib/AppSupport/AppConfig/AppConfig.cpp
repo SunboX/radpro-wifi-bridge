@@ -64,6 +64,9 @@ bool AppConfigStore::load(AppConfig &cfg)
     cfg.openRadiationDeviceId.trim();
     cfg.openRadiationApiKey = prefs_.getString("orApiKey", cfg.openRadiationApiKey);
     cfg.openRadiationApiKey.trim();
+    cfg.openRadiationUserId = prefs_.getString("orUserId", cfg.openRadiationUserId);
+    cfg.openRadiationUserId.trim();
+    cfg.openRadiationUserPassword = prefs_.getString("orUserPwd", cfg.openRadiationUserPassword);
     cfg.openRadiationMeasurementEnvironment = prefs_.getString("orEnv", cfg.openRadiationMeasurementEnvironment);
     cfg.openRadiationMeasurementEnvironment.trim();
     cfg.openRadiationMeasurementHeight = prefs_.getFloat("orHeight", cfg.openRadiationMeasurementHeight);
@@ -111,6 +114,8 @@ bool AppConfigStore::save(const AppConfig &cfg)
     prefs_.putBool("orEnabled", cfg.openRadiationEnabled);
     prefs_.putString("orDeviceId", cfg.openRadiationDeviceId);
     prefs_.putString("orApiKey", cfg.openRadiationApiKey);
+    prefs_.putString("orUserId", cfg.openRadiationUserId);
+    prefs_.putString("orUserPwd", cfg.openRadiationUserPassword);
     prefs_.putString("orEnv", cfg.openRadiationMeasurementEnvironment);
     prefs_.putFloat("orHeight", cfg.openRadiationMeasurementHeight);
     prefs_.putFloat("orLat", cfg.openRadiationLatitude);

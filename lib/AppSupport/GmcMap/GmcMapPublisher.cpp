@@ -6,6 +6,7 @@
 #include "Led/LedController.h"
 #include <WiFiClient.h>
 #include <cmath>
+#include "GmcMap/GmcMapLogRedaction.h"
 #include "Publishing/HttpPublishResponse.h"
 #include "Runtime/CooperativePump.h"
 
@@ -172,7 +173,7 @@ bool GmcMapPublisher::publishPending()
     query += pendinguSv_;
 
     log_.print("GMCMap: GET ");
-    log_.println(query);
+    log_.println(GmcMapLogRedaction::redactQueryForLogs(query));
 
     lastAttemptMs_ = now;
     health_.noteAttempt(now);
