@@ -7,6 +7,7 @@
 #include <WiFiClient.h>
 #include <cmath>
 #include "GmcMap/GmcMapLogRedaction.h"
+#include "GmcMap/GmcMapPortalLinks.h"
 #include "Publishing/HttpPublishResponse.h"
 #include "Runtime/CooperativePump.h"
 
@@ -294,12 +295,16 @@ void GmcMapPublisher::SendPortalForm(WiFiPortalService &portal, const String &me
         return;
 
     String notice = WiFiPortalService::htmlEscape(message);
+    const String deviceHistoryUrl = GmcMapPortalLinks::buildGmcMapDeviceHistoryUrl(
+        portal.config_.gmcMapDeviceId);
     WiFiPortalService::TemplateReplacements vars = {
         {"{{NOTICE_CLASS}}", notice.length() ? String() : String("hidden")},
         {"{{NOTICE_TEXT}}", notice},
         {"{{GMC_ENABLED_CHECKED}}", portal.config_.gmcMapEnabled ? String("checked") : String()},
         {"{{GMC_ACCOUNT}}", WiFiPortalService::htmlEscape(portal.config_.gmcMapAccountId)},
-        {"{{GMC_DEVICE}}", WiFiPortalService::htmlEscape(portal.config_.gmcMapDeviceId)}};
+        {"{{GMC_DEVICE}}", WiFiPortalService::htmlEscape(portal.config_.gmcMapDeviceId)},
+        {"{{GMC_DEVICE_LINK_CLASS}}", deviceHistoryUrl.length() ? String() : String("hidden")},
+        {"{{GMC_DEVICE_URL}}", WiFiPortalService::htmlEscape(deviceHistoryUrl)}};
 
     portal.appendCommonTemplateVars(vars);
     portal.sendTemplate("/portal/gmc.html", vars);

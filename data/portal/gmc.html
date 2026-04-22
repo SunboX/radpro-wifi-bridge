@@ -19,6 +19,9 @@
                 <input id="gmcAccount" name="gmcAccount" type="text" value="{{GMC_ACCOUNT}}" />
                 <label for="gmcDevice" data-i18n="T_LABEL_DEVICE_ID">Device ID</label>
                 <input id="gmcDevice" name="gmcDevice" type="text" value="{{GMC_DEVICE}}" />
+                <p class="field-link {{GMC_DEVICE_LINK_CLASS}}">
+                    <a href="{{GMC_DEVICE_URL}}" target="_blank" rel="noopener noreferrer" data-i18n="T_GMC_OPEN_DEVICE_HISTORY">Open device history in GMCMap</a>
+                </p>
                 <button type="submit" data-i18n="T_BUTTON_SAVE_GMC">Save GMCMap Settings</button>
             </form>
             <form action="/" method="get" class="back-form">

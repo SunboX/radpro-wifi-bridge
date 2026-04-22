@@ -17,6 +17,9 @@
                 </label>
                 <label for="radmonUser" data-i18n="T_LABEL_USERNAME">Username</label>
                 <input id="radmonUser" name="radmonUser" type="text" value="{{RADMON_USER}}" />
+                <p class="field-link {{RADMON_STATION_LINK_CLASS}}">
+                    <a href="{{RADMON_STATION_URL}}" target="_blank" rel="noopener noreferrer" data-i18n="T_RADMON_OPEN_STATION_PAGE">Open station page on Radmon</a>
+                </p>
                 <label for="radmonPass" data-i18n="T_LABEL_PASSWORD">Password</label>
                 <input id="radmonPass" name="radmonPass" type="password" value="{{RADMON_PASS}}" />
                 <button type="submit" data-i18n="T_BUTTON_SAVE_RADMON">Save Radmon Settings</button>

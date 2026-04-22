@@ -21,6 +21,7 @@ Use this guide to connect the RadPro WiFi Bridge to [radmon.org](https://radmon.
    - **Radmon Username** – your station username (case sensitive).
    - **Radmon Password** – the *data sending* password from the Radmon control panel.
 4. Save. Credentials are written to NVS and take effect immediately.
+5. After saving, the settings page shows a direct link to the public station page on radmon.org.
 
 ![Portal Radmon configuration page](pictures/radpro_wifi_bridge_screens/Radmon_Settings.png)
 
