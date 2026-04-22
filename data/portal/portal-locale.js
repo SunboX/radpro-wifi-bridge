@@ -20,6 +20,7 @@
     }
 
     const localeMarker = document.querySelector('[data-portal-locale-marker="true"]')
+    const portalHeadBootstrap = window.portalHeadBootstrap || null
     const requestedLocale = normalizeLocale(
         (typeof window.portalPreferredLocale === 'string' && window.portalPreferredLocale) ||
             (document.body && document.body.getAttribute('data-portal-locale-value')) ||
@@ -30,8 +31,87 @@
     const state = {
         locale: 'en',
         fallback: {},
-        active: {}
+        active: {},
+        bridgeFirmware: readInitialBridgeFirmware()
     }
+
+    const normalizeSubtitleLabel = (value) => {
+        if (!value || typeof value !== 'string') return ''
+        return value.trim()
+    }
+
+    function readInitialBridgeFirmware() {
+        if (!portalHeadBootstrap) return ''
+        if (typeof portalHeadBootstrap.readCachedVersion === 'function') {
+            return normalizeSubtitleLabel(portalHeadBootstrap.readCachedVersion())
+        }
+        return normalizeSubtitleLabel(portalHeadBootstrap.state && portalHeadBootstrap.state.version)
+    }
+
+    function writeBridgeFirmwareCache(version) {
+        const normalized = normalizeSubtitleLabel(version)
+        if (!normalized || !portalHeadBootstrap || typeof portalHeadBootstrap.writeCachedVersion !== 'function') {
+            return normalized
+        }
+        return normalizeSubtitleLabel(portalHeadBootstrap.writeCachedVersion(normalized))
+    }
+
+    function isPortalSubtitlePending() {
+        if (portalHeadBootstrap && portalHeadBootstrap.state && portalHeadBootstrap.state.pending) return true
+        return !!(document.documentElement && document.documentElement.classList && document.documentElement.classList.contains('portal-subtitle-pending'))
+    }
+
+    function markPortalSubtitleReady() {
+        if (portalHeadBootstrap && typeof portalHeadBootstrap.markReady === 'function') {
+            portalHeadBootstrap.markReady()
+            return
+        }
+        if (!document.documentElement || !document.documentElement.classList) return
+        document.documentElement.classList.remove('portal-subtitle-pending')
+        document.documentElement.classList.add('portal-subtitle-ready')
+    }
+
+    const portalLocaleChrome = {
+        extractPortalSubtitleLabel(text) {
+            const trimmed = normalizeSubtitleLabel(text)
+            if (!trimmed || !trimmed.startsWith('RadPro WiFi Bridge')) return ''
+
+            let label = trimmed.slice('RadPro WiFi Bridge'.length).trim()
+            if (!label) return ''
+            if (label.startsWith('-')) {
+                label = label.slice(1).trim()
+            }
+            if (!label || label === 'Configuration' || label === 'Konfiguration') return ''
+            return label
+        },
+
+        buildPortalSubtitle(translate, label) {
+            const normalized = normalizeSubtitleLabel(label)
+            if (!normalized || typeof translate !== 'function') return ''
+            return translate('T_PORTAL_SUBTITLE', { version: normalized, ip: normalized })
+        },
+
+        applyPortalSubtitle(element, translate, version, options = {}) {
+            if (!element) return ''
+
+            const dataset = element.dataset || {}
+            const allowExistingLabel = options.allowExistingLabel !== false
+            const label =
+                normalizeSubtitleLabel(version) ||
+                normalizeSubtitleLabel(dataset.portalSubtitleLabel) ||
+                (allowExistingLabel ? this.extractPortalSubtitleLabel(element.textContent) : '')
+            if (!label) return ''
+
+            dataset.portalSubtitleLabel = label
+            const translated = this.buildPortalSubtitle(translate, label)
+            if (translated) {
+                element.textContent = translated
+            }
+            return translated
+        }
+    }
+
+    window.portalLocaleChrome = portalLocaleChrome
 
     window.portalTranslate = function translate(key, params = {}) {
         let text = state.active[key] || state.fallback[key] || key
@@ -65,6 +145,7 @@
                     state.active = state.fallback
                 }
                 applyTranslations()
+                loadBridgeFirmwareVersion()
             })
     })
 
@@ -114,11 +195,6 @@
             key: 'T_PORTAL_HEADING'
         },
         {
-            regex: /^RadPro WiFi Bridge - (.+)$/,
-            key: 'T_PORTAL_SUBTITLE',
-            params: (match) => ({ ip: match[1] })
-        },
-        {
             regex: /^Configure WiFi$/,
             key: 'T_PORTAL_WIFI_BUTTON'
         },
@@ -158,11 +234,54 @@
         }
 
         translateWifiManagerChrome()
+        refreshPortalSubtitle(state.bridgeFirmware, { allowExistingLabel: !isPortalSubtitlePending() })
         document.dispatchEvent(
             new CustomEvent('portal-locale-ready', {
                 detail: { locale: state.locale }
             })
         )
+    }
+
+    function findPortalSubtitleElement() {
+        const wrap = document.querySelector('.wrap')
+        if (!wrap || typeof wrap.querySelector !== 'function') return null
+        const subtitle = wrap.querySelector('h3')
+        if (!subtitle) return null
+        if (!portalLocaleChrome.extractPortalSubtitleLabel(subtitle.textContent) && !(subtitle.dataset && subtitle.dataset.portalSubtitleLabel)) {
+            return null
+        }
+        return subtitle
+    }
+
+    function refreshPortalSubtitle(version, options = {}) {
+        const subtitle = findPortalSubtitleElement()
+        if (!subtitle) return ''
+        const translated = portalLocaleChrome.applyPortalSubtitle(subtitle, portalTranslate, version, options)
+        if (translated) {
+            markPortalSubtitleReady()
+        }
+        return translated
+    }
+
+    function loadBridgeFirmwareVersion() {
+        if (!findPortalSubtitleElement()) return Promise.resolve(null)
+
+        return fetch('/bridge.json', { cache: 'no-store' })
+            .then((resp) => {
+                if (!resp.ok) return null
+                return resp.json()
+            })
+            .then((data) => {
+                const version = writeBridgeFirmwareCache(data && data.bridgeFirmware)
+                if (!version) return null
+                state.bridgeFirmware = version
+                refreshPortalSubtitle(version, { allowExistingLabel: false })
+                return version
+            })
+            .catch((err) => {
+                console.warn('Bridge firmware lookup failed', err)
+                return null
+            })
     }
 
     function translateWifiManagerChrome() {

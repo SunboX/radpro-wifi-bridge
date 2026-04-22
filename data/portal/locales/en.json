@@ -79,7 +79,7 @@
     "T_FIELD_RSSI": "RSSI",
     "T_FIELD_MAC": "MAC address",
     "T_PORTAL_HEADING": "RadPro WiFi Bridge Configuration",
-    "T_PORTAL_SUBTITLE": "RadPro WiFi Bridge - {ip}",
+    "T_PORTAL_SUBTITLE": "RadPro WiFi Bridge {version}",
     "T_PORTAL_WIFI_BUTTON": "Configure WiFi",
     "T_PORTAL_CONNECTED": "Connected to {ssid}",
     "T_PORTAL_IP": "with IP {ip}",

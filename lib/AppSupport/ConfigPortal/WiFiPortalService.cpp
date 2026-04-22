@@ -27,6 +27,13 @@
 
 namespace
 {
+constexpr const char kPortalHeadElement[] =
+    "<style>"
+    "html.portal-subtitle-pending body .wrap > h3{visibility:hidden;}"
+    "html.portal-subtitle-ready body .wrap > h3{visibility:visible;}"
+    "</style>"
+    "<script src=\"/portal/portal-head-bootstrap.js\"></script>";
+
 String readHttpsBody(WiFiClientSecure &client, unsigned long timeoutMs, size_t maxBytes)
 {
     String body;
@@ -197,6 +204,7 @@ void WiFiPortalService::begin()
     manager_.setConnectTimeout(10);
     manager_.setConnectRetries(1);
     manager_.setTitle("RadPro WiFi Bridge Configuration");
+    manager_.setCustomHeadElement(kPortalHeadElement);
     manager_.setAPStaticIPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
     manager_.setWiFiAPChannel(1);
     std::vector<const char *> menuEntries = {"wifi", "custom"};
@@ -550,6 +558,12 @@ void WiFiPortalService::attachParameters()
             log_.println(F("HTTP GET /portal/portal.css"));
             if (!sendStaticFile("/portal/portal.css", "text/css"))
                 sendTemplateError("/portal/portal.css");
+        });
+
+        manager_.server->on("/portal/portal-head-bootstrap.js", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /portal/portal-head-bootstrap.js"));
+            if (!sendStaticFile("/portal/portal-head-bootstrap.js", "application/javascript"))
+                sendTemplateError("/portal/portal-head-bootstrap.js");
         });
 
         manager_.server->on("/portal/js/device-info.js", HTTP_GET, [this]() {
