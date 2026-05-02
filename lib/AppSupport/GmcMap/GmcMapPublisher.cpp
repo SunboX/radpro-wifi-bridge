@@ -7,6 +7,7 @@
 #include <WiFiClient.h>
 #include <cmath>
 #include "GmcMap/GmcMapLogRedaction.h"
+#include "GmcMap/GmcMapPayload.h"
 #include "Publishing/HttpPublishResponse.h"
 #include "Runtime/CooperativePump.h"
 
@@ -49,7 +50,6 @@ void GmcMapPublisher::loop()
 
 void GmcMapPublisher::clearPendingData()
 {
-    pendingCpm_ = "";
     pendinguSv_ = "";
     pendingCpmValue_ = 0.0f;
     haveCpm_ = false;
@@ -70,7 +70,6 @@ void GmcMapPublisher::onCommandResult(DeviceManager::CommandType type, const Str
     case DeviceManager::CommandType::TubeRate:
         if (value.length())
         {
-            pendingCpm_ = value;
             haveCpm_ = true;
             pendingCpmValue_ = value.toFloat();
             addRateSample(pendingCpmValue_, millis());
@@ -149,28 +148,14 @@ bool GmcMapPublisher::publishPending()
         return true;
     }
 
-    String query;
-    query.reserve(160);
-    query = "/log2.asp?AID=";
-    query += config_.gmcMapAccountId;
-    query += "&GID=";
-    query += config_.gmcMapDeviceId;
-    query += "&CPM=";
-    query += pendingCpm_;
     float acpmValue = 0.0f;
-    String acpmString;
-    if (computeAcpm(acpmValue))
-    {
-        acpmString = formatFloat(acpmValue);
-    }
-    else
-    {
-        acpmString = pendingCpm_;
-    }
-    query += "&ACPM=";
-    query += acpmString;
-    query += "&uSV=";
-    query += pendinguSv_;
+    const float acpmForQuery = computeAcpm(acpmValue) ? acpmValue : pendingCpmValue_;
+    const String query = GmcMapPayload::buildLogQuery(
+        config_.gmcMapAccountId,
+        config_.gmcMapDeviceId,
+        pendingCpmValue_,
+        acpmForQuery,
+        pendinguSv_);
 
     log_.print("GMCMap: GET ");
     log_.println(GmcMapLogRedaction::redactQueryForLogs(query));
@@ -303,24 +288,6 @@ void GmcMapPublisher::SendPortalForm(WiFiPortalService &portal, const String &me
 
     portal.appendCommonTemplateVars(vars);
     portal.sendTemplate("/portal/gmc.html", vars);
-}
-
-String GmcMapPublisher::formatFloat(float value, uint8_t decimals)
-{
-    String s(value, static_cast<unsigned int>(decimals));
-    int dotIndex = s.indexOf('.');
-    if (dotIndex < 0)
-        return s;
-
-    int end = s.length() - 1;
-    while (end > dotIndex && s[end] == '0')
-        --end;
-    if (end == dotIndex)
-        --end;
-    s.remove(end + 1);
-    if (s.length() == 0)
-        s = "0";
-    return s;
 }
 
 bool GmcMapPublisher::sendRequest(const String &query)
