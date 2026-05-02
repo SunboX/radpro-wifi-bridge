@@ -31,8 +31,9 @@ These values appear on the device details page and are needed in the bridge port
 - It sends a single HTTP GET request to `https://www.gmcmap.com/log2.asp` with:
   - `AID=<Account ID>`
   - `GID=<Device ID>`
-  - `CPM=<tube rate>`
-  - `uSv=<dose rate>`
+  - `CPM=<tube rate rounded to the nearest whole CPM>`
+  - `ACPM=<averaged tube rate rounded to the nearest whole CPM>`
+  - `uSV=<dose rate>`
 - Requests are throttled to roughly once per minute to respect GMCMap’s API guidelines.
 
 ## 4. Verifying Data
