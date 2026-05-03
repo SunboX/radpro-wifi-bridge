@@ -205,23 +205,25 @@ void setup()
     device_manager.setRawHandler([&](const uint8_t *data, size_t len) { diagnostics.handleRaw(data, len); });
     usb.setDebugSink(&DBG);
     device_manager.setCommandResultHandler([&](DeviceManager::CommandType type, const String &value, bool success) {
+        bool transient = (type == DeviceManager::CommandType::TubePulseCount ||
+                          type == DeviceManager::CommandType::TubeRate ||
+                          type == DeviceManager::CommandType::DevicePower ||
+                          type == DeviceManager::CommandType::DeviceBatteryVoltage ||
+                          type == DeviceManager::CommandType::DeviceBatteryPercent ||
+                          (type == DeviceManager::CommandType::DeviceId && !deviceReady));
         if (!success)
         {
-            DBG.print("Device command failed: ");
-            DBG.print(commandTypeName(type));
-            DBG.print(" (");
-            DBG.print(static_cast<int>(type));
-            DBG.println(")");
-            bool transient = (type == DeviceManager::CommandType::TubePulseCount ||
-                               type == DeviceManager::CommandType::TubeRate ||
-                               type == DeviceManager::CommandType::DevicePower ||
-                               type == DeviceManager::CommandType::DeviceBatteryVoltage ||
-                               type == DeviceManager::CommandType::DeviceBatteryPercent ||
-                               (type == DeviceManager::CommandType::DeviceId && !deviceReady));
+            DeviceActivityFault previousActivityFault = deviceActivityMonitor.fault();
+            DeviceActivityFault currentActivityFault = deviceActivityMonitor.onCommandResult(type, value, false, millis());
+            handleDeviceActivityTransition(previousActivityFault, currentActivityFault);
             if (!transient)
             {
+                DBG.print("Device command failed: ");
+                DBG.print(commandTypeName(type));
+                DBG.print(" (");
+                DBG.print(static_cast<int>(type));
+                DBG.println(")");
                 commandError = true;
-                updateDeviceErrorState();
                 if (type == DeviceManager::CommandType::DeviceId)
                 {
                     deviceReady = false;
@@ -233,6 +235,7 @@ void setup()
                 else
                     ledController.activateFault(FaultCode::CommandTimeout);
             }
+            updateDeviceErrorState();
             return;
         }
 
@@ -656,6 +659,8 @@ static const char *deviceActivityFaultName(DeviceActivityFault fault)
         return "device power is off";
     case DeviceActivityFault::StalePulseCount:
         return "tube pulse count is not advancing";
+    case DeviceActivityFault::TelemetryTimeout:
+        return "device telemetry timed out";
     }
     return "unknown";
 }
