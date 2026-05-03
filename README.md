@@ -98,7 +98,7 @@ Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no loc
 
 Need a step-by-step walkthrough? See [docs/mqtt-home-assistant.md](docs/mqtt-home-assistant.md) for detailed MQTT broker setup and Home Assistant discovery notes.
 
-The `MqttPublisher` mirrors every RadPro response to MQTT once you enable it in the portal. Topics are templated (`stat/radpro/<deviceid>/<leaf>` by default), retained, and paired with Home Assistant discovery payloads so entities appear automatically. Successful publishes pulse the LED green; routine broker outages stay in the console so the bridge can keep showing its healthy USB/Wi-Fi state on the LED. Authentication or configuration problems still surface as fault codes.
+The `MqttPublisher` mirrors every RadPro response to MQTT once you enable it in the portal. Topics are templated (`stat/radpro/<deviceid>/<leaf>` by default), retained, and paired with Home Assistant discovery payloads so entities appear automatically. Successful publishes pulse the LED green while the bridge is not in error mode; routine broker outages stay in the console so the bridge can keep showing its healthy USB/Wi-Fi state on the LED. Authentication, configuration, or telemetry alarm states still keep priority on the LED.
 
 ---
 
@@ -147,9 +147,8 @@ Base modes communicate long-running state (default brightness is gentle to avoid
 | `DeviceReady`     | Bright green steady           | RadPro enumerated and telemetry queue active.                  |
 | `Error`           | Amber blink (~0.5 s period)   | Device communication or telemetry activity failed; check the console for the current alarm. |
 
-Event pulses temporarily override the base colour:
+Event pulses temporarily override healthy base colours. Error mode and latched fault patterns keep priority so alarms are not masked:
 
--   **MQTT success:** bright green flash (~150 ms).
 -   **MQTT success:** bright green flash (~150 ms).
 -   **Device command error:** bright red flash (~250 ms) and a console log (`Device command failed: <id>`).
 -   **Routine MQTT disconnects:** logged to the console, but they no longer force the LED into the red/amber fault pattern while Wi‑Fi + USB + detector are otherwise healthy.
@@ -209,7 +208,7 @@ Raw USB logging is invaluable when reverse-engineering RadPro responses; disable
 1. **USB enumeration** uses TinyUSB with a CH34x fallback so the RadPro reliably appears as a CDC device.
 2. **Handshake:** `GET deviceId` logs the raw ID, model, firmware, and locale. Additional metadata (`devicePower`, `deviceBatteryVoltage`, `deviceTime`, `tube` parameters) is fetched immediately afterwards.
 3. **Continuous polling:** `GET devicePower`, `GET tubePulseCount`, and `GET tubeRate` are queued at the configured interval (`readIntervalMs`, clamped to ≥ 500 ms).
-4. **Activity guard:** `devicePower=0` or a tube pulse counter that stops advancing raises an amber telemetry alarm, clears pending measurement uploads, and suppresses stale tube readings until the detector reports live data again.
+4. **Activity guard:** `devicePower=0`, repeated telemetry timeouts after live data was seen, or a tube pulse counter that stops advancing raises an amber telemetry alarm, clears pending measurement uploads, and suppresses stale tube readings until the detector reports live data again.
 5. **MQTT forwarding:** each healthy successful response is offered to the MQTT publisher; failures propagate to the LED and console.
 6. **Optional diagnostics:** enable raw USB logging for byte-level traces or request `randomData` / `dataLog` from higher-level code to stream ad-hoc payloads.
 
