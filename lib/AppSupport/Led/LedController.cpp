@@ -131,7 +131,8 @@ void LedController::update()
     {
         if (static_cast<int32_t>(pulseEndMs_ - now) > 0)
         {
-            color = colorForPulse(pulse_);
+            if (mode_ != LedMode::Error)
+                color = colorForPulse(pulse_);
         }
         else
         {

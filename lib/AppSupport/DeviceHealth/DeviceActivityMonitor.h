@@ -8,26 +8,37 @@ enum class DeviceActivityFault
 {
     None,
     PowerOff,
-    StalePulseCount
+    StalePulseCount,
+    TelemetryTimeout
 };
 
 class DeviceActivityMonitor
 {
 public:
     static constexpr uint32_t kDefaultStalePulseTimeoutMs = 120000;
+    static constexpr uint32_t kDefaultMissingTelemetryTimeoutMs = 15000;
 
     void reset()
     {
         powerOff_ = false;
         stalePulseCount_ = false;
+        telemetryTimeout_ = false;
         havePulseCount_ = false;
+        haveTelemetry_ = false;
+        consecutiveTelemetryFailures_ = 0;
         lastPulseCount_ = 0;
         lastPulseChangedMs_ = 0;
+        lastTelemetrySuccessMs_ = 0;
     }
 
     void setStalePulseTimeoutMs(uint32_t timeoutMs)
     {
         stalePulseTimeoutMs_ = timeoutMs;
+    }
+
+    void setMissingTelemetryTimeoutMs(uint32_t timeoutMs)
+    {
+        missingTelemetryTimeoutMs_ = timeoutMs;
     }
 
     DeviceActivityFault onCommandResult(DeviceManager::CommandType type,
@@ -36,7 +47,27 @@ public:
                                         unsigned long now)
     {
         if (!success)
+        {
+            if (isTelemetryCommand(type))
+            {
+                ++consecutiveTelemetryFailures_;
+                if (haveTelemetry_ && consecutiveTelemetryFailures_ >= 2 &&
+                    missingTelemetryTimeoutMs_ > 0 &&
+                    static_cast<unsigned long>(now - lastTelemetrySuccessMs_) >= missingTelemetryTimeoutMs_)
+                {
+                    telemetryTimeout_ = true;
+                }
+            }
             return evaluate(now);
+        }
+
+        if (isTelemetryCommand(type))
+        {
+            haveTelemetry_ = true;
+            consecutiveTelemetryFailures_ = 0;
+            lastTelemetrySuccessMs_ = now;
+            telemetryTimeout_ = false;
+        }
 
         if (type == DeviceManager::CommandType::DevicePower)
         {
@@ -48,6 +79,7 @@ public:
             {
                 powerOff_ = false;
                 stalePulseCount_ = false;
+                telemetryTimeout_ = false;
                 havePulseCount_ = false;
                 lastPulseCount_ = 0;
                 lastPulseChangedMs_ = now;
@@ -93,6 +125,8 @@ public:
             return DeviceActivityFault::PowerOff;
         if (stalePulseCount_)
             return DeviceActivityFault::StalePulseCount;
+        if (telemetryTimeout_)
+            return DeviceActivityFault::TelemetryTimeout;
         return DeviceActivityFault::None;
     }
 
@@ -118,6 +152,20 @@ public:
     }
 
 private:
+    static bool isTelemetryCommand(DeviceManager::CommandType type)
+    {
+        switch (type)
+        {
+        case DeviceManager::CommandType::DevicePower:
+        case DeviceManager::CommandType::DeviceBatteryVoltage:
+        case DeviceManager::CommandType::TubePulseCount:
+        case DeviceManager::CommandType::TubeRate:
+            return true;
+        default:
+            return false;
+        }
+    }
+
     static bool parseUnsignedLong(const String &value, unsigned long &out)
     {
         if (!value.length())
@@ -132,8 +180,13 @@ private:
 
     bool powerOff_ = false;
     bool stalePulseCount_ = false;
+    bool telemetryTimeout_ = false;
     bool havePulseCount_ = false;
+    bool haveTelemetry_ = false;
+    uint8_t consecutiveTelemetryFailures_ = 0;
     unsigned long lastPulseCount_ = 0;
     unsigned long lastPulseChangedMs_ = 0;
+    unsigned long lastTelemetrySuccessMs_ = 0;
     uint32_t stalePulseTimeoutMs_ = kDefaultStalePulseTimeoutMs;
+    uint32_t missingTelemetryTimeoutMs_ = kDefaultMissingTelemetryTimeoutMs;
 };

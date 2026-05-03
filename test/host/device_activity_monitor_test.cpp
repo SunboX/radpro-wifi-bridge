@@ -59,6 +59,39 @@ void testPulseCountAdvanceClearsStaleFault()
     assert(monitor.fault() == DeviceActivityFault::None);
     assert(!monitor.hasFault());
 }
+
+void testRepeatedTelemetryFailuresTriggerFaultAfterKnownTelemetry()
+{
+    DeviceActivityMonitor monitor;
+    monitor.setMissingTelemetryTimeoutMs(5000);
+
+    monitor.onCommandResult(DeviceManager::CommandType::DevicePower, "1", true, 1000);
+    monitor.onCommandResult(DeviceManager::CommandType::TubePulseCount, "347929", true, 1200);
+    monitor.onCommandResult(DeviceManager::CommandType::DevicePower, "", false, 6100);
+
+    assert(monitor.fault() == DeviceActivityFault::None);
+
+    monitor.onCommandResult(DeviceManager::CommandType::TubePulseCount, "", false, 6200);
+
+    assert(monitor.fault() == DeviceActivityFault::TelemetryTimeout);
+    assert(monitor.hasFault());
+    assert(monitor.shouldSuppressTelemetry(DeviceManager::CommandType::TubeRate));
+}
+
+void testTelemetrySuccessClearsTelemetryTimeoutFault()
+{
+    DeviceActivityMonitor monitor;
+    monitor.setMissingTelemetryTimeoutMs(5000);
+
+    monitor.onCommandResult(DeviceManager::CommandType::DevicePower, "1", true, 1000);
+    monitor.onCommandResult(DeviceManager::CommandType::TubePulseCount, "347929", true, 1200);
+    monitor.onCommandResult(DeviceManager::CommandType::DevicePower, "", false, 6100);
+    monitor.onCommandResult(DeviceManager::CommandType::TubePulseCount, "", false, 6200);
+    monitor.onCommandResult(DeviceManager::CommandType::DevicePower, "1", true, 6500);
+
+    assert(monitor.fault() == DeviceActivityFault::None);
+    assert(!monitor.hasFault());
+}
 } // namespace
 
 int main()
@@ -67,6 +100,8 @@ int main()
     testPowerOnClearsPowerFault();
     testStalePulseCountTriggersAfterTimeout();
     testPulseCountAdvanceClearsStaleFault();
+    testRepeatedTelemetryFailuresTriggerFaultAfterKnownTelemetry();
+    testTelemetrySuccessClearsTelemetryTimeoutFault();
     std::cout << "device activity monitor tests passed\n";
     return 0;
 }
