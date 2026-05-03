@@ -190,6 +190,8 @@ void DeviceManager::requestStats()
     if (!enabled_ || !host_.isConnected() || !device_id_logged_)
         return;
 
+    if (!isCommandPending("GET devicePower") && (!awaiting_response_ || current_command_.command != "GET devicePower"))
+        enqueueCommand("GET devicePower", CommandType::DevicePower, 0, false);
     if (!isCommandPending("GET tubePulseCount") && (!awaiting_response_ || current_command_.command != "GET tubePulseCount"))
         enqueueCommand("GET tubePulseCount", CommandType::TubePulseCount, 0, false);
     if (!isCommandPending("GET tubeRate") && (!awaiting_response_ || current_command_.command != "GET tubeRate"))
@@ -776,6 +778,7 @@ void DeviceManager::handleError()
     else if (line_handler_ && device_id_logged_ &&
              current_command_.type != CommandType::TubePulseCount &&
              current_command_.type != CommandType::TubeRate &&
+             current_command_.type != CommandType::DevicePower &&
              current_command_.type != CommandType::DeviceBatteryVoltage &&
              current_command_.type != CommandType::DeviceBatteryPercent)
     {
@@ -785,6 +788,7 @@ void DeviceManager::handleError()
     // For fast poll commands, don’t emit/log failures; they recover quickly on the next cycle.
     if (current_command_.type != CommandType::TubePulseCount &&
         current_command_.type != CommandType::TubeRate &&
+        current_command_.type != CommandType::DevicePower &&
         current_command_.type != CommandType::DeviceBatteryVoltage &&
         current_command_.type != CommandType::DeviceBatteryPercent)
         emitResult(current_command_.type, String(), false);
