@@ -85,6 +85,16 @@ void DeviceInfoStore::clearLiveData()
     portEXIT_CRITICAL(&mux_);
 }
 
+void DeviceInfoStore::clearMeasurements()
+{
+    portENTER_CRITICAL(&mux_);
+    tubeRate_ = "";
+    tubeDoseRate_ = "";
+    tubePulseCount_ = "";
+    measurementUpdatedMs_ = 0;
+    portEXIT_CRITICAL(&mux_);
+}
+
 DeviceInfoSnapshot DeviceInfoStore::snapshot() const
 {
     DeviceInfoSnapshot snap;
