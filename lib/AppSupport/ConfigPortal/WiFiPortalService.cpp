@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 André Fiedler
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "ConfigPortal/WiFiPortalService.h"
 
 #include "FileSystem/BridgeFileSystem.h"

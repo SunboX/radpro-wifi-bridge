@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 André Fiedler
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """
 Shared helpers for inspecting the configured filesystem partition.
 """

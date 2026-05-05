@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 André Fiedler
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """
 PlatformIO post-build helper that copies generated binaries into the
 GitHub Pages bundle consumed by ESP Web Tools.

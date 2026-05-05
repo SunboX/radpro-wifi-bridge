@@ -247,9 +247,30 @@ Retries, back-off, and duplicate suppression are handled inside `DeviceManager`.
 
 ## License
 
-Original code in this repository is licensed under the **PolyForm Noncommercial License 1.0.0**. See [LICENSE](LICENSE) for the full terms.
+This project is available under two licensing options:
 
-Required Notice: Copyright © 2026 André Fiedler
-Required Notice: Original source: https://github.com/SunboX/radpro-wifi-bridge
+### 1. Open-source license
 
-Bundled third-party components keep their own licenses. See the license files within `components/` for those terms.
+GNU General Public License v3.0 or later (`GPL-3.0-or-later`).
+
+You may use, modify, and distribute this project under the GPL. If you distribute modified versions or larger works based on this project, they must comply with the GPL, including source-code availability requirements.
+
+Documentation, tutorials, diagrams, screenshots, and non-code media are licensed under Creative Commons Attribution-ShareAlike 4.0 (`CC-BY-SA-4.0`) unless otherwise marked.
+
+Case and hardware design files are licensed under the CERN Open Hardware Licence Version 2 - Strongly Reciprocal (`CERN-OHL-S-2.0`) unless otherwise marked.
+
+### 2. Commercial/proprietary license
+
+For use in closed-source, proprietary, or otherwise GPL-incompatible products, a separate commercial license is required.
+
+Commercial licensing contact: **mail@andrefiedler.de**
+
+### Attribution / notices
+
+Copyright (C) 2026 André Fiedler.
+
+Original source: https://github.com/SunboX/radpro-wifi-bridge
+
+Copyright, license, attribution, and source-origin notices must be preserved as required by the GPL and the notice files in this repository.
+
+Bundled third-party components keep their own licenses. See the license files and SPDX metadata within `components/` and `data/portal/js/jszip.min.js` for those terms.

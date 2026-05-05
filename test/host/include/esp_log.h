@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2026 André Fiedler
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 #pragma once
 
 enum esp_log_level_t
