@@ -22,6 +22,8 @@
 #include "Logging/DebugLogStream.h"
 #include "Publishing/PublisherHealth.h"
 
+class SafecastPublisher;
+
 class WiFiPortalService
 {
 public:
@@ -35,7 +37,8 @@ public:
                       const PublisherHealth &openSenseMapHealth,
                       const PublisherHealth &gmcMapHealth,
                       const PublisherHealth &radmonHealth,
-                      const PublisherHealth &openRadiationHealth);
+                      const PublisherHealth &openRadiationHealth,
+                      const PublisherHealth &safecastHealth);
 
     void begin();
     bool connect(bool forcePortal);
@@ -45,6 +48,7 @@ public:
     void dumpStatus();
     void enableStatusLogging();
     void setOtaStartCallback(std::function<void()> cb);
+    void setSafecastPublisher(SafecastPublisher &publisher);
 
 private:
     void prepareConfigPortalAp(const String &ssid);
@@ -52,6 +56,7 @@ private:
     friend class OpenSenseMapPublisher;
     friend class RadmonPublisher;
     friend class GmcMapPublisher;
+    friend class SafecastPublisher;
 
     void refreshParameters();
     void attachParameters();
@@ -65,6 +70,10 @@ private:
     void handleOpenRadiationPost();
     void handleOpenRadiationDryRun();
     void handleOpenRadiationLatest();
+    void sendSafecastForm(const AppConfig &viewConfig,
+                          const String &message = String(),
+                          const String &resultHtml = String());
+    void handleSafecastPost();
     void sendConfigBackupPage(const String &message = String());
     void handleConfigDownload();
     void handleConfigRestore();
@@ -127,6 +136,7 @@ private:
     DebugLogStream &log_;
     LedController &led_;
     const PublisherHealth &openRadiationHealth_;
+    SafecastPublisher *safecastPublisher_ = nullptr;
 
     WiFiManagerParameter paramDeviceName_;
     WiFiManagerParameter paramMqttHost_;

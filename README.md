@@ -3,7 +3,7 @@
 ![RadPro WiFi Bridge](docs/pictures/radpro_wifi_bridge_connected_to_fs-600.jpg)
 
 Wi-Fi/USB bridge firmware for **Rad Pro class** Geiger counters, built on the excellent open-source Rad Pro firmware from https://github.com/Gissio/radpro.  
-The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides status over the debug UART, keeps a heartbeat on the on-board WS2812, and mirrors telemetry to MQTT. Configuration is handled through a captive portal that stays available as a normal web UI once the device is on the network.
+The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides status over the debug UART, keeps a heartbeat on the on-board WS2812, and mirrors telemetry to MQTT plus supported open-data services. Configuration is handled through a captive portal that stays available as a normal web UI once the device is on the network.
 
 **Compatibility note:** Tested with **Bosean FS‑600**, **FNIRSI GC‑01** running firmware **“Rad Pro 3.0.1”** and **“Rad Pro 3.1test17”**, and **FNIRSI GC‑03** running firmware **“Rad Pro 3.1test17”**. Recent GC‑01 units that enumerate as standard STM32 CDC devices are supported as well. If you encounter problems with other adapters, please open an issue so we can track it. I’m happy to help, but I can’t afford to buy every device — get in touch if you’re able to loan or sponsor hardware for debugging.
 
@@ -60,7 +60,7 @@ See [docs/board-requirements.md](docs/board-requirements.md) if you want to comp
 
 ## Web Installer (ESP Web Tools)
 
-Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.15.8)
+Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.15.9)
 
 Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required. OTA updates of the bridge firmware are also available from the web portal once a network connection is active.
 
@@ -86,7 +86,7 @@ Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no loc
 
 ## Wi-Fi Configuration Portal
 
-`WiFiPortalService` keeps the setup UI reachable whether the bridge is broadcasting a captive portal (`<deviceName> Setup`) or already joined to your LAN (`http://<device-ip>/`). Use it to edit Wi-Fi credentials, toggle MQTT/OpenSenseMap/OpenRadiation/GMCMap/Radmon publishers, or trigger a remote restart (`/restart`). All changes are persisted to NVS immediately and the console logs SSID/IP/RSSI updates for quick troubleshooting.
+`WiFiPortalService` keeps the setup UI reachable whether the bridge is broadcasting a captive portal (`<deviceName> Setup`) or already joined to your LAN (`http://<device-ip>/`). Use it to edit Wi-Fi credentials, toggle MQTT/OpenSenseMap/OpenRadiation/Safecast/GMCMap/Radmon publishers, or trigger a remote restart (`/restart`). All changes are persisted to NVS immediately and the console logs SSID/IP/RSSI updates for quick troubleshooting.
 
 ![Wi-Fi portal Main Menu](docs/pictures/radpro_wifi_bridge_screens/Main_Menu.png)
 
@@ -115,6 +115,14 @@ Toggle the feature on via **Configure OpenSenseMap**, paste in your box/token/se
 For the setup flow and field-by-field notes see [docs/openradiation.md](docs/openradiation.md).
 
 Enable **Configure OpenRadiation**, enter your API key plus OpenRadiation user ID/password, and fill in the station location metadata used by the OpenRadiation API. The bridge can reuse the connected detector's device ID automatically when the optional apparatus ID is left blank, and the page exposes direct links to the public OpenRadiation map, a redacted dry-run payload preview, and the latest successfully published measurement.
+
+---
+
+## Safecast Publishing
+
+For the full Safecast setup flow and troubleshooting notes see [docs/safecast.md](docs/safecast.md).
+
+Enable **Safecast konfigurieren**, enter your Safecast API key and station coordinates, choose `cpm` or `µSv/h`, and set the upload interval. The bridge posts averaged direct measurements to Safecast, supports one-shot test uploads from the portal, masks the saved API key in the UI, and includes a checkbox plus custom endpoint override for running against a test system instead of production.
 
 ---
 
@@ -227,7 +235,7 @@ Retries, back-off, and duplicate suppression are handled inside `DeviceManager`.
 | `lib/AppSupport/*`                                         | Support modules (AppConfig, ConfigPortal, Mqtt, Led, diagnostics helpers).                      |
 | `docs/assembly.md`                                         | Hardware assembly guide (solder bridges, enclosure, flashing).                                  |
 | `docs/mqtt-home-assistant.md`                              | Detailed MQTT/Home Assistant setup guide.                                                       |
-| `docs/opensensemap.md`, `docs/gmcmap.md`, `docs/radmon.md` | Service-specific publishing guides with screenshots.                                            |
+| `docs/opensensemap.md`, `docs/openradiation.md`, `docs/safecast.md`, `docs/gmcmap.md`, `docs/radmon.md` | Service-specific publishing guides and setup notes.                              |
 | `docs/web-install/`                                        | Browser-based installer (ESP Web Tools) plus staged firmware bundle (`firmware/latest`).        |
 | `tools/copy_firmware.py`                                   | PlatformIO post-build hook that refreshes the `docs/web-install/firmware/latest/` artifacts.    |
 | `platformio.ini`                                           | PlatformIO configuration targeting the ESP32-S3 DevKitC-1 with TinyUSB host support.            |
@@ -239,7 +247,6 @@ Retries, back-off, and duplicate suppression are handled inside `DeviceManager`.
 -   Add configurable reporting thresholds / batching beyond the global interval.
 -   OTA firmware update of the connected Rad Pro device (bridge already updates itself OTA via the portal).
 -   Investigate additional publisher targets:
-    -   **Safecast** – large citizen-science network (bGeigie, Safecast:Drive). They provide JSON-based upload flows if you stick to their schema; requires coordination with the Safecast community.
     -   **uRADMonitor** – global network with proprietary + DIY kits; includes API protocols for feeding third-party data once a device is registered.
     -   **GammaSense** – Waag/RIVM citizen sensing initiative; API access may require project partnership depending on phase/status.
 

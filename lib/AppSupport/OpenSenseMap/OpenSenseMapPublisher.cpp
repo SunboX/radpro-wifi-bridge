@@ -367,7 +367,7 @@ void OpenSenseMapPublisher::SendPortalForm(WiFiPortalService &portal, const Stri
 bool OpenSenseMapPublisher::sendPayload(const JsonDocument &payload)
 {
     WiFiClientSecure client;
-    client.setTimeout(10000);
+    client.setTimeout(10);
     client.setCACert(kOpenSenseMapRootCa);
 
     if (!client.connect(kHost, kPort))

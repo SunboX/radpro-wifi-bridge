@@ -22,6 +22,7 @@ These values appear on the device details page and are needed in the bridge port
    - **Account ID** – from the GMCMap dashboard.
    - **Device ID** – the device you want to report measurements for.
 4. Save the form; credentials are stored in NVS immediately.
+5. After saving, the settings page shows a direct link to the device history page on GMCMap.
 
 ![Portal GMCMap configuration page](pictures/radpro_wifi_bridge_screens/GMCMap_Settings.png)
 

@@ -78,11 +78,39 @@ bool AppConfigStore::load(AppConfig &cfg)
     cfg.openRadiationLongitude = prefs_.getFloat("orLon", cfg.openRadiationLongitude);
     cfg.openRadiationAltitude = prefs_.getFloat("orAlt", cfg.openRadiationAltitude);
     cfg.openRadiationAccuracy = prefs_.getFloat("orAcc", cfg.openRadiationAccuracy);
+    cfg.safecastEnabled = prefs_.getBool("scEnabled", cfg.safecastEnabled);
+    cfg.safecastApiBaseUrl = prefs_.getString("scBaseUrl", cfg.safecastApiBaseUrl);
+    cfg.safecastApiBaseUrl.trim();
+    cfg.safecastUseTestApi = prefs_.getBool("scUseTest", cfg.safecastUseTestApi);
+    cfg.safecastCustomApiBaseUrl = prefs_.getString("scCustomUrl", cfg.safecastCustomApiBaseUrl);
+    cfg.safecastCustomApiBaseUrl.trim();
+    cfg.safecastApiKey = prefs_.getString("scApiKey", cfg.safecastApiKey);
+    cfg.safecastApiKey.trim();
+    cfg.safecastDeviceId = prefs_.getString("scDeviceId", cfg.safecastDeviceId);
+    cfg.safecastDeviceId.trim();
+    cfg.safecastLatitude = prefs_.getString("scLat", cfg.safecastLatitude);
+    cfg.safecastLatitude.trim();
+    cfg.safecastLongitude = prefs_.getString("scLon", cfg.safecastLongitude);
+    cfg.safecastLongitude.trim();
+    cfg.safecastHeightCm = prefs_.getString("scHeight", cfg.safecastHeightCm);
+    cfg.safecastHeightCm.trim();
+    cfg.safecastLocationName = prefs_.getString("scLocName", cfg.safecastLocationName);
+    cfg.safecastLocationName.trim();
+    cfg.safecastUnit = prefs_.getString("scUnit", cfg.safecastUnit);
+    cfg.safecastUnit.trim();
+    cfg.safecastUploadIntervalSeconds = prefs_.getUInt("scUpInt", cfg.safecastUploadIntervalSeconds);
+    cfg.safecastDebug = prefs_.getBool("scDebug", cfg.safecastDebug);
 
     prefs_.end();
 
     if (cfg.readIntervalMs < kMinReadIntervalMs)
         cfg.readIntervalMs = kMinReadIntervalMs;
+    if (!cfg.safecastApiBaseUrl.length())
+        cfg.safecastApiBaseUrl = "https://api.safecast.org";
+    if (!cfg.safecastUnit.length())
+        cfg.safecastUnit = "cpm";
+    if (cfg.safecastUploadIntervalSeconds < kMinSafecastUploadIntervalSeconds)
+        cfg.safecastUploadIntervalSeconds = kDefaultSafecastUploadIntervalSeconds;
 
     return true;
 }
@@ -126,6 +154,19 @@ bool AppConfigStore::save(const AppConfig &cfg)
     prefs_.putFloat("orLon", cfg.openRadiationLongitude);
     prefs_.putFloat("orAlt", cfg.openRadiationAltitude);
     prefs_.putFloat("orAcc", cfg.openRadiationAccuracy);
+    prefs_.putBool("scEnabled", cfg.safecastEnabled);
+    prefs_.putString("scBaseUrl", cfg.safecastApiBaseUrl);
+    prefs_.putBool("scUseTest", cfg.safecastUseTestApi);
+    prefs_.putString("scCustomUrl", cfg.safecastCustomApiBaseUrl);
+    prefs_.putString("scApiKey", cfg.safecastApiKey);
+    prefs_.putString("scDeviceId", cfg.safecastDeviceId);
+    prefs_.putString("scLat", cfg.safecastLatitude);
+    prefs_.putString("scLon", cfg.safecastLongitude);
+    prefs_.putString("scHeight", cfg.safecastHeightCm);
+    prefs_.putString("scLocName", cfg.safecastLocationName);
+    prefs_.putString("scUnit", cfg.safecastUnit);
+    prefs_.putUInt("scUpInt", cfg.safecastUploadIntervalSeconds);
+    prefs_.putBool("scDebug", cfg.safecastDebug);
 
     prefs_.end();
     return true;

@@ -124,6 +124,15 @@ button:hover::before {
     color: #8bc34a;
 }
 
+.warning-box {
+    margin: 0;
+    padding: 12px 14px;
+    border-radius: 6px;
+    background: rgba(255, 202, 40, 0.12);
+    border: 1px solid rgba(255, 202, 40, 0.45);
+    color: #ffd86b;
+}
+
 .toggle {
     display: flex;
     align-items: center;
@@ -153,8 +162,67 @@ button:hover::before {
     font-size: 0.9rem;
 }
 
+.field-help {
+    margin: -6px 0 4px;
+    font-size: 0.9rem;
+    color: #b8c7d8;
+}
+
 .field-link.hidden {
     display: none;
+}
+
+.radio-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.radio-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: normal;
+}
+
+.radio-option input {
+    width: auto;
+}
+
+.button-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.button-row button {
+    flex: 1 1 220px;
+}
+
+.result-block {
+    margin: 0 0 18px;
+    padding: 12px 14px;
+    border-radius: 6px;
+    border: 1px solid #35516a;
+    background: #18232d;
+}
+
+.result-block.success {
+    border-color: rgba(139, 195, 74, 0.5);
+    background: rgba(139, 195, 74, 0.12);
+}
+
+.result-block.error {
+    border-color: rgba(255, 118, 118, 0.45);
+    background: rgba(255, 118, 118, 0.12);
+}
+
+.result-block pre {
+    margin: 10px 0 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+    font-size: 13px;
 }
 
 dl {

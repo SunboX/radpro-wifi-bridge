@@ -18,6 +18,7 @@ class MqttPublisher;
 class OpenSenseMapPublisher;
 class GmcMapPublisher;
 class RadmonPublisher;
+class SafecastPublisher;
 
 class OtaUpdateService
 {
@@ -47,6 +48,7 @@ public:
                                 OpenSenseMapPublisher &osem,
                                 GmcMapPublisher &gmc,
                                 RadmonPublisher &radmon,
+                                SafecastPublisher &safecast,
                                 bool &updateFlag);
 
 private:

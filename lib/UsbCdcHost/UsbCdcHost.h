@@ -47,6 +47,8 @@ public:
     // Line coding (ignored if device doesn’t support it)
     bool setBaud(uint32_t baud);
     bool restart();
+    bool requestRestart();
+    bool restartRunsInBackground() const { return true; }
 
     // App callbacks
     void setDeviceCallbacks(DeviceCb on_connected, DeviceCb on_disconnected);
@@ -62,6 +64,7 @@ public:
 
     // Status
     bool isConnected() const { return dev_ != nullptr || vcp_dev_ != nullptr; }
+    bool hasObservedDevice() const { return observed_device_seq_ != 0 || isConnected(); }
     uint16_t connectedVid() const { return connected_vid_; }
     uint16_t connectedPid() const { return connected_pid_; }
     esp_err_t lastError() const { return last_err_; }
@@ -71,10 +74,12 @@ private:
     static void UsbLibTaskThunk(void *arg);
     static void CdcTaskThunk(void *arg);
     static void TxTaskThunk(void *arg);
+    static void RestartTaskThunk(void *arg);
 
     void usbLibTask();
     void cdcTask();
     void txTask();
+    void restartTask();
 
     // CDC callbacks
     static bool DataCb(const uint8_t *data, size_t len, void *user_arg);
@@ -96,11 +101,13 @@ private:
     TaskHandle_t lib_task_ = nullptr;
     TaskHandle_t cdc_task_ = nullptr;
     TaskHandle_t tx_task_ = nullptr;
+    TaskHandle_t restart_task_ = nullptr;
 
     cdc_acm_dev_hdl_t dev_ = nullptr;
 
     uint32_t target_baud_ = 115200;
     volatile bool running_ = false;
+    volatile bool restart_requested_ = false;
     uint8_t opened_intf_idx_ = 0xFF; // which CDC interface we opened (for logs)
 
     // Callbacks

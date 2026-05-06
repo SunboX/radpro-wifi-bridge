@@ -28,6 +28,14 @@ constexpr size_t kOpenRadiationDeviceIdLen = 64;
 constexpr size_t kOpenRadiationApiKeyLen = 96;
 constexpr size_t kOpenRadiationUserIdLen = 64;
 constexpr size_t kOpenRadiationUserPasswordLen = 96;
+constexpr size_t kSafecastUrlLen = 128;
+constexpr size_t kSafecastApiKeyLen = 128;
+constexpr size_t kSafecastDeviceIdLen = 32;
+constexpr size_t kSafecastCoordinateLen = 24;
+constexpr size_t kSafecastHeightLen = 16;
+constexpr size_t kSafecastLocationNameLen = 80;
+constexpr uint32_t kMinSafecastUploadIntervalSeconds = 60;
+constexpr uint32_t kDefaultSafecastUploadIntervalSeconds = 300;
 
 struct AppConfig
 {
@@ -63,6 +71,19 @@ struct AppConfig
     float openRadiationLongitude = 0.0f;
     float openRadiationAltitude = 0.0f;
     float openRadiationAccuracy = 0.0f;
+    bool safecastEnabled = false;
+    String safecastApiBaseUrl = "https://api.safecast.org";
+    bool safecastUseTestApi = false;
+    String safecastCustomApiBaseUrl;
+    String safecastApiKey;
+    String safecastDeviceId;
+    String safecastLatitude;
+    String safecastLongitude;
+    String safecastHeightCm;
+    String safecastLocationName;
+    String safecastUnit = "cpm";
+    uint32_t safecastUploadIntervalSeconds = kDefaultSafecastUploadIntervalSeconds;
+    bool safecastDebug = false;
 };
 
 inline bool UpdateStringIfChanged(String &target, const char *value)

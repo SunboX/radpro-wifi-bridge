@@ -10,6 +10,7 @@
 #include "Led/LedController.h"
 #include "Publishing/HttpPublishResponse.h"
 #include "Radmon/RadmonLogRedaction.h"
+#include "Radmon/RadmonPortalLinks.h"
 #include "Runtime/CooperativePump.h"
 
 namespace
@@ -192,7 +193,7 @@ void RadmonPublisher::syncHealthState()
 bool RadmonPublisher::sendRequest(const String &query)
 {
     WiFiClient client;
-    client.setTimeout(10000);
+    client.setTimeout(10);
     if (!client.connect(kHost, kPort))
     {
         log_.println("Radmon: connect failed.");
@@ -347,12 +348,16 @@ void RadmonPublisher::SendPortalForm(WiFiPortalService &portal, const String &me
         return;
 
     String notice = WiFiPortalService::htmlEscape(message);
+    const String stationUrl = RadmonPortalLinks::buildRadmonStationUrl(
+        portal.config_.radmonUser);
     WiFiPortalService::TemplateReplacements vars = {
         {"{{NOTICE_CLASS}}", notice.length() ? String() : String("hidden")},
         {"{{NOTICE_TEXT}}", notice},
         {"{{RADMON_ENABLED_CHECKED}}", portal.config_.radmonEnabled ? String("checked") : String()},
         {"{{RADMON_USER}}", WiFiPortalService::htmlEscape(portal.config_.radmonUser)},
-        {"{{RADMON_PASS}}", WiFiPortalService::htmlEscape(portal.config_.radmonPassword)}};
+        {"{{RADMON_PASS}}", WiFiPortalService::htmlEscape(portal.config_.radmonPassword)},
+        {"{{RADMON_STATION_LINK_CLASS}}", stationUrl.length() ? String() : String("hidden")},
+        {"{{RADMON_STATION_URL}}", WiFiPortalService::htmlEscape(stationUrl)}};
 
     portal.appendCommonTemplateVars(vars);
     portal.sendTemplate("/portal/radmon.html", vars);

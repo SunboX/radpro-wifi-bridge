@@ -9,11 +9,13 @@
 BridgeInfoPage::BridgeInfoPage(const PublisherHealth &openSenseMapHealth,
                                const PublisherHealth &gmcMapHealth,
                                const PublisherHealth &radmonHealth,
-                               const PublisherHealth &openRadiationHealth)
+                               const PublisherHealth &openRadiationHealth,
+                               const PublisherHealth &safecastHealth)
     : openSenseMapHealth_(openSenseMapHealth),
       gmcMapHealth_(gmcMapHealth),
       radmonHealth_(radmonHealth),
-      openRadiationHealth_(openRadiationHealth)
+      openRadiationHealth_(openRadiationHealth),
+      safecastHealth_(safecastHealth)
 {
 }
 
@@ -120,6 +122,7 @@ String BridgeInfoPage::collectJson() const
     appendHealth("gmcMap", gmcMapHealth_.snapshot());
     appendHealth("radmon", radmonHealth_.snapshot());
     appendHealth("openRadiation", openRadiationHealth_.snapshot());
+    appendHealth("safecast", safecastHealth_.snapshot());
 
     String json;
     serializeJson(doc, json);
