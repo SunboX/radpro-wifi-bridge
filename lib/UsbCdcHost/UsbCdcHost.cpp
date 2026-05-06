@@ -168,12 +168,6 @@ void UsbCdcHost::stop()
         vTaskDelete(cdc_task_);
         cdc_task_ = nullptr;
     }
-    if (lib_task_)
-    {
-        vTaskDelete(lib_task_);
-        lib_task_ = nullptr;
-    }
-
     if (dev_)
     {
         cdc_acm_host_close(dev_);
@@ -210,9 +204,6 @@ void UsbCdcHost::stop()
         tx_mutex_ = nullptr;
     }
 
-    cdc_acm_host_uninstall();
-    usb_host_uninstall();
-
     if (dbg_task_)
     {
         vTaskDelete(dbg_task_);
@@ -222,6 +213,20 @@ void UsbCdcHost::stop()
     {
         usb_host_client_deregister(dbg_client_);
         dbg_client_ = nullptr;
+    }
+
+    esp_err_t err = cdc_acm_host_uninstall();
+    if (err != ESP_OK)
+        ESP_LOGW(TAG, "cdc_acm_host_uninstall: %s", esp_err_to_name(err));
+
+    err = usb_host_uninstall();
+    if (err != ESP_OK)
+        ESP_LOGW(TAG, "usb_host_uninstall: %s", esp_err_to_name(err));
+
+    if (lib_task_)
+    {
+        vTaskDelete(lib_task_);
+        lib_task_ = nullptr;
     }
 }
 
@@ -307,6 +312,35 @@ bool UsbCdcHost::restart()
     stop();
     vTaskDelay(pdMS_TO_TICKS(50));
     return begin();
+}
+
+bool UsbCdcHost::requestRestart()
+{
+    if (restart_requested_)
+        return true;
+
+    restart_requested_ = true;
+    if (xTaskCreatePinnedToCore(RestartTaskThunk, "usb_restart", 4096, this, 18, &restart_task_, tskNO_AFFINITY) != pdPASS)
+    {
+        restart_task_ = nullptr;
+        restart_requested_ = false;
+        ESP_LOGE(TAG, "Failed to create USB restart task");
+        return false;
+    }
+    return true;
+}
+
+void UsbCdcHost::RestartTaskThunk(void *arg)
+{
+    static_cast<UsbCdcHost *>(arg)->restartTask();
+}
+
+void UsbCdcHost::restartTask()
+{
+    (void)restart();
+    restart_task_ = nullptr;
+    restart_requested_ = false;
+    vTaskDelete(nullptr);
 }
 
 bool UsbCdcHost::sendLine(const String &line, uint32_t timeout_ms)

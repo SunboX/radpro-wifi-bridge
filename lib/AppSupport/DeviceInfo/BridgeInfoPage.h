@@ -11,7 +11,8 @@ public:
     BridgeInfoPage(const PublisherHealth &openSenseMapHealth,
                    const PublisherHealth &gmcMapHealth,
                    const PublisherHealth &radmonHealth,
-                   const PublisherHealth &openRadiationHealth);
+                   const PublisherHealth &openRadiationHealth,
+                   const PublisherHealth &safecastHealth);
 
     void handlePage(WiFiManager *manager);
     void handleJson(WiFiManager *manager);
@@ -23,4 +24,5 @@ private:
     const PublisherHealth &gmcMapHealth_;
     const PublisherHealth &radmonHealth_;
     const PublisherHealth &openRadiationHealth_;
+    const PublisherHealth &safecastHealth_;
 };

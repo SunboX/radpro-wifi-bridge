@@ -25,6 +25,7 @@
 #include "GmcMap/GmcMapPublisher.h"
 #include "Radmon/RadmonPublisher.h"
 #include "OpenRadiation/OpenRadiationPublisher.h"
+#include "Safecast/SafecastPublisher.h"
 #include "BridgeDiagnostics.h"
 #include "PeripheralStarter.h"
 #include "Time/TimeSync.h"
@@ -98,12 +99,14 @@ static PublisherHealth openSenseMapHealth;
 static PublisherHealth gmcMapHealth;
 static PublisherHealth radmonHealth;
 static PublisherHealth openRadiationHealth;
-static WiFiPortalService portalService(appConfig, configStore, deviceInfoStore, DBG, ledController, openSenseMapHealth, gmcMapHealth, radmonHealth, openRadiationHealth);
+static PublisherHealth safecastHealth;
+static WiFiPortalService portalService(appConfig, configStore, deviceInfoStore, DBG, ledController, openSenseMapHealth, gmcMapHealth, radmonHealth, openRadiationHealth, safecastHealth);
 static MqttPublisher mqttPublisher(appConfig, DBG, ledController);
 static OpenSenseMapPublisher openSenseMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION, openSenseMapHealth);
 static GmcMapPublisher gmcMapPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION, gmcMapHealth);
 static RadmonPublisher radmonPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION, radmonHealth);
 static OpenRadiationPublisher openRadiationPublisher(appConfig, deviceInfoStore, DBG, BRIDGE_FIRMWARE_VERSION, openRadiationHealth);
+static SafecastPublisher safecastPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSION, safecastHealth);
 static TimeSync timeSync(DBG);
 static bool deviceReady = false;
 static bool deviceError = false;
@@ -267,6 +270,7 @@ void setup()
         gmcMapPublisher.onCommandResult(type, value);
         radmonPublisher.onCommandResult(type, value);
         openRadiationPublisher.onCommandResult(type, value);
+        safecastPublisher.onCommandResult(type, value);
     });
 
     if (!configStore.load(appConfig))
@@ -280,9 +284,11 @@ void setup()
     }
 
     portalService.begin();
+    portalService.setSafecastPublisher(safecastPublisher);
     openRadiationPublisher.begin();
+    safecastPublisher.begin();
     portalService.setOtaStartCallback([&]()
-                                      { OtaUpdateService::EnterUpdateMode(device_manager, usb, mqttPublisher, openSenseMapPublisher, gmcMapPublisher, radmonPublisher, updateInProgress); });
+                                      { OtaUpdateService::EnterUpdateMode(device_manager, usb, mqttPublisher, openSenseMapPublisher, gmcMapPublisher, radmonPublisher, safecastPublisher, updateInProgress); });
     timeSync.loop(WiFi.status() == WL_CONNECTED);
     peripheralStarter.startIfNeeded(WiFi.status() == WL_CONNECTED, timeSync.synced(), kSupportedUsbVidPid);
     mqttPublisher.setPublishCallback([&](bool success)
@@ -312,6 +318,7 @@ void setup()
     gmcMapPublisher.updateConfig();
     radmonPublisher.updateConfig();
     openRadiationPublisher.updateConfig();
+    safecastPublisher.updateConfig();
     portalService.maintain();
     diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
     LedMode currentMode = ledController.currentModeForDebug();
@@ -358,6 +365,8 @@ void loop()
         radmonPublisher.loop();
         openRadiationPublisher.updateConfig();
         openRadiationPublisher.loop();
+        safecastPublisher.updateConfig();
+        safecastPublisher.loop();
     }
 
     const bool usbConnected = usb.isConnected();
@@ -372,6 +381,7 @@ void loop()
             gmcMapPublisher.clearPendingData();
             radmonPublisher.clearPendingData();
             openRadiationPublisher.clearPendingData();
+            safecastPublisher.clearPendingData();
         }
 
         if (deviceReady)
@@ -384,13 +394,17 @@ void loop()
         if (!updateInProgress &&
             peripheralStarter.started() &&
             wifiConnected &&
-            UsbRecoveryPolicy::shouldRestart(now, usbDisconnectedSinceMs, lastUsbRestartAttemptMs))
+            UsbRecoveryPolicy::shouldRestart(now,
+                                             usbDisconnectedSinceMs,
+                                             lastUsbRestartAttemptMs,
+                                             usb.hasObservedDevice(),
+                                             usb.restartRunsInBackground()))
         {
             DBG.println("USB disconnected too long; restarting USB host.");
             lastUsbRestartAttemptMs = now;
-            if (!usb.restart())
+            if (!usb.requestRestart())
             {
-                DBG.println("USB host restart failed.");
+                DBG.println("USB host restart request failed.");
             }
             usbDisconnectedSinceMs = millis();
         }

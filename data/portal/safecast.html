@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="{{LOCALE}}">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>Configure Safecast</title>
+        <link rel="stylesheet" href="/portal/portal.css" />
+    </head>
+    <body class="invert" data-i18n-title="T_MENU_CONFIGURE_SAFECAST" data-portal-locale-value="{{LOCALE}}">
+        <div class="wrap">
+            <h1 data-i18n="T_SECTION_SAFECAST_SETTINGS">Safecast Settings</h1>
+            <p class="notice {{NOTICE_CLASS}}">{{NOTICE_TEXT}}</p>
+            {{RESULT_BLOCK}}
+
+            <section>
+                <p class="warning-box" data-i18n="T_SAFECAST_OPEN_DATA_WARNING">
+                    Safecast is an open data platform. Uploaded measurements, timestamps, and location data may become public open data.
+                </p>
+                <p class="field-link">
+                    <a href="https://api.safecast.org/en-US/users/sign_up" target="_blank" rel="noopener noreferrer" data-i18n="T_SAFECAST_SIGNUP">Create Safecast account</a>
+                    ·
+                    <a href="https://safecast.org/data/" target="_blank" rel="noopener noreferrer" data-i18n="T_SAFECAST_DATA_PAGE">Open Safecast data page</a>
+                </p>
+            </section>
+
+            <form method="POST" action="/safecast">
+                <section>
+                    <label class="toggle">
+                        <input id="safecastEnabled" name="safecastEnabled" type="checkbox" value="1" {{SAFECAST_ENABLED_CHECKED}} />
+                        <span data-i18n="T_SAFECAST_ENABLE">Enable Safecast publishing</span>
+                    </label>
+
+                    <label for="safecastApiBaseUrl" data-i18n="T_LABEL_API_ENDPOINT">API Endpoint</label>
+                    <input id="safecastApiBaseUrl" name="safecastApiBaseUrl" type="url" value="{{SAFECAST_API_BASE_URL}}" />
+
+                    <label for="safecastApiKey" data-i18n="T_LABEL_API_KEY">API Key</label>
+                    <input id="safecastApiKey" name="safecastApiKey" type="password" value="" placeholder="{{SAFECAST_API_KEY_PLACEHOLDER}}" autocomplete="new-password" />
+                    <p class="field-help" data-i18n="T_SAFECAST_PROFILE_NOTE">
+                        Copy your API key from your Safecast profile. Leave the field empty here to keep the stored key.
+                    </p>
+
+                    <label for="safecastDeviceId" data-i18n="T_LABEL_DEVICE_ID">Device ID</label>
+                    <input id="safecastDeviceId" name="safecastDeviceId" type="text" value="{{SAFECAST_DEVICE_ID}}" />
+
+                    <label for="safecastLatitude" data-i18n="T_LABEL_LATITUDE">Latitude</label>
+                    <input id="safecastLatitude" name="safecastLatitude" type="text" value="{{SAFECAST_LATITUDE}}" />
+
+                    <label for="safecastLongitude" data-i18n="T_LABEL_LONGITUDE">Longitude</label>
+                    <input id="safecastLongitude" name="safecastLongitude" type="text" value="{{SAFECAST_LONGITUDE}}" />
+
+                    <label for="safecastHeightCm" data-i18n="T_LABEL_HEIGHT_CM">Height Above Ground (cm)</label>
+                    <input id="safecastHeightCm" name="safecastHeightCm" type="text" value="{{SAFECAST_HEIGHT_CM}}" />
+
+                    <label for="safecastLocationName" data-i18n="T_LABEL_LOCATION_NAME">Location Name / Label</label>
+                    <input id="safecastLocationName" name="safecastLocationName" type="text" value="{{SAFECAST_LOCATION_NAME}}" />
+
+                    <label data-i18n="T_LABEL_UNIT">Unit</label>
+                    <div class="radio-group">
+                        <label class="radio-option">
+                            <input type="radio" name="safecastUnit" value="cpm" {{SAFECAST_UNIT_CPM_CHECKED}} />
+                            <span data-i18n="T_SAFECAST_UNIT_CPM">cpm</span>
+                        </label>
+                        <label class="radio-option">
+                            <input type="radio" name="safecastUnit" value="usv" {{SAFECAST_UNIT_USV_CHECKED}} />
+                            <span data-i18n="T_SAFECAST_UNIT_USV">µSv/h</span>
+                        </label>
+                    </div>
+
+                    <label for="safecastUploadIntervalSeconds" data-i18n="T_LABEL_UPLOAD_INTERVAL_SECONDS">Upload Interval (seconds)</label>
+                    <input id="safecastUploadIntervalSeconds" name="safecastUploadIntervalSeconds" type="number" min="60" step="1" value="{{SAFECAST_UPLOAD_INTERVAL_SECONDS}}" />
+                </section>
+
+                <section>
+                    <label class="toggle">
+                        <input id="safecastUseTestApi" name="safecastUseTestApi" type="checkbox" value="1" {{SAFECAST_USE_TEST_API_CHECKED}} />
+                        <span data-i18n="T_SAFECAST_TEST_ENDPOINT">Use development / test endpoint</span>
+                    </label>
+
+                    <label for="safecastCustomApiBaseUrl" data-i18n="T_SAFECAST_CUSTOM_ENDPOINT">Custom endpoint override</label>
+                    <input id="safecastCustomApiBaseUrl" name="safecastCustomApiBaseUrl" type="url" value="{{SAFECAST_CUSTOM_API_BASE_URL}}" />
+
+                    <label class="toggle">
+                        <input id="safecastDebug" name="safecastDebug" type="checkbox" value="1" {{SAFECAST_DEBUG_CHECKED}} />
+                        <span data-i18n="T_SAFECAST_DEBUG">Enable HTTP debug logging</span>
+                    </label>
+
+                    <p class="field-help">
+                        <strong data-i18n="T_SAFECAST_EFFECTIVE_ENDPOINT">Effective upload endpoint</strong><br />
+                        <span>{{SAFECAST_EFFECTIVE_API_BASE_URL}}</span>
+                    </p>
+                </section>
+
+                <div class="button-row">
+                    <button type="submit" name="safecastAction" value="test" data-i18n="T_SAFECAST_TEST_UPLOAD">Send Test Upload</button>
+                    <button type="submit" name="safecastAction" value="save" data-i18n="T_BUTTON_SAVE_SAFECAST">Save Safecast Settings</button>
+                </div>
+            </form>
+
+            <form action="/" method="get" class="back-form">
+                <button type="submit" data-i18n="T_BUTTON_BACK">Back to Main Menu</button>
+            </form>
+        </div>
+        <script src="/portal/portal-locale.js"></script>
+    </body>
+</html>

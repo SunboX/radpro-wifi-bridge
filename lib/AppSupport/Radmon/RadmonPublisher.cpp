@@ -189,7 +189,7 @@ void RadmonPublisher::syncHealthState()
 bool RadmonPublisher::sendRequest(const String &query)
 {
     WiFiClient client;
-    client.setTimeout(10000);
+    client.setTimeout(10);
     if (!client.connect(kHost, kPort))
     {
         log_.println("Radmon: connect failed.");

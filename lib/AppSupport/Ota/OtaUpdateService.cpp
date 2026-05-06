@@ -10,6 +10,7 @@
 #include "OpenSenseMap/OpenSenseMapPublisher.h"
 #include "GmcMap/GmcMapPublisher.h"
 #include "Radmon/RadmonPublisher.h"
+#include "Safecast/SafecastPublisher.h"
 
 namespace
 {
@@ -341,6 +342,7 @@ void OtaUpdateService::EnterUpdateMode(DeviceManager &deviceManager,
                                        OpenSenseMapPublisher &osem,
                                        GmcMapPublisher &gmc,
                                        RadmonPublisher &radmon,
+                                       SafecastPublisher &safecast,
                                        bool &updateFlag)
 {
     if (updateFlag)
@@ -353,6 +355,7 @@ void OtaUpdateService::EnterUpdateMode(DeviceManager &deviceManager,
     osem.setPaused(true);
     gmc.setPaused(true);
     radmon.setPaused(true);
+    safecast.setPaused(true);
 }
 
 OtaUpdateService::Status OtaUpdateService::status() const

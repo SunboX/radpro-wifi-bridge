@@ -12,6 +12,12 @@
 #include "OpenRadiation/OpenRadiationPortalView.h"
 #include "OpenRadiation/OpenRadiationProtocol.h"
 #include "Radmon/RadmonPublisher.h"
+#include "Safecast/SafecastBackupJson.h"
+#include "Safecast/SafecastConfig.h"
+#include "Safecast/SafecastLogRedaction.h"
+#include "Safecast/SafecastPayload.h"
+#include "Safecast/SafecastProtocol.h"
+#include "Safecast/SafecastPublisher.h"
 #include "Logging/LogCursorWindow.h"
 #include "Publishing/HttpPublishResponse.h"
 
@@ -19,6 +25,7 @@
 #include <WiFiClientSecure.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <time.h>
 #include <vector>
@@ -148,6 +155,84 @@ bool buildOpenRadiationDryRunPayload(const AppConfig &config,
     serializeJsonPretty(doc, outJson);
     return true;
 }
+
+bool parseUnsignedText(const String &text, uint32_t &out)
+{
+    String trimmed = text;
+    trimmed.trim();
+    if (!trimmed.length())
+        return false;
+
+    char *end = nullptr;
+    const unsigned long parsed = std::strtoul(trimmed.c_str(), &end, 10);
+    if (!end || end == trimmed.c_str() || *end != '\0')
+        return false;
+    out = static_cast<uint32_t>(parsed);
+    return true;
+}
+
+String escapeHtml(const String &value)
+{
+    String out;
+    for (size_t i = 0; i < value.length(); ++i)
+    {
+        const char c = value[i];
+        switch (c)
+        {
+        case '&':
+            out += "&amp;";
+            break;
+        case '<':
+            out += "&lt;";
+            break;
+        case '>':
+            out += "&gt;";
+            break;
+        case '"':
+            out += "&quot;";
+            break;
+        case '\'':
+            out += "&#39;";
+            break;
+        default:
+            out += c;
+            break;
+        }
+    }
+    return out;
+}
+
+String formatSafecastResultHtml(const SafecastPublisher::UploadResult &result)
+{
+    String html;
+    html += "<div class='result-block";
+    html += result.success ? " success" : " error";
+    html += "'>";
+    html += "<strong>";
+    html += result.success ? "Safecast Test-Upload erfolgreich." : "Safecast Test-Upload fehlgeschlagen.";
+    html += "</strong><pre>";
+
+    if (result.statusLine.length())
+        html += escapeHtml(result.statusLine);
+    else if (result.statusCode > 0)
+    {
+        String statusText = "HTTP ";
+        statusText += String(result.statusCode);
+        html += escapeHtml(statusText);
+    }
+    else if (result.errorMessage.length())
+        html += escapeHtml(result.errorMessage);
+    else
+        html += "No response";
+
+    if (result.responseBody.length())
+    {
+        html += "\n\n";
+        html += escapeHtml(result.responseBody);
+    }
+    html += "</pre></div>";
+    return html;
+}
 } // namespace
 
 WiFiPortalService::WiFiPortalService(AppConfig &config,
@@ -158,12 +243,13 @@ WiFiPortalService::WiFiPortalService(AppConfig &config,
                                      const PublisherHealth &openSenseMapHealth,
                                      const PublisherHealth &gmcMapHealth,
                                      const PublisherHealth &radmonHealth,
-                                     const PublisherHealth &openRadiationHealth)
+                                     const PublisherHealth &openRadiationHealth,
+                                     const PublisherHealth &safecastHealth)
     : config_(config),
       store_(store),
       deviceInfo_(info),
       deviceInfoPage_(info),
-      bridgeInfoPage_(openSenseMapHealth, gmcMapHealth, radmonHealth, openRadiationHealth),
+      bridgeInfoPage_(openSenseMapHealth, gmcMapHealth, radmonHealth, openRadiationHealth, safecastHealth),
       manager_(),
       log_(logPort),
       led_(led),
@@ -235,6 +321,11 @@ void WiFiPortalService::begin()
 void WiFiPortalService::setOtaStartCallback(std::function<void()> cb)
 {
     onOtaStart_ = std::move(cb);
+}
+
+void WiFiPortalService::setSafecastPublisher(SafecastPublisher &publisher)
+{
+    safecastPublisher_ = &publisher;
 }
 
 void WiFiPortalService::notifyOtaStart()
@@ -547,7 +638,7 @@ void WiFiPortalService::attachParameters()
             return;
         }
         routesRegistered_ = true;
-        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /openradiation /openradiation/dry-run /openradiation/latest /gmc /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /logs /logs.json /ota /ota/status /ota/fetch /ota/upload/* /restart"));
+        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /openradiation /openradiation/dry-run /openradiation/latest /gmc /safecast /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /logs /logs.json /ota /ota/status /ota/fetch /ota/upload/* /restart"));
 
         manager_.server->on("/mqtt", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /mqtt"));
@@ -695,6 +786,16 @@ void WiFiPortalService::attachParameters()
             String message;
             GmcMapPublisher::HandlePortalPost(*manager_.server, config_, store_, led_, log_, message);
             GmcMapPublisher::SendPortalForm(*this, message);
+        });
+
+        manager_.server->on("/safecast", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /safecast"));
+            sendSafecastForm(config_);
+        });
+
+        manager_.server->on("/safecast", HTTP_POST, [this]() {
+            log_.println(F("HTTP POST /safecast"));
+            handleSafecastPost();
         });
 
         manager_.server->on("/device", HTTP_GET, [this]() {
@@ -1404,6 +1505,7 @@ String WiFiPortalService::exportConfigJson() const
     doc["openRadiationAltitude"] = config_.openRadiationAltitude;
     doc["openRadiationAccuracy"] = config_.openRadiationAccuracy;
     OpenRadiationBackupJson::appendMeasurementConfig(doc, config_);
+    SafecastBackupJson::appendConfig(doc, config_);
 
     String json;
     serializeJsonPretty(doc, json);
@@ -1506,6 +1608,7 @@ bool WiFiPortalService::importConfigJson(const String &body, String &errorMessag
     setFloat(updated.openRadiationAltitude, doc["openRadiationAltitude"], -10000.0f, 100000.0f);
     setFloat(updated.openRadiationAccuracy, doc["openRadiationAccuracy"], 0.0f, 100000.0f);
     OpenRadiationBackupJson::applyMeasurementConfig(doc.as<JsonVariantConst>(), updated);
+    SafecastBackupJson::applyConfig(doc.as<JsonVariantConst>(), updated);
 
     if (updated.readIntervalMs < kMinReadIntervalMs)
         updated.readIntervalMs = kMinReadIntervalMs;
@@ -1525,6 +1628,142 @@ bool WiFiPortalService::importConfigJson(const String &body, String &errorMessag
     hasLoggedIp_ = false;
     log_.println(F("Configuration restored from backup."));
     return true;
+}
+
+void WiFiPortalService::sendSafecastForm(const AppConfig &viewConfig,
+                                         const String &message,
+                                         const String &resultHtml)
+{
+    if (!manager_.server)
+        return;
+
+    const String apiKeyPlaceholder = SafecastLogRedaction::maskSecretForDisplay(viewConfig.safecastApiKey);
+    const String effectiveBaseUrl = SafecastProtocol::resolveBaseUrl(
+        viewConfig.safecastApiBaseUrl,
+        viewConfig.safecastUseTestApi,
+        viewConfig.safecastCustomApiBaseUrl);
+
+    TemplateReplacements vars = {
+        {"{{NOTICE_CLASS}}", message.length() ? String() : String("hidden")},
+        {"{{NOTICE_TEXT}}", htmlEscape(message)},
+        {"{{RESULT_BLOCK}}", resultHtml},
+        {"{{SAFECAST_ENABLED_CHECKED}}", viewConfig.safecastEnabled ? String("checked") : String()},
+        {"{{SAFECAST_API_BASE_URL}}", htmlEscape(viewConfig.safecastApiBaseUrl)},
+        {"{{SAFECAST_EFFECTIVE_API_BASE_URL}}", htmlEscape(effectiveBaseUrl)},
+        {"{{SAFECAST_API_KEY_PLACEHOLDER}}", htmlEscape(apiKeyPlaceholder)},
+        {"{{SAFECAST_DEVICE_ID}}", htmlEscape(viewConfig.safecastDeviceId)},
+        {"{{SAFECAST_LATITUDE}}", htmlEscape(viewConfig.safecastLatitude)},
+        {"{{SAFECAST_LONGITUDE}}", htmlEscape(viewConfig.safecastLongitude)},
+        {"{{SAFECAST_HEIGHT_CM}}", htmlEscape(viewConfig.safecastHeightCm)},
+        {"{{SAFECAST_LOCATION_NAME}}", htmlEscape(viewConfig.safecastLocationName)},
+        {"{{SAFECAST_UNIT_CPM_CHECKED}}", viewConfig.safecastUnit.equalsIgnoreCase("cpm") ? String("checked") : String()},
+        {"{{SAFECAST_UNIT_USV_CHECKED}}", viewConfig.safecastUnit.equalsIgnoreCase("usv") ? String("checked") : String()},
+        {"{{SAFECAST_UPLOAD_INTERVAL_SECONDS}}", String(viewConfig.safecastUploadIntervalSeconds)},
+        {"{{SAFECAST_USE_TEST_API_CHECKED}}", viewConfig.safecastUseTestApi ? String("checked") : String()},
+        {"{{SAFECAST_CUSTOM_API_BASE_URL}}", htmlEscape(viewConfig.safecastCustomApiBaseUrl)},
+        {"{{SAFECAST_DEBUG_CHECKED}}", viewConfig.safecastDebug ? String("checked") : String()}};
+
+    appendCommonTemplateVars(vars);
+    sendTemplate("/portal/safecast.html", vars);
+}
+
+void WiFiPortalService::handleSafecastPost()
+{
+    if (!manager_.server)
+        return;
+
+    auto &server = *manager_.server;
+    AppConfig candidate = config_;
+
+    candidate.safecastEnabled = server.hasArg("safecastEnabled") && server.arg("safecastEnabled") == "1";
+    candidate.safecastUseTestApi = server.hasArg("safecastUseTestApi") && server.arg("safecastUseTestApi") == "1";
+    candidate.safecastDebug = server.hasArg("safecastDebug") && server.arg("safecastDebug") == "1";
+
+    String action = server.arg("safecastAction");
+    String baseUrl = server.arg("safecastApiBaseUrl");
+    String customBaseUrl = server.arg("safecastCustomApiBaseUrl");
+    String apiKey = server.arg("safecastApiKey");
+    String deviceId = server.arg("safecastDeviceId");
+    String latitude = server.arg("safecastLatitude");
+    String longitude = server.arg("safecastLongitude");
+    String heightCm = server.arg("safecastHeightCm");
+    String locationName = server.arg("safecastLocationName");
+    String unit = server.arg("safecastUnit");
+    String uploadInterval = server.arg("safecastUploadIntervalSeconds");
+
+    action.trim();
+    baseUrl.trim();
+    customBaseUrl.trim();
+    apiKey.trim();
+    deviceId.trim();
+    latitude.trim();
+    longitude.trim();
+    heightCm.trim();
+    locationName.trim();
+    unit.trim();
+    uploadInterval.trim();
+
+    candidate.safecastApiBaseUrl = baseUrl.length()
+                                       ? SafecastProtocol::normalizeBaseUrl(baseUrl)
+                                       : String(SafecastProtocol::kProductionApiBaseUrl);
+    candidate.safecastCustomApiBaseUrl = customBaseUrl.length()
+                                             ? SafecastProtocol::normalizeBaseUrl(customBaseUrl)
+                                             : String();
+    if (apiKey.length())
+        candidate.safecastApiKey = apiKey;
+    candidate.safecastDeviceId = deviceId;
+    candidate.safecastLatitude = latitude;
+    candidate.safecastLongitude = longitude;
+    candidate.safecastHeightCm = heightCm;
+    candidate.safecastLocationName = locationName;
+    candidate.safecastUnit = unit;
+
+    uint32_t uploadIntervalSeconds = 0;
+    if (!parseUnsignedText(uploadInterval, uploadIntervalSeconds))
+    {
+        sendSafecastForm(candidate, "Upload interval must be numeric.");
+        return;
+    }
+    candidate.safecastUploadIntervalSeconds = uploadIntervalSeconds;
+
+    SafecastConfig::ResolvedConfig resolved;
+    const bool requirePublishableFields = candidate.safecastEnabled || action == "test";
+    const SafecastConfig::Error validationError = SafecastConfig::resolve(candidate, resolved, requirePublishableFields);
+    if (validationError != SafecastConfig::Error::None)
+    {
+        sendSafecastForm(candidate, SafecastConfig::errorText(validationError));
+        return;
+    }
+
+    if (action == "test")
+    {
+        if (!safecastPublisher_)
+        {
+            sendSafecastForm(candidate, "Safecast test upload is unavailable.");
+            return;
+        }
+
+        const SafecastPublisher::UploadResult result = safecastPublisher_->sendTestUpload(candidate);
+        String message = result.success ? String("Safecast test upload finished.") : String();
+        if (!result.success && !result.statusCode && result.errorMessage.length())
+            message = result.errorMessage;
+        sendSafecastForm(candidate, message, formatSafecastResultHtml(result));
+        return;
+    }
+
+    config_ = candidate;
+    if (store_.save(config_))
+    {
+        refreshParameters();
+        log_.println("Safecast configuration saved to NVS.");
+        led_.clearFault(FaultCode::NvsWriteFailure);
+        sendSafecastForm(config_, "Safecast settings saved.");
+        return;
+    }
+
+    log_.println("Preferences write failed; Safecast configuration not saved.");
+    led_.activateFault(FaultCode::NvsWriteFailure);
+    sendSafecastForm(candidate, "Failed to save settings.");
 }
 
 void WiFiPortalService::sendOpenRadiationForm(const String &message)
@@ -1801,7 +2040,7 @@ void WiFiPortalService::handleOpenRadiationLatest()
     }
 
     WiFiClientSecure client;
-    client.setTimeout(15000);
+    client.setTimeout(15);
     client.setInsecure();
 
     if (!client.connect(OpenRadiationProtocol::kRequestHost, 443))

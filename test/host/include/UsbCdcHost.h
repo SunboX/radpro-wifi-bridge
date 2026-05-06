@@ -50,6 +50,11 @@ public:
         return connected_;
     }
 
+    bool hasObservedDevice() const
+    {
+        return observed_device_observed_ || connected_;
+    }
+
     uint16_t connectedVid() const
     {
         return connected_vid_;
@@ -66,8 +71,19 @@ public:
         return true;
     }
 
+    bool requestRestart()
+    {
+        return restart();
+    }
+
+    bool restartRunsInBackground() const
+    {
+        return true;
+    }
+
     void simulateConnect(uint16_t vid = 0x0483, uint16_t pid = 0x5740)
     {
+        observed_device_observed_ = true;
         connected_ = true;
         connected_vid_ = vid;
         connected_pid_ = pid;
@@ -106,6 +122,7 @@ private:
     std::vector<std::pair<uint16_t, uint16_t>> filters_;
     std::vector<std::string> sent_commands_;
     bool connected_ = false;
+    bool observed_device_observed_ = false;
     bool restarted_ = false;
     uint16_t connected_vid_ = 0;
     uint16_t connected_pid_ = 0;

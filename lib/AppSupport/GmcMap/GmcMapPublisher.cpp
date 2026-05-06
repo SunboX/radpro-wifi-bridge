@@ -331,7 +331,7 @@ String GmcMapPublisher::formatFloat(float value, uint8_t decimals)
 bool GmcMapPublisher::sendRequest(const String &query)
 {
     WiFiClient client;
-    client.setTimeout(10000);
+    client.setTimeout(10);
     if (!client.connect(kHost, kPort))
     {
         log_.println("GMCMap: connect failed.");

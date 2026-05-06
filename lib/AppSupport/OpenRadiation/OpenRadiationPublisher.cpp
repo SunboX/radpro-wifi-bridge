@@ -301,7 +301,7 @@ bool OpenRadiationPublisher::buildPayload(String &outJson,
 bool OpenRadiationPublisher::sendPayload(const String &payload)
 {
     WiFiClientSecure client;
-    client.setTimeout(15000);
+    client.setTimeout(15);
     client.setInsecure();
 
     if (!client.connect(OpenRadiationProtocol::kSubmitHost, kPort))

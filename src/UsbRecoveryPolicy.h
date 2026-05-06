@@ -7,8 +7,13 @@ constexpr unsigned long kRestartIntervalMs = 30000UL;
 
 inline bool shouldRestart(unsigned long now,
                           unsigned long disconnectedSinceMs,
-                          unsigned long lastRestartAttemptMs)
+                          unsigned long lastRestartAttemptMs,
+                          bool usbDeviceObserved,
+                          bool restartRunsInBackground)
 {
+    if (!usbDeviceObserved && !restartRunsInBackground)
+        return false;
+
     if (disconnectedSinceMs == 0)
         return false;
 
