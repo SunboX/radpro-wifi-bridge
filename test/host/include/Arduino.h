@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2026 André Fiedler
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 #pragma once
 
 #include <algorithm>
@@ -298,6 +304,10 @@ public:
 };
 
 inline unsigned long g_test_millis = 0;
+inline uint8_t g_neopixel_pin = 0;
+inline uint8_t g_neopixel_r = 0;
+inline uint8_t g_neopixel_g = 0;
+inline uint8_t g_neopixel_b = 0;
 
 inline unsigned long millis()
 {
@@ -320,4 +330,12 @@ inline void delay(unsigned long)
 
 inline void yield()
 {
+}
+
+inline void neopixelWrite(uint8_t pin, uint8_t r, uint8_t g, uint8_t b)
+{
+    g_neopixel_pin = pin;
+    g_neopixel_r = r;
+    g_neopixel_g = g;
+    g_neopixel_b = b;
 }

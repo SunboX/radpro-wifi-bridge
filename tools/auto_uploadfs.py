@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 André Fiedler
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """
 Ensures the LittleFS image is rebuilt and uploaded whenever the normal
 firmware upload runs.

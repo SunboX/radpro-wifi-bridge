@@ -60,7 +60,7 @@ See [docs/board-requirements.md](docs/board-requirements.md) if you want to comp
 
 ## Web Installer (ESP Web Tools)
 
-Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.15.6)
+Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.15.9)
 
 Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required. OTA updates of the bridge firmware are also available from the web portal once a network connection is active.
 
@@ -98,7 +98,7 @@ Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no loc
 
 Need a step-by-step walkthrough? See [docs/mqtt-home-assistant.md](docs/mqtt-home-assistant.md) for detailed MQTT broker setup and Home Assistant discovery notes.
 
-The `MqttPublisher` mirrors every RadPro response to MQTT once you enable it in the portal. Topics are templated (`stat/radpro/<deviceid>/<leaf>` by default), retained, and paired with Home Assistant discovery payloads so entities appear automatically. Successful publishes pulse the LED green; routine broker outages stay in the console so the bridge can keep showing its healthy USB/Wi-Fi state on the LED. Authentication or configuration problems still surface as fault codes.
+The `MqttPublisher` mirrors every RadPro response to MQTT once you enable it in the portal. Topics are templated (`stat/radpro/<deviceid>/<leaf>` by default), retained, and paired with Home Assistant discovery payloads so entities appear automatically. Successful publishes pulse the LED green while the bridge is not in error mode; routine broker outages stay in the console so the bridge can keep showing its healthy USB/Wi-Fi state on the LED. Authentication, configuration, or telemetry alarm states still keep priority on the LED.
 
 ---
 
@@ -153,11 +153,10 @@ Base modes communicate long-running state (default brightness is gentle to avoid
 | `WifiConnecting`  | Blue blink (~0.6 s period)    | Attempting to join the configured WLAN.                        |
 | `WifiConnected`   | Cyan steady                   | Wi-Fi joined; USB device not yet ready.                        |
 | `DeviceReady`     | Bright green steady           | RadPro enumerated and telemetry queue active.                  |
-| `Error`           | Amber blink (~0.5 s period)   | Device communication failed; check the console for the command that timed out. |
+| `Error`           | Amber blink (~0.5 s period)   | Device communication or telemetry activity failed; check the console for the current alarm. |
 
-Event pulses temporarily override the base colour:
+Event pulses temporarily override healthy base colours. Error mode and latched fault patterns keep priority so alarms are not masked:
 
--   **MQTT success:** bright green flash (~150 ms).
 -   **MQTT success:** bright green flash (~150 ms).
 -   **Device command error:** bright red flash (~250 ms) and a console log (`Device command failed: <id>`).
 -   **Routine MQTT disconnects:** logged to the console, but they no longer force the LED into the red/amber fault pattern while Wi‑Fi + USB + detector are otherwise healthy.
@@ -216,9 +215,10 @@ Raw USB logging is invaluable when reverse-engineering RadPro responses; disable
 
 1. **USB enumeration** uses TinyUSB with a CH34x fallback so the RadPro reliably appears as a CDC device.
 2. **Handshake:** `GET deviceId` logs the raw ID, model, firmware, and locale. Additional metadata (`devicePower`, `deviceBatteryVoltage`, `deviceTime`, `tube` parameters) is fetched immediately afterwards.
-3. **Continuous polling:** `GET tubePulseCount` and `GET tubeRate` are queued at the configured interval (`readIntervalMs`, clamped to ≥ 500 ms).
-4. **MQTT forwarding:** each successful response is offered to the MQTT publisher; failures propagate to the LED and console.
-5. **Optional diagnostics:** enable raw USB logging for byte-level traces or request `randomData` / `dataLog` from higher-level code to stream ad-hoc payloads.
+3. **Continuous polling:** `GET devicePower`, `GET tubePulseCount`, and `GET tubeRate` are queued at the configured interval (`readIntervalMs`, clamped to ≥ 500 ms).
+4. **Activity guard:** `devicePower=0`, repeated telemetry timeouts after live data was seen, or a tube pulse counter that stops advancing raises an amber telemetry alarm, clears pending measurement uploads, and suppresses stale tube readings until the detector reports live data again.
+5. **MQTT forwarding:** each healthy successful response is offered to the MQTT publisher; failures propagate to the LED and console.
+6. **Optional diagnostics:** enable raw USB logging for byte-level traces or request `randomData` / `dataLog` from higher-level code to stream ad-hoc payloads.
 
 Retries, back-off, and duplicate suppression are handled inside `DeviceManager`.
 
@@ -254,9 +254,30 @@ Retries, back-off, and duplicate suppression are handled inside `DeviceManager`.
 
 ## License
 
-Original code in this repository is licensed under the **PolyForm Noncommercial License 1.0.0**. See [LICENSE](LICENSE) for the full terms.
+This project is available under two licensing options:
 
-Required Notice: Copyright © 2026 André Fiedler
-Required Notice: Original source: https://github.com/SunboX/radpro-wifi-bridge
+### 1. Open-source license
 
-Bundled third-party components keep their own licenses. See the license files within `components/` for those terms.
+GNU General Public License v3.0 or later (`GPL-3.0-or-later`).
+
+You may use, modify, and distribute this project under the GPL. If you distribute modified versions or larger works based on this project, they must comply with the GPL, including source-code availability requirements.
+
+Documentation, tutorials, diagrams, screenshots, and non-code media are licensed under Creative Commons Attribution-ShareAlike 4.0 (`CC-BY-SA-4.0`) unless otherwise marked.
+
+Case and hardware design files are licensed under the CERN Open Hardware Licence Version 2 - Strongly Reciprocal (`CERN-OHL-S-2.0`) unless otherwise marked.
+
+### 2. Commercial/proprietary license
+
+For use in closed-source, proprietary, or otherwise GPL-incompatible products, a separate commercial license is required.
+
+Commercial licensing contact: **mail@andrefiedler.de**
+
+### Attribution / notices
+
+Copyright (C) 2026 André Fiedler.
+
+Original source: https://github.com/SunboX/radpro-wifi-bridge
+
+Copyright, license, attribution, and source-origin notices must be preserved as required by the GPL and the notice files in this repository.
+
+Bundled third-party components keep their own licenses. See the license files and SPDX metadata within `components/` and `data/portal/js/jszip.min.js` for those terms.

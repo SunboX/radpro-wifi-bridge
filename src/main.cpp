@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 André Fiedler
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include <Arduino.h>
 #include "UsbCdcHost.h"
 #include "esp_log.h"
@@ -29,6 +33,7 @@
 #include "BridgeDiagnostics.h"
 #include "PeripheralStarter.h"
 #include "Time/TimeSync.h"
+#include "DeviceHealth/DeviceActivityMonitor.h"
 #include "DeviceInfo/DeviceInfoStore.h"
 #include "Ota/OtaUpdateService.h"
 #include "FileSystem/BridgeFileSystem.h"
@@ -74,6 +79,10 @@ static void runMainLogic();
 static void serviceCooperativeTasksDuringNetworkWait();
 static const char *commandTypeName(DeviceManager::CommandType type);
 static const char *ledModeName(LedMode mode);
+static const char *deviceActivityFaultName(DeviceActivityFault fault);
+static void updateDeviceErrorState();
+static void handleDeviceActivityTransition(DeviceActivityFault previousFault, DeviceActivityFault currentFault);
+static void clearPendingMeasurementPublishers();
 
 // =========================
 // USB Host wrapper
@@ -110,12 +119,14 @@ static SafecastPublisher safecastPublisher(appConfig, DBG, BRIDGE_FIRMWARE_VERSI
 static TimeSync timeSync(DBG);
 static bool deviceReady = false;
 static bool deviceError = false;
+static bool commandError = false;
 static bool mqttError = false;
 static bool updateInProgress = false;
 static unsigned long usbDisconnectedSinceMs = 0;
 static unsigned long lastUsbRestartAttemptMs = 0;
 static PeripheralStarter peripheralStarter(device_manager, usb, mqttPublisher, openSenseMapPublisher, gmcMapPublisher, radmonPublisher, ledController, DBG, ALLOW_EARLY_START, BRIDGE_FIRMWARE_VERSION);
 static LedMode lastLoggedMode = LedMode::Booting;
+static DeviceActivityMonitor deviceActivityMonitor;
 
 // =========================
 // Arduino setup / loop
@@ -201,22 +212,25 @@ void setup()
     device_manager.setRawHandler([&](const uint8_t *data, size_t len) { diagnostics.handleRaw(data, len); });
     usb.setDebugSink(&DBG);
     device_manager.setCommandResultHandler([&](DeviceManager::CommandType type, const String &value, bool success) {
+        bool transient = (type == DeviceManager::CommandType::TubePulseCount ||
+                          type == DeviceManager::CommandType::TubeRate ||
+                          type == DeviceManager::CommandType::DevicePower ||
+                          type == DeviceManager::CommandType::DeviceBatteryVoltage ||
+                          type == DeviceManager::CommandType::DeviceBatteryPercent ||
+                          (type == DeviceManager::CommandType::DeviceId && !deviceReady));
         if (!success)
         {
-            DBG.print("Device command failed: ");
-            DBG.print(commandTypeName(type));
-            DBG.print(" (");
-            DBG.print(static_cast<int>(type));
-            DBG.println(")");
-            bool transient = (type == DeviceManager::CommandType::TubePulseCount ||
-                               type == DeviceManager::CommandType::TubeRate ||
-                               type == DeviceManager::CommandType::DevicePower ||
-                               type == DeviceManager::CommandType::DeviceBatteryVoltage ||
-                               type == DeviceManager::CommandType::DeviceBatteryPercent ||
-                               (type == DeviceManager::CommandType::DeviceId && !deviceReady));
+            DeviceActivityFault previousActivityFault = deviceActivityMonitor.fault();
+            DeviceActivityFault currentActivityFault = deviceActivityMonitor.onCommandResult(type, value, false, millis());
+            handleDeviceActivityTransition(previousActivityFault, currentActivityFault);
             if (!transient)
             {
-                deviceError = true;
+                DBG.print("Device command failed: ");
+                DBG.print(commandTypeName(type));
+                DBG.print(" (");
+                DBG.print(static_cast<int>(type));
+                DBG.println(")");
+                commandError = true;
                 if (type == DeviceManager::CommandType::DeviceId)
                 {
                     deviceReady = false;
@@ -228,10 +242,16 @@ void setup()
                 else
                     ledController.activateFault(FaultCode::CommandTimeout);
             }
+            updateDeviceErrorState();
             return;
         }
 
-        deviceError = false;
+        commandError = false;
+        DeviceActivityFault previousActivityFault = deviceActivityMonitor.fault();
+        DeviceActivityFault currentActivityFault = deviceActivityMonitor.onCommandResult(type, value, true, millis());
+        handleDeviceActivityTransition(previousActivityFault, currentActivityFault);
+        updateDeviceErrorState();
+
         if (type == DeviceManager::CommandType::DeviceId)
         {
             deviceReady = value.length() > 0;
@@ -264,13 +284,17 @@ void setup()
 
         ledController.clearFault(FaultCode::CommandTimeout);
 
-        deviceInfoStore.update(type, value);
-        mqttPublisher.onCommandResult(type, value);
-        openSenseMapPublisher.onCommandResult(type, value);
-        gmcMapPublisher.onCommandResult(type, value);
-        radmonPublisher.onCommandResult(type, value);
-        openRadiationPublisher.onCommandResult(type, value);
-        safecastPublisher.onCommandResult(type, value);
+        const bool suppressTelemetry = deviceActivityMonitor.shouldSuppressTelemetry(type);
+        if (!suppressTelemetry)
+        {
+            deviceInfoStore.update(type, value);
+            mqttPublisher.onCommandResult(type, value);
+            openSenseMapPublisher.onCommandResult(type, value);
+            gmcMapPublisher.onCommandResult(type, value);
+            radmonPublisher.onCommandResult(type, value);
+            openRadiationPublisher.onCommandResult(type, value);
+            safecastPublisher.onCommandResult(type, value);
+        }
     });
 
     if (!configStore.load(appConfig))
@@ -376,6 +400,11 @@ void loop()
         if (usbDisconnectedSinceMs == 0)
         {
             usbDisconnectedSinceMs = now;
+            DeviceActivityFault previousActivityFault = deviceActivityMonitor.fault();
+            deviceActivityMonitor.reset();
+            handleDeviceActivityTransition(previousActivityFault, deviceActivityMonitor.fault());
+            commandError = false;
+            updateDeviceErrorState();
             deviceInfoStore.clearLiveData();
             openSenseMapPublisher.clearPendingData();
             gmcMapPublisher.clearPendingData();
@@ -417,6 +446,13 @@ void loop()
     else
     {
         usbDisconnectedSinceMs = 0;
+    }
+    if (usbConnected && peripheralStarter.started())
+    {
+        DeviceActivityFault previousActivityFault = deviceActivityMonitor.fault();
+        DeviceActivityFault currentActivityFault = deviceActivityMonitor.evaluate(millis());
+        handleDeviceActivityTransition(previousActivityFault, currentActivityFault);
+        updateDeviceErrorState();
     }
     diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
     ledController.update();
@@ -531,6 +567,10 @@ static void runMainLogic()
     uint32_t interval = appConfig.readIntervalMs;
     if (interval < kMinReadIntervalMs)
         interval = kMinReadIntervalMs;
+    uint32_t stalePulseTimeoutMs = DeviceActivityMonitor::kDefaultStalePulseTimeoutMs;
+    if (interval <= UINT32_MAX / 3 && interval * 3 > stalePulseTimeoutMs)
+        stalePulseTimeoutMs = interval * 3;
+    deviceActivityMonitor.setStalePulseTimeoutMs(stalePulseTimeoutMs);
     if (now - lastStatsRequest >= interval)
     {
         lastStatsRequest = now;
@@ -545,6 +585,36 @@ static void serviceCooperativeTasksDuringNetworkWait()
     ledController.update();
     delay(10);
     yield();
+}
+
+static void updateDeviceErrorState()
+{
+    deviceError = commandError || deviceActivityMonitor.hasFault();
+}
+
+static void clearPendingMeasurementPublishers()
+{
+    openSenseMapPublisher.clearPendingData();
+    gmcMapPublisher.clearPendingData();
+    radmonPublisher.clearPendingData();
+    openRadiationPublisher.clearPendingData();
+}
+
+static void handleDeviceActivityTransition(DeviceActivityFault previousFault, DeviceActivityFault currentFault)
+{
+    if (previousFault == currentFault)
+        return;
+
+    if (currentFault == DeviceActivityFault::None)
+    {
+        DBG.println("Device telemetry alarm cleared.");
+        return;
+    }
+
+    DBG.print("Device telemetry alarm: ");
+    DBG.println(deviceActivityFaultName(currentFault));
+    deviceInfoStore.clearMeasurements();
+    clearPendingMeasurementPublishers();
 }
 
 static const char *commandTypeName(DeviceManager::CommandType type)
@@ -595,6 +665,22 @@ static const char *commandTypeName(DeviceManager::CommandType type)
         return "Generic";
     }
     return "Unknown";
+}
+
+static const char *deviceActivityFaultName(DeviceActivityFault fault)
+{
+    switch (fault)
+    {
+    case DeviceActivityFault::None:
+        return "none";
+    case DeviceActivityFault::PowerOff:
+        return "device power is off";
+    case DeviceActivityFault::StalePulseCount:
+        return "tube pulse count is not advancing";
+    case DeviceActivityFault::TelemetryTimeout:
+        return "device telemetry timed out";
+    }
+    return "unknown";
 }
 
 static const char *ledModeName(LedMode mode)

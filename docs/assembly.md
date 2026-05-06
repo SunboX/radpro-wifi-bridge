@@ -59,7 +59,7 @@ After soldering, connect the board via the debug USB‑C port and flash the firm
 
 1. Plug the RadPro-enabled Geiger counter into the OTG USB‑C port.  
 2. Power the board via the second USB‑C port or through the 5 V header.  
-3. Watch the RGB LED: green pulsing indicates USB enumeration, cyan indicates Wi-Fi association, and red pulses flag USB or MQTT faults.  
+3. Watch the RGB LED: steady green indicates a ready detector, cyan indicates Wi-Fi is joined but the detector is not ready yet, and amber blinking means a communication or telemetry alarm needs attention.
 4. Access the Wi-Fi portal (`radpro.local`) to configure MQTT, Radmon, OpenRadiation, and future publishers such as GammaSense/uRADMonitor once available.  
 
 Keep the case vents unobstructed. The RadPro WiFi Bridge is now ready to forward dose-rate measurements to the configured cloud services. 

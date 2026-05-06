@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2026 André Fiedler
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 #pragma once
 
 #include <Arduino.h>
@@ -38,13 +44,11 @@ private:
     void addRateSample(float cpm, unsigned long now);
     void pruneSamples(unsigned long now);
     bool computeAcpm(float &out);
-    static String formatFloat(float value, uint8_t decimals = 3);
 
     AppConfig &config_;
     Print &log_;
     String bridgeVersion_;
     PublisherHealth &health_;
-    String pendingCpm_;
     String pendinguSv_;
     float pendingCpmValue_ = 0.0f;
     bool haveCpm_ = false;

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 André Fiedler
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "DeviceInfoStore.h"
 #include <ArduinoJson.h>
 
@@ -78,6 +82,16 @@ void DeviceInfoStore::clearLiveData()
     devicePower_ = "";
     batteryVoltage_ = "";
     batteryPercent_ = "";
+    tubeRate_ = "";
+    tubeDoseRate_ = "";
+    tubePulseCount_ = "";
+    measurementUpdatedMs_ = 0;
+    portEXIT_CRITICAL(&mux_);
+}
+
+void DeviceInfoStore::clearMeasurements()
+{
+    portENTER_CRITICAL(&mux_);
     tubeRate_ = "";
     tubeDoseRate_ = "";
     tubePulseCount_ = "";

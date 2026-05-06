@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 André Fiedler
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include <DeviceManager.h>
 #include <cstdio>
 #include <time.h>
@@ -190,6 +194,8 @@ void DeviceManager::requestStats()
     if (!enabled_ || !host_.isConnected() || !device_id_logged_)
         return;
 
+    if (!isCommandPending("GET devicePower") && (!awaiting_response_ || current_command_.command != "GET devicePower"))
+        enqueueCommand("GET devicePower", CommandType::DevicePower, 0, false);
     if (!isCommandPending("GET tubePulseCount") && (!awaiting_response_ || current_command_.command != "GET tubePulseCount"))
         enqueueCommand("GET tubePulseCount", CommandType::TubePulseCount, 0, false);
     if (!isCommandPending("GET tubeRate") && (!awaiting_response_ || current_command_.command != "GET tubeRate"))
@@ -734,6 +740,7 @@ void DeviceManager::handleSuccess()
 void DeviceManager::handleError()
 {
     awaiting_response_ = false;
+    bool retryScheduled = false;
 
     if (!has_current_command_ || !current_command_.command.length())
     {
@@ -758,6 +765,7 @@ void DeviceManager::handleError()
         retry.retry++;
         retry.ready_ms = millis() + DEVICE_ID_RETRY_DELAY_MS;
         command_queue_.insert(command_queue_.begin(), retry);
+        retryScheduled = true;
         if (line_handler_)
         {
             line_handler_(String("Retrying DeviceId (attempt ") + String(retry.retry + 1) + "/" + String(DEVICE_ID_MAX_RETRY + 1) + ")");
@@ -772,21 +780,19 @@ void DeviceManager::handleError()
         retry.retry++;
         retry.ready_ms = millis() + DEVICE_ID_RETRY_DELAY_MS;
         command_queue_.push_back(retry);
+        retryScheduled = true;
     }
     else if (line_handler_ && device_id_logged_ &&
              current_command_.type != CommandType::TubePulseCount &&
              current_command_.type != CommandType::TubeRate &&
+             current_command_.type != CommandType::DevicePower &&
              current_command_.type != CommandType::DeviceBatteryVoltage &&
              current_command_.type != CommandType::DeviceBatteryPercent)
     {
         line_handler_(String("Command failed: ") + current_command_.command);
     }
 
-    // For fast poll commands, don’t emit/log failures; they recover quickly on the next cycle.
-    if (current_command_.type != CommandType::TubePulseCount &&
-        current_command_.type != CommandType::TubeRate &&
-        current_command_.type != CommandType::DeviceBatteryVoltage &&
-        current_command_.type != CommandType::DeviceBatteryPercent)
+    if (!retryScheduled)
         emitResult(current_command_.type, String(), false);
 
     has_current_command_ = false;

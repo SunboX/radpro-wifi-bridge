@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 André Fiedler
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 ;(function () {
     const POLL_INTERVAL_MS = 4000
     const UPLOAD_CHUNK_SIZE = 16384

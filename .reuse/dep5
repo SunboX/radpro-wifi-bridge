@@ -1,0 +1,67 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: radpro-wifi-bridge
+Upstream-Contact: André Fiedler <mail@andrefiedler.de>
+Source: https://github.com/SunboX/radpro-wifi-bridge
+
+Files: *
+Copyright: 2026 André Fiedler
+License: GPL-3.0-or-later
+
+Files:
+ COMMERCIAL-LICENSE.md
+ CONTRIBUTING.md
+ NOTICE
+ NOTICE.md
+ README.md
+ docs/*.md
+ docs/pictures/*
+ docs/pictures/radpro_wifi_bridge_screens/*
+ docs/web-install/firmware/README.md
+Copyright: 2026 André Fiedler
+License: CC-BY-SA-4.0
+
+Files: docs/case/*.stl
+Copyright: 2026 André Fiedler
+License: CERN-OHL-S-2.0
+
+Files:
+ docs/web-install/firmware/*.zip
+ docs/web-install/firmware/latest/.gitkeep
+ docs/web-install/firmware/latest/*.bin
+Copyright: 2026 André Fiedler and third-party dependency authors
+License: GPL-3.0-or-later
+Comment: Generated firmware bundles and images are derived from this project's
+ source tree and its build dependencies. Preserve the notices and license
+ metadata from this repository and from the build dependencies when
+ redistributing them.
+
+Files: components/usb_host_cdc_acm/*
+Copyright: 2015-2025 Espressif Systems (Shanghai) CO LTD
+License: Apache-2.0
+
+Files: components/usb_host_cdc_acm/**/*
+Copyright: 2015-2025 Espressif Systems (Shanghai) CO LTD
+License: Apache-2.0
+
+Files: components/usb_host_ch34x_vcp/*
+Copyright: 2022-2025 Espressif Systems (Shanghai) CO LTD
+License: Apache-2.0
+
+Files: components/usb_host_ch34x_vcp/**/*
+Copyright: 2022-2025 Espressif Systems (Shanghai) CO LTD
+License: Apache-2.0
+
+Files: components/usb_host_vcp/*
+Copyright: 2022 Espressif Systems (Shanghai) CO LTD
+License: Apache-2.0
+
+Files: components/usb_host_vcp/**/*
+Copyright: 2022 Espressif Systems (Shanghai) CO LTD
+License: Apache-2.0
+
+Files: data/portal/js/jszip.min.js
+Copyright: 2009-2016 Stuart Knightley
+License: MIT AND (MIT OR GPL-3.0-only)
+Comment: JSZip is dual licensed under MIT or GPLv3 and bundles pako, which is
+ released under MIT. The upstream license notice is preserved in the file
+ header.

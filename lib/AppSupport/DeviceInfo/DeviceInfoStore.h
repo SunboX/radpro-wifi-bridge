@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2026 André Fiedler
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 #pragma once
 
 #include <Arduino.h>
@@ -28,6 +34,7 @@ public:
 
     void update(DeviceManager::CommandType type, const String &value);
     void setBridgeFirmware(const String &version);
+    void clearMeasurements();
     void clearLiveData();
 
     DeviceInfoSnapshot snapshot() const;

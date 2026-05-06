@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 André Fiedler
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 ;(function () {
     const hasDeviceInfo = () => document.getElementById('deviceId') !== null
     const setField = (id, val, unit = '') => {
