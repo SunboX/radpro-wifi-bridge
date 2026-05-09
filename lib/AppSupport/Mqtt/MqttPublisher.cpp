@@ -4,6 +4,7 @@
 
 #include "MqttPublisher.h"
 #include <ArduinoJson.h>
+#include "ConfigPortal/PortalSecurity.h"
 #include "ConfigPortal/WiFiPortalService.h"
 #include "Mqtt/MqttFaultPolicy.h"
 #include <WebServer.h>
@@ -782,16 +783,31 @@ bool MqttPublisher::HandlePortalPost(WebServer &server,
     intervalStr.trim();
 
     bool changed = false;
-    changed |= UpdateStringIfChanged(config.mqttHost, host.c_str());
-    changed |= UpdateStringIfChanged(config.mqttClient, client.c_str());
-    changed |= UpdateStringIfChanged(config.mqttUser, user.c_str());
-    changed |= UpdateStringIfChanged(config.mqttPassword, pass.c_str());
-    changed |= UpdateStringIfChanged(config.mqttTopic, topic.c_str());
-    changed |= UpdateStringIfChanged(config.mqttFullTopic, fullTopic.c_str());
+    std::vector<String> changedFields;
+
+    bool fieldChanged = UpdateStringIfChanged(config.mqttHost, host.c_str());
+    PortalSecurity::appendChangedField(changedFields, "mqttHost", fieldChanged);
+    changed |= fieldChanged;
+    fieldChanged = UpdateStringIfChanged(config.mqttClient, client.c_str());
+    PortalSecurity::appendChangedField(changedFields, "mqttClient", fieldChanged);
+    changed |= fieldChanged;
+    fieldChanged = UpdateStringIfChanged(config.mqttUser, user.c_str());
+    PortalSecurity::appendChangedField(changedFields, "mqttUser", fieldChanged);
+    changed |= fieldChanged;
+    fieldChanged = UpdateStringIfChanged(config.mqttPassword, pass.c_str());
+    PortalSecurity::appendChangedField(changedFields, "mqttPassword", fieldChanged);
+    changed |= fieldChanged;
+    fieldChanged = UpdateStringIfChanged(config.mqttTopic, topic.c_str());
+    PortalSecurity::appendChangedField(changedFields, "mqttTopic", fieldChanged);
+    changed |= fieldChanged;
+    fieldChanged = UpdateStringIfChanged(config.mqttFullTopic, fullTopic.c_str());
+    PortalSecurity::appendChangedField(changedFields, "mqttFullTopic", fieldChanged);
+    changed |= fieldChanged;
 
     if (config.mqttEnabled != enabled)
     {
         config.mqttEnabled = enabled;
+        PortalSecurity::appendChangedField(changedFields, "mqttEnabled", true);
         changed = true;
     }
 
@@ -801,6 +817,7 @@ bool MqttPublisher::HandlePortalPost(WebServer &server,
     if (config.mqttPort != parsedPort)
     {
         config.mqttPort = static_cast<uint16_t>(parsedPort);
+        PortalSecurity::appendChangedField(changedFields, "mqttPort", true);
         changed = true;
     }
 
@@ -810,6 +827,7 @@ bool MqttPublisher::HandlePortalPost(WebServer &server,
     if (config.readIntervalMs != newInterval)
     {
         config.readIntervalMs = newInterval;
+        PortalSecurity::appendChangedField(changedFields, "readIntervalMs", true);
         changed = true;
     }
 
@@ -817,13 +835,14 @@ bool MqttPublisher::HandlePortalPost(WebServer &server,
     {
         if (store.save(config))
         {
-            log.println("MQTT configuration updated via portal.");
+            PortalSecurity::logConfigSave(log, "/mqtt", server.client().remoteIP().toString(), changedFields);
             led.clearFault(FaultCode::NvsWriteFailure);
             message = F("Settings saved. The device will reconnect using the new MQTT configuration.");
             return true;
         }
 
         led.activateFault(FaultCode::NvsWriteFailure);
+        PortalSecurity::logConfigSaveFailure(log, "/mqtt", server.client().remoteIP().toString(), changedFields);
         log.println("Preferences write failed; MQTT configuration not saved.");
         message = F("Failed to save settings to NVS.");
         return false;

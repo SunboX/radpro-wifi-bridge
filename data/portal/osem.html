@@ -17,6 +17,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
             <h1 data-i18n="T_SECTION_OSEM_SETTINGS">OpenSenseMap Settings</h1>
             <p class="notice {{NOTICE_CLASS}}">{{NOTICE_TEXT}}</p>
             <form method="POST" action="/osem">
+                <input type="hidden" name="csrf" value="{{CSRF_TOKEN}}" />
                 <label class="toggle">
                     <input id="osemEnabled" name="osemEnabled" type="checkbox" value="1" {{OSEM_ENABLED_CHECKED}} />
                     <span data-i18n="T_OSEM_ENABLE">Enable OpenSenseMap publishing</span>

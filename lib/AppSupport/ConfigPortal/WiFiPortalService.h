@@ -11,6 +11,7 @@
 #include <esp_wifi_types.h>
 #include <vector>
 #include <functional>
+#include <initializer_list>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include "DeviceInfo/DeviceInfoStore.h"
@@ -60,7 +61,6 @@ private:
 
     void refreshParameters();
     void attachParameters();
-    bool applyFromParameters(bool persist, bool forceSave = false);
     void handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info);
     void logStatusIfNeeded();
     void logConnectionDetails(const IPAddress &ip, const IPAddress &gateway, const IPAddress &mask);
@@ -91,6 +91,16 @@ private:
     bool sendStaticFile(const char *path, const char *contentType);
     void applyTemplateReplacements(String &content, const TemplateReplacements &replacements);
     void appendCommonTemplateVars(TemplateReplacements &replacements);
+    bool requirePortalPost(const char *route,
+                           std::initializer_list<const char *> requiredFields = {},
+                           bool jsonResponse = false);
+    void rejectPortalPost(const char *route, int code, const String &message, bool jsonResponse);
+    String currentClientIp() const;
+    String generateCsrfToken() const;
+    void ensureCsrfToken();
+    String csrfHiddenInput() const;
+    void logConfigSave(const char *route, const std::vector<String> &changedFields);
+    std::vector<String> collectChangedConfigFields(const AppConfig &before, const AppConfig &after) const;
     void handleLogsJson();
     void disablePortalPowerSave();
     void restorePortalPowerSave();
@@ -138,22 +148,8 @@ private:
     const PublisherHealth &openRadiationHealth_;
     SafecastPublisher *safecastPublisher_ = nullptr;
 
-    WiFiManagerParameter paramDeviceName_;
-    WiFiManagerParameter paramMqttHost_;
-    WiFiManagerParameter paramMqttPort_;
-    WiFiManagerParameter paramMqttClient_;
-    WiFiManagerParameter paramMqttUser_;
-    WiFiManagerParameter paramMqttPass_;
-    WiFiManagerParameter paramMqttTopic_;
-    WiFiManagerParameter paramMqttFullTopic_;
-    WiFiManagerParameter paramReadInterval_;
-    WiFiManagerParameter paramGmcAccount_;
-    WiFiManagerParameter paramGmcDevice_;
-    WiFiManagerParameter paramRadmonUser_;
-    WiFiManagerParameter paramRadmonPassword_;
-    WiFiManagerParameter paramOpenRadiationDevice_;
-    WiFiManagerParameter paramOpenRadiationApiKey_;
     bool paramsAttached_;
+    String csrfToken_;
     String menuHtml_;
     String menuHtmlRendered_;
     String menuHtmlLocale_;

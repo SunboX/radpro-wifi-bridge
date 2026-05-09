@@ -6,6 +6,7 @@
 #include "OpenSenseMap/OpenSenseMapBackoff.h"
 #include "OpenSenseMap/OpenSenseMapTls.h"
 #include "OpenSenseMap/OpenSenseMapPortalLinks.h"
+#include "ConfigPortal/PortalSecurity.h"
 #include "Publishing/HttpPublishResponse.h"
 #include "Runtime/CooperativePump.h"
 #include <WiFi.h>
@@ -301,26 +302,37 @@ void OpenSenseMapPublisher::HandlePortalPost(WebServer &server,
     doseId.trim();
 
     bool changed = false;
+    std::vector<String> changedFields;
     if (config.openSenseMapEnabled != enabled)
     {
         config.openSenseMapEnabled = enabled;
+        PortalSecurity::appendChangedField(changedFields, "openSenseMapEnabled", true);
         changed = true;
     }
-    changed |= UpdateStringIfChanged(config.openSenseBoxId, boxId.c_str());
-    changed |= UpdateStringIfChanged(config.openSenseApiKey, apiKey.c_str());
-    changed |= UpdateStringIfChanged(config.openSenseTubeRateSensorId, rateId.c_str());
-    changed |= UpdateStringIfChanged(config.openSenseDoseRateSensorId, doseId.c_str());
+    bool fieldChanged = UpdateStringIfChanged(config.openSenseBoxId, boxId.c_str());
+    PortalSecurity::appendChangedField(changedFields, "openSenseBoxId", fieldChanged);
+    changed |= fieldChanged;
+    fieldChanged = UpdateStringIfChanged(config.openSenseApiKey, apiKey.c_str());
+    PortalSecurity::appendChangedField(changedFields, "openSenseApiKey", fieldChanged);
+    changed |= fieldChanged;
+    fieldChanged = UpdateStringIfChanged(config.openSenseTubeRateSensorId, rateId.c_str());
+    PortalSecurity::appendChangedField(changedFields, "openSenseTubeRateSensorId", fieldChanged);
+    changed |= fieldChanged;
+    fieldChanged = UpdateStringIfChanged(config.openSenseDoseRateSensorId, doseId.c_str());
+    PortalSecurity::appendChangedField(changedFields, "openSenseDoseRateSensorId", fieldChanged);
+    changed |= fieldChanged;
 
     if (changed)
     {
         if (store.save(config))
         {
-            log.println("OpenSenseMap configuration updated via portal.");
+            PortalSecurity::logConfigSave(log, "/osem", server.client().remoteIP().toString(), changedFields);
             led.clearFault(FaultCode::NvsWriteFailure);
             message = F("OpenSenseMap settings saved.");
         }
         else
         {
+            PortalSecurity::logConfigSaveFailure(log, "/osem", server.client().remoteIP().toString(), changedFields);
             log.println("Preferences write failed; OpenSenseMap configuration not saved.");
             led.activateFault(FaultCode::NvsWriteFailure);
             message = F("Failed to save settings to NVS.");

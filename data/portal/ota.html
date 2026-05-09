@@ -16,6 +16,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
         <div class="wrap">
             <h1 data-i18n="T_PAGE_OTA">Firmware Update</h1>
             <p class="notice {{NOTICE_CLASS}}">{{NOTICE_TEXT}}</p>
+            <input type="hidden" id="csrfToken" name="csrf" value="{{CSRF_TOKEN}}" />
             <section>
                 <h2 data-i18n="T_SECTION_REMOTE_OTA">Update Via Internet</h2>
                 <p data-i18n="T_REMOTE_OTA_DESC">

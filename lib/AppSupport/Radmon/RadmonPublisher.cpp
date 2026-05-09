@@ -5,6 +5,7 @@
 #include "Radmon/RadmonPublisher.h"
 
 #include <WiFi.h>
+#include "ConfigPortal/PortalSecurity.h"
 #include "ConfigPortal/WiFiPortalService.h"
 #include <WebServer.h>
 #include "Led/LedController.h"
@@ -309,16 +310,21 @@ void RadmonPublisher::HandlePortalPost(WebServer &server,
     user.trim();
 
     bool changed = false;
+    std::vector<String> changedFields;
     if (config.radmonEnabled != enabled)
     {
         config.radmonEnabled = enabled;
+        PortalSecurity::appendChangedField(changedFields, "radmonEnabled", true);
         changed = true;
     }
-    changed |= UpdateStringIfChanged(config.radmonUser, user.c_str());
+    bool fieldChanged = UpdateStringIfChanged(config.radmonUser, user.c_str());
+    PortalSecurity::appendChangedField(changedFields, "radmonUser", fieldChanged);
+    changed |= fieldChanged;
 
     if (password != config.radmonPassword)
     {
         config.radmonPassword = password;
+        PortalSecurity::appendChangedField(changedFields, "radmonPassword", true);
         changed = true;
     }
 
@@ -326,12 +332,13 @@ void RadmonPublisher::HandlePortalPost(WebServer &server,
     {
         if (store.save(config))
         {
-            log.println("Radmon configuration saved to NVS.");
+            PortalSecurity::logConfigSave(log, "/radmon", server.client().remoteIP().toString(), changedFields);
             led.clearFault(FaultCode::NvsWriteFailure);
             message = F("Radmon settings saved.");
         }
         else
         {
+            PortalSecurity::logConfigSaveFailure(log, "/radmon", server.client().remoteIP().toString(), changedFields);
             log.println("Preferences write failed; Radmon configuration not saved.");
             led.activateFault(FaultCode::NvsWriteFailure);
             message = F("Failed to save settings.");

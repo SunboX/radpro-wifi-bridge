@@ -28,6 +28,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
                 <p data-i18n="T_TEXT_RESTORE_BACKUP">Select a previously exported JSON file. The device will apply the settings immediately.</p>
                 <input type="file" id="restoreFile" accept="application/json" />
                 <form id="restoreForm" action="/backup/restore" method="post">
+                    <input type="hidden" name="csrf" value="{{CSRF_TOKEN}}" />
                     <textarea id="configJsonField" name="configJson" class="hidden-field"></textarea>
                     <button type="button" id="restoreSubmit" data-i18n="T_BUTTON_RESTORE">Restore Configuration</button>
                 </form>

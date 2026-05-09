@@ -5,6 +5,7 @@
 #include "GmcMap/GmcMapPublisher.h"
 
 #include <WiFi.h>
+#include "ConfigPortal/PortalSecurity.h"
 #include "ConfigPortal/WiFiPortalService.h"
 #include <WebServer.h>
 #include "Led/LedController.h"
@@ -250,24 +251,31 @@ void GmcMapPublisher::HandlePortalPost(WebServer &server,
     device.trim();
 
     bool changed = false;
+    std::vector<String> changedFields;
     if (config.gmcMapEnabled != enabled)
     {
         config.gmcMapEnabled = enabled;
+        PortalSecurity::appendChangedField(changedFields, "gmcMapEnabled", true);
         changed = true;
     }
-    changed |= UpdateStringIfChanged(config.gmcMapAccountId, account.c_str());
-    changed |= UpdateStringIfChanged(config.gmcMapDeviceId, device.c_str());
+    bool fieldChanged = UpdateStringIfChanged(config.gmcMapAccountId, account.c_str());
+    PortalSecurity::appendChangedField(changedFields, "gmcMapAccountId", fieldChanged);
+    changed |= fieldChanged;
+    fieldChanged = UpdateStringIfChanged(config.gmcMapDeviceId, device.c_str());
+    PortalSecurity::appendChangedField(changedFields, "gmcMapDeviceId", fieldChanged);
+    changed |= fieldChanged;
 
     if (changed)
     {
         if (store.save(config))
         {
-            log.println("GMCMap configuration saved to NVS.");
+            PortalSecurity::logConfigSave(log, "/gmc", server.client().remoteIP().toString(), changedFields);
             led.clearFault(FaultCode::NvsWriteFailure);
             message = F("GMCMap settings saved.");
         }
         else
         {
+            PortalSecurity::logConfigSaveFailure(log, "/gmc", server.client().remoteIP().toString(), changedFields);
             log.println("Preferences write failed; GMCMap configuration not saved.");
             led.activateFault(FaultCode::NvsWriteFailure);
             message = F("Failed to save settings.");

@@ -17,7 +17,8 @@
         cancelBtn: document.getElementById('otaCancelBtn'),
         fileInput: document.getElementById('otaFileInput'),
         uploadBtn: document.getElementById('otaUploadBtn'),
-        uploadMessage: document.getElementById('otaUploadMessage')
+        uploadMessage: document.getElementById('otaUploadMessage'),
+        csrfToken: document.getElementById('csrfToken')
     }
 
     let pollTimer = null
@@ -52,8 +53,15 @@
         return btoa(binary)
     }
 
+    const csrfToken = () => (els.csrfToken && els.csrfToken.value) || ''
+
+    const withCsrf = (url) => {
+        const separator = url.includes('?') ? '&' : '?'
+        return `${url}${separator}csrf=${encodeURIComponent(csrfToken())}`
+    }
+
     const sendJson = async (url, options = {}) => {
-        const response = await fetch(url, Object.assign({ headers: { 'Content-Type': 'application/json' } }, options))
+        const response = await fetch(withCsrf(url), Object.assign({ headers: { 'Content-Type': 'application/json' } }, options))
         let data = null
         try {
             data = await response.json()
@@ -68,7 +76,7 @@
     }
 
     const sendPlain = async (url, body) => {
-        const response = await fetch(url, {
+        const response = await fetch(withCsrf(url), {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body

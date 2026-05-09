@@ -24,6 +24,7 @@
             </section>
 
             <form method="POST" action="/safecast">
+                <input type="hidden" name="csrf" value="{{CSRF_TOKEN}}" />
                 <section>
                     <label class="toggle">
                         <input id="safecastEnabled" name="safecastEnabled" type="checkbox" value="1" {{SAFECAST_ENABLED_CHECKED}} />

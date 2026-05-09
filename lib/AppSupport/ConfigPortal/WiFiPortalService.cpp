@@ -4,6 +4,7 @@
 
 #include "ConfigPortal/WiFiPortalService.h"
 
+#include "ConfigPortal/PortalSecurity.h"
 #include "FileSystem/BridgeFileSystem.h"
 #include "Ota/OtaUpdateService.h"
 #include "Mqtt/MqttPublisher.h"
@@ -33,6 +34,7 @@
 #include <cstring>
 #include <time.h>
 #include <vector>
+#include <esp_system.h>
 #include <esp_wifi.h>
 #include <ArduinoJson.h>
 
@@ -258,21 +260,6 @@ WiFiPortalService::WiFiPortalService(AppConfig &config,
       log_(logPort),
       led_(led),
       openRadiationHealth_(openRadiationHealth),
-      paramDeviceName_("deviceName", "Device Name", "", kDeviceNameParamLen),
-      paramMqttHost_("mqttHost", "MQTT Host", "", kMqttHostParamLen),
-      paramMqttPort_("mqttPort", "MQTT Port", "", kMqttPortParamLen),
-      paramMqttClient_("mqttClient", "MQTT Client", "", kMqttClientParamLen),
-      paramMqttUser_("mqttUser", "MQTT User", "", kMqttUserParamLen),
-      paramMqttPass_("mqttPass", "MQTT Password", "", kMqttPassParamLen, "type=\"password\""),
-      paramMqttTopic_("mqttTopic", "MQTT Topic", "", kMqttTopicParamLen),
-      paramMqttFullTopic_("mqttFullTopic", "MQTT Full Topic", "", kMqttFullTopicParamLen),
-      paramReadInterval_("readInterval", "Rad Pro Read Interval (ms)", "", kReadIntervalParamLen),
-      paramGmcAccount_("gmcAccount", "GMCMap Account ID", "", 16),
-      paramGmcDevice_("gmcDevice", "GMCMap Device ID", "", 24),
-      paramRadmonUser_("radmonUser", "Radmon Username", "", kRadmonUserLen),
-      paramRadmonPassword_("radmonPass", "Radmon Password", "", kRadmonPasswordLen, "type=\"password\""),
-      paramOpenRadiationDevice_("orDeviceId", "OpenRadiation Apparatus ID (optional)", "", kOpenRadiationDeviceIdLen),
-      paramOpenRadiationApiKey_("orApiKey", "OpenRadiation API Key", "", kOpenRadiationApiKeyLen, "type=\"password\""),
       paramsAttached_(false),
       lastStatus_(WL_NO_SHIELD),
       wifiEventId_(0),
@@ -289,6 +276,7 @@ WiFiPortalService::WiFiPortalService(AppConfig &config,
 
 void WiFiPortalService::begin()
 {
+    ensureCsrfToken();
     manager_.setDebugOutput(true);
     manager_.setClass("invert");
     manager_.setConnectTimeout(10);
@@ -307,12 +295,6 @@ void WiFiPortalService::begin()
             log_.print(F(", "));
     }
     log_.println();
-    manager_.setSaveConfigCallback([this]()
-                                   { store_.requestSave(); });
-    manager_.setSaveParamsCallback([this]()
-                                   {
-        applyFromParameters(false, true);
-        store_.requestSave(); });
     wifiEventId_ = WiFi.onEvent([this](WiFiEvent_t event, WiFiEventInfo_t info)
                                 { handleWiFiEvent(event, info); });
     attachParameters();
@@ -394,7 +376,6 @@ bool WiFiPortalService::connect(bool forcePortal)
         return false;
     }
 
-    applyFromParameters(true);
     logStatusIfNeeded();
     if (WiFi.status() == WL_CONNECTED)
     {
@@ -546,20 +527,7 @@ void WiFiPortalService::syncIfRequested()
 {
     if (store_.consumeSaveRequest())
     {
-        bool changed = applyFromParameters(true, true);
-        log_.println(changed ? "Configuration updated." : "Configuration saved (no changes).");
-
-        if (manager_.getConfigPortalActive())
-        {
-            manager_.stopConfigPortal();
-        }
-
-        pendingReconnect_ = true;
-        lastReconnectAttemptMs_ = 0;
-        hasLoggedIp_ = false;
-        log_.println("Wi-Fi reconnect scheduled.");
-        led_.activateFault(FaultCode::PortalReconnectFailed);
-        logPortalState("syncIfRequested");
+        log_.println(F("Ignoring deprecated WiFiManager parameter save request; app settings use dedicated portal routes."));
     }
 }
 
@@ -582,29 +550,6 @@ void WiFiPortalService::enableStatusLogging()
 void WiFiPortalService::refreshParameters()
 {
     manager_.setHostname(config_.deviceName.c_str());
-
-    paramDeviceName_.setValue(config_.deviceName.c_str(), kDeviceNameParamLen);
-    paramMqttHost_.setValue(config_.mqttHost.c_str(), kMqttHostParamLen);
-
-    String portStr = String(config_.mqttPort);
-    paramMqttPort_.setValue(portStr.c_str(), kMqttPortParamLen);
-
-    paramMqttClient_.setValue(config_.mqttClient.c_str(), kMqttClientParamLen);
-    paramMqttUser_.setValue(config_.mqttUser.c_str(), kMqttUserParamLen);
-    paramMqttPass_.setValue(config_.mqttPassword.c_str(), kMqttPassParamLen);
-    paramMqttTopic_.setValue(config_.mqttTopic.c_str(), kMqttTopicParamLen);
-    paramMqttFullTopic_.setValue(config_.mqttFullTopic.c_str(), kMqttFullTopicParamLen);
-
-    String intervalStr = String(config_.readIntervalMs);
-    paramReadInterval_.setValue(intervalStr.c_str(), kReadIntervalParamLen);
-
-    paramGmcAccount_.setValue(config_.gmcMapAccountId.c_str(), 16);
-    paramGmcDevice_.setValue(config_.gmcMapDeviceId.c_str(), 24);
-    paramRadmonUser_.setValue(config_.radmonUser.c_str(), kRadmonUserLen);
-    paramRadmonPassword_.setValue(config_.radmonPassword.c_str(), kRadmonPasswordLen);
-    paramOpenRadiationDevice_.setValue(config_.openRadiationDeviceId.c_str(), kOpenRadiationDeviceIdLen);
-    paramOpenRadiationApiKey_.setValue(config_.openRadiationApiKey.c_str(), kOpenRadiationApiKeyLen);
-
     attachParameters();
 }
 
@@ -616,9 +561,7 @@ void WiFiPortalService::attachParameters()
         return;
     }
 
-    log_.println(F("attachParameters(): registering Wi-Fi portal parameters and routes."));
-
-    manager_.addParameter(&paramDeviceName_);
+    log_.println(F("attachParameters(): registering custom portal routes."));
 
     ensureMenuHtmlLoaded();
     if (menuHtml_.length())
@@ -719,6 +662,8 @@ void WiFiPortalService::attachParameters()
             log_.println(F("HTTP POST /mqtt"));
             if (!manager_.server)
                 return;
+            if (!requirePortalPost("/mqtt", {"mqttHost", "mqttPort", "mqttClient", "mqttUser", "mqttPass", "mqttTopic", "mqttFullTopic", "readInterval"}))
+                return;
             String message;
             bool needsReconnect = MqttPublisher::HandlePortalPost(*manager_.server, config_, store_, led_, log_, message);
             if (needsReconnect)
@@ -739,6 +684,8 @@ void WiFiPortalService::attachParameters()
             log_.println(F("HTTP POST /osem"));
             if (!manager_.server)
                 return;
+            if (!requirePortalPost("/osem", {"osemBoxId", "osemApiKey", "osemRate", "osemDose"}))
+                return;
             String message;
             OpenSenseMapPublisher::HandlePortalPost(*manager_.server, config_, store_, led_, log_, message);
             OpenSenseMapPublisher::SendPortalForm(*this, message);
@@ -753,6 +700,8 @@ void WiFiPortalService::attachParameters()
             log_.println(F("HTTP POST /radmon"));
             if (!manager_.server)
                 return;
+            if (!requirePortalPost("/radmon", {"radmonUser", "radmonPass"}))
+                return;
             String message;
             RadmonPublisher::HandlePortalPost(*manager_.server, config_, store_, led_, log_, message);
             RadmonPublisher::SendPortalForm(*this, message);
@@ -765,6 +714,8 @@ void WiFiPortalService::attachParameters()
 
         manager_.server->on("/openradiation", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /openradiation"));
+            if (!requirePortalPost("/openradiation", {"orDeviceId", "orApiKey", "orUserId", "orUserPwd", "orLatitude", "orLongitude", "orAltitude", "orAccuracy", "orMeasurementEnvironment", "orMeasurementHeight"}))
+                return;
             handleOpenRadiationPost();
         });
 
@@ -787,6 +738,8 @@ void WiFiPortalService::attachParameters()
             log_.println(F("HTTP POST /gmc"));
             if (!manager_.server)
                 return;
+            if (!requirePortalPost("/gmc", {"gmcAccount", "gmcDevice"}))
+                return;
             String message;
             GmcMapPublisher::HandlePortalPost(*manager_.server, config_, store_, led_, log_, message);
             GmcMapPublisher::SendPortalForm(*this, message);
@@ -799,6 +752,8 @@ void WiFiPortalService::attachParameters()
 
         manager_.server->on("/safecast", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /safecast"));
+            if (!requirePortalPost("/safecast", {"safecastAction", "safecastApiBaseUrl", "safecastCustomApiBaseUrl", "safecastApiKey", "safecastDeviceId", "safecastLatitude", "safecastLongitude", "safecastHeightCm", "safecastLocationName", "safecastUnit", "safecastUploadIntervalSeconds"}))
+                return;
             handleSafecastPost();
         });
 
@@ -849,6 +804,8 @@ void WiFiPortalService::attachParameters()
 
         manager_.server->on("/backup/restore", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /backup/restore"));
+            if (!requirePortalPost("/backup/restore", {"configJson"}))
+                return;
             handleConfigRestore();
         });
 
@@ -864,35 +821,49 @@ void WiFiPortalService::attachParameters()
 
         manager_.server->on("/ota/fetch", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /ota/fetch"));
+            if (!requirePortalPost("/ota/fetch", {}, true))
+                return;
             handleOtaFetch();
         });
 
         manager_.server->on("/ota/upload/begin", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /ota/upload/begin"));
+            if (!requirePortalPost("/ota/upload/begin", {"plain"}, true))
+                return;
             handleOtaUploadBegin();
         });
 
         manager_.server->on("/ota/upload/part/begin", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /ota/upload/part/begin"));
+            if (!requirePortalPost("/ota/upload/part/begin", {"path", "offset", "size"}, true))
+                return;
             handleOtaUploadPartBegin();
         });
 
         manager_.server->on("/ota/upload/part/chunk", HTTP_POST, [this]() {
+            if (!requirePortalPost("/ota/upload/part/chunk", {"plain"}, true))
+                return;
             handleOtaUploadPartChunk();
         });
 
         manager_.server->on("/ota/upload/part/finish", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /ota/upload/part/finish"));
+            if (!requirePortalPost("/ota/upload/part/finish", {"path"}, true))
+                return;
             handleOtaUploadPartFinish();
         });
 
         manager_.server->on("/ota/upload/finish", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /ota/upload/finish"));
+            if (!requirePortalPost("/ota/upload/finish", {}, true))
+                return;
             handleOtaUploadFinish();
         });
 
         manager_.server->on("/ota/cancel", HTTP_POST, [this]() {
             log_.println(F("HTTP POST /ota/cancel"));
+            if (!requirePortalPost("/ota/cancel", {}, true))
+                return;
             handleOtaCancel();
         });
 
@@ -917,94 +888,6 @@ void WiFiPortalService::attachParameters()
 
     log_.println(F("Custom Wi-Fi portal routes registered."));
     paramsAttached_ = true;
-}
-
-bool WiFiPortalService::applyFromParameters(bool persist, bool forceSave)
-{
-    auto readTrimmed = [](const char *value) -> String
-    {
-        String result = value ? String(value) : String();
-        result.trim();
-        return result;
-    };
-
-    bool changed = false;
-
-    String newDeviceName = readTrimmed(paramDeviceName_.getValue());
-    if (!newDeviceName.length())
-        newDeviceName = "RadPro WiFi Bridge";
-    if (config_.deviceName != newDeviceName)
-        changed = true;
-    config_.deviceName = newDeviceName;
-
-    String newMqttHost = readTrimmed(paramMqttHost_.getValue());
-    if (config_.mqttHost != newMqttHost)
-        changed = true;
-    config_.mqttHost = newMqttHost;
-
-    String newMqttClient = readTrimmed(paramMqttClient_.getValue());
-    if (config_.mqttClient != newMqttClient)
-        changed = true;
-    config_.mqttClient = newMqttClient;
-
-    String newMqttUser = readTrimmed(paramMqttUser_.getValue());
-    if (config_.mqttUser != newMqttUser)
-        changed = true;
-    config_.mqttUser = newMqttUser;
-
-    String newMqttPassword = readTrimmed(paramMqttPass_.getValue());
-    if (config_.mqttPassword != newMqttPassword)
-        changed = true;
-    config_.mqttPassword = newMqttPassword;
-
-    String newMqttTopic = readTrimmed(paramMqttTopic_.getValue());
-    if (config_.mqttTopic != newMqttTopic)
-        changed = true;
-    config_.mqttTopic = newMqttTopic;
-
-    String newMqttFullTopic = readTrimmed(paramMqttFullTopic_.getValue());
-    if (config_.mqttFullTopic != newMqttFullTopic)
-        changed = true;
-    config_.mqttFullTopic = newMqttFullTopic;
-
-    uint32_t newInterval = strtoul(paramReadInterval_.getValue(), nullptr, 10);
-    if (newInterval < kMinReadIntervalMs)
-        newInterval = kMinReadIntervalMs;
-    if (newInterval != config_.readIntervalMs)
-    {
-        config_.readIntervalMs = newInterval;
-        changed = true;
-    }
-
-    uint32_t parsedPort = strtoul(paramMqttPort_.getValue(), nullptr, 10);
-    if (parsedPort == 0 || parsedPort > 65535)
-        parsedPort = config_.mqttPort;
-    if (config_.mqttPort != parsedPort)
-    {
-        config_.mqttPort = static_cast<uint16_t>(parsedPort);
-        changed = true;
-    }
-
-    WiFi.setHostname(config_.deviceName.c_str());
-    refreshParameters();
-
-    if (persist && (changed || forceSave))
-    {
-        if (store_.save(config_))
-        {
-            log_.print("Configuration saved to NVS (mqttHost='");
-            log_.print(config_.mqttHost);
-            log_.println("').");
-            led_.clearFault(FaultCode::NvsWriteFailure);
-        }
-        else
-        {
-            log_.println("Preferences write failed; configuration not saved.");
-            led_.activateFault(FaultCode::NvsWriteFailure);
-        }
-    }
-
-    return changed;
 }
 
 void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
@@ -1617,9 +1500,11 @@ bool WiFiPortalService::importConfigJson(const String &body, String &errorMessag
     if (updated.readIntervalMs < kMinReadIntervalMs)
         updated.readIntervalMs = kMinReadIntervalMs;
 
+    const std::vector<String> changedFields = collectChangedConfigFields(config_, updated);
     if (!store_.save(updated))
     {
         errorMessage = F("Failed to save configuration to NVS.");
+        PortalSecurity::logConfigSaveFailure(log_, "/backup/restore", currentClientIp(), changedFields);
         led_.activateFault(FaultCode::NvsWriteFailure);
         return false;
     }
@@ -1630,7 +1515,7 @@ bool WiFiPortalService::importConfigJson(const String &body, String &errorMessag
     pendingReconnect_ = true;
     lastReconnectAttemptMs_ = 0;
     hasLoggedIp_ = false;
-    log_.println(F("Configuration restored from backup."));
+    logConfigSave("/backup/restore", changedFields);
     return true;
 }
 
@@ -1755,16 +1640,18 @@ void WiFiPortalService::handleSafecastPost()
         return;
     }
 
+    const std::vector<String> changedFields = collectChangedConfigFields(config_, candidate);
     config_ = candidate;
     if (store_.save(config_))
     {
         refreshParameters();
-        log_.println("Safecast configuration saved to NVS.");
+        logConfigSave("/safecast", changedFields);
         led_.clearFault(FaultCode::NvsWriteFailure);
         sendSafecastForm(config_, "Safecast settings saved.");
         return;
     }
 
+    PortalSecurity::logConfigSaveFailure(log_, "/safecast", currentClientIp(), changedFields);
     log_.println("Preferences write failed; Safecast configuration not saved.");
     led_.activateFault(FaultCode::NvsWriteFailure);
     sendSafecastForm(candidate, "Failed to save settings.");
@@ -1800,7 +1687,9 @@ void WiFiPortalService::sendOpenRadiationForm(const String &message)
         html += F("</p>");
     }
 
+    ensureCsrfToken();
     html += F("<form method='POST' action='/openradiation'>");
+    html += csrfHiddenInput();
     html += F("<label class='toggle'><input id='orEnabled' name='orEnabled' type='checkbox' value='1'");
     if (config_.openRadiationEnabled)
         html += F(" checked");
@@ -1890,21 +1779,30 @@ void WiFiPortalService::handleOpenRadiationPost()
     measurementHeightStr.trim();
 
     bool changed = false;
+    std::vector<String> changedFields;
     if (config_.openRadiationEnabled != enabled)
     {
         config_.openRadiationEnabled = enabled;
+        PortalSecurity::appendChangedField(changedFields, "openRadiationEnabled", true);
         changed = true;
     }
-    changed |= UpdateStringIfChanged(config_.openRadiationDeviceId, deviceId.c_str());
-    changed |= UpdateStringIfChanged(config_.openRadiationApiKey, apiKey.c_str());
-    changed |= UpdateStringIfChanged(config_.openRadiationUserId, userId.c_str());
+    bool fieldChanged = UpdateStringIfChanged(config_.openRadiationDeviceId, deviceId.c_str());
+    PortalSecurity::appendChangedField(changedFields, "openRadiationDeviceId", fieldChanged);
+    changed |= fieldChanged;
+    fieldChanged = UpdateStringIfChanged(config_.openRadiationApiKey, apiKey.c_str());
+    PortalSecurity::appendChangedField(changedFields, "openRadiationApiKey", fieldChanged);
+    changed |= fieldChanged;
+    fieldChanged = UpdateStringIfChanged(config_.openRadiationUserId, userId.c_str());
+    PortalSecurity::appendChangedField(changedFields, "openRadiationUserId", fieldChanged);
+    changed |= fieldChanged;
     if (config_.openRadiationUserPassword != userPassword)
     {
         config_.openRadiationUserPassword = userPassword;
+        PortalSecurity::appendChangedField(changedFields, "openRadiationUserPassword", true);
         changed = true;
     }
 
-    auto updateFloat = [&](float &target, const String &source, float minValue, float maxValue) {
+    auto updateFloat = [&](const char *fieldName, float &target, const String &source, float minValue, float maxValue) {
         if (!source.length())
             return false;
         float parsed = source.toFloat();
@@ -1915,19 +1813,21 @@ void WiFiPortalService::handleOpenRadiationPost()
         if (fabsf(parsed - target) > 0.0005f)
         {
             target = parsed;
+            PortalSecurity::appendChangedField(changedFields, fieldName, true);
             return true;
         }
         return false;
     };
 
-    changed |= updateFloat(config_.openRadiationLatitude, latStr, -90.0f, 90.0f);
-    changed |= updateFloat(config_.openRadiationLongitude, lonStr, -180.0f, 180.0f);
+    changed |= updateFloat("openRadiationLatitude", config_.openRadiationLatitude, latStr, -90.0f, 90.0f);
+    changed |= updateFloat("openRadiationLongitude", config_.openRadiationLongitude, lonStr, -180.0f, 180.0f);
     if (altStr.length())
     {
         float parsedAlt = altStr.toFloat();
         if (fabsf(parsedAlt - config_.openRadiationAltitude) > 0.05f)
         {
             config_.openRadiationAltitude = parsedAlt;
+            PortalSecurity::appendChangedField(changedFields, "openRadiationAltitude", true);
             changed = true;
         }
     }
@@ -1939,17 +1839,22 @@ void WiFiPortalService::handleOpenRadiationPost()
         if (fabsf(parsedAcc - config_.openRadiationAccuracy) > 0.05f)
         {
             config_.openRadiationAccuracy = parsedAcc;
+            PortalSecurity::appendChangedField(changedFields, "openRadiationAccuracy", true);
             changed = true;
         }
     }
 
     if (!environmentStr.length())
     {
-        changed |= UpdateStringIfChanged(config_.openRadiationMeasurementEnvironment, "");
+        fieldChanged = UpdateStringIfChanged(config_.openRadiationMeasurementEnvironment, "");
+        PortalSecurity::appendChangedField(changedFields, "openRadiationMeasurementEnvironment", fieldChanged);
+        changed |= fieldChanged;
     }
     else if (OpenRadiationMeasurementMetadata::isValidMeasurementEnvironment(environmentStr))
     {
-        changed |= UpdateStringIfChanged(config_.openRadiationMeasurementEnvironment, environmentStr.c_str());
+        fieldChanged = UpdateStringIfChanged(config_.openRadiationMeasurementEnvironment, environmentStr.c_str());
+        PortalSecurity::appendChangedField(changedFields, "openRadiationMeasurementEnvironment", fieldChanged);
+        changed |= fieldChanged;
     }
     else
     {
@@ -1971,6 +1876,7 @@ void WiFiPortalService::handleOpenRadiationPost()
             if (fabsf(parsedMeasurementHeight - config_.openRadiationMeasurementHeight) > 0.05f)
             {
                 config_.openRadiationMeasurementHeight = parsedMeasurementHeight;
+                PortalSecurity::appendChangedField(changedFields, "openRadiationMeasurementHeight", true);
                 changed = true;
             }
         }
@@ -1981,12 +1887,13 @@ void WiFiPortalService::handleOpenRadiationPost()
     {
         if (store_.save(config_))
         {
-            log_.println("OpenRadiation configuration saved to NVS.");
+            logConfigSave("/openradiation", changedFields);
             led_.clearFault(FaultCode::NvsWriteFailure);
             message = F("OpenRadiation settings saved.");
         }
         else
         {
+            PortalSecurity::logConfigSaveFailure(log_, "/openradiation", currentClientIp(), changedFields);
             log_.println("Preferences write failed; OpenRadiation configuration not saved.");
             led_.activateFault(FaultCode::NvsWriteFailure);
             message = F("Failed to save settings.");
@@ -2302,8 +2209,173 @@ String WiFiPortalService::resolvePortalLocale() const
 
 void WiFiPortalService::appendCommonTemplateVars(TemplateReplacements &replacements)
 {
+    ensureCsrfToken();
     String locale = resolvePortalLocale();
     replacements.emplace_back("{{LOCALE}}", locale);
+    replacements.emplace_back("{{CSRF_TOKEN}}", csrfToken_);
+}
+
+String WiFiPortalService::generateCsrfToken() const
+{
+    char buffer[33];
+    const uint32_t a = esp_random();
+    const uint32_t b = esp_random();
+    const uint32_t c = esp_random();
+    const uint32_t d = esp_random();
+    snprintf(buffer,
+             sizeof(buffer),
+             "%08lx%08lx%08lx%08lx",
+             static_cast<unsigned long>(a),
+             static_cast<unsigned long>(b),
+             static_cast<unsigned long>(c),
+             static_cast<unsigned long>(d));
+    return String(buffer);
+}
+
+void WiFiPortalService::ensureCsrfToken()
+{
+    if (!csrfToken_.length())
+        csrfToken_ = generateCsrfToken();
+}
+
+String WiFiPortalService::csrfHiddenInput() const
+{
+    String html = F("<input type=\"hidden\" name=\"csrf\" value=\"");
+    html += htmlEscape(csrfToken_);
+    html += F("\" />");
+    return html;
+}
+
+String WiFiPortalService::currentClientIp() const
+{
+    if (!manager_.server)
+        return String();
+    return manager_.server->client().remoteIP().toString();
+}
+
+void WiFiPortalService::rejectPortalPost(const char *route, int code, const String &message, bool jsonResponse)
+{
+    if (!manager_.server)
+        return;
+
+    log_.print(F("Rejected POST "));
+    log_.print(route ? route : "<unknown>");
+    log_.print(F(" from "));
+    log_.print(currentClientIp().length() ? currentClientIp() : String("<unknown>"));
+    log_.print(F(": "));
+    log_.println(message);
+
+    if (jsonResponse)
+    {
+        JsonDocument doc;
+        doc["error"] = message;
+        String body;
+        serializeJson(doc, body);
+        sendJson(code, body);
+        return;
+    }
+
+    manager_.server->send(code, "text/plain", message + "\n");
+}
+
+bool WiFiPortalService::requirePortalPost(const char *route,
+                                          std::initializer_list<const char *> requiredFields,
+                                          bool jsonResponse)
+{
+    if (!manager_.server)
+        return false;
+
+    ensureCsrfToken();
+    auto &server = *manager_.server;
+
+    std::vector<const char *> expected;
+    expected.reserve(requiredFields.size() + 1);
+    expected.emplace_back(PortalSecurity::kCsrfFieldName);
+    for (const char *field : requiredFields)
+        expected.emplace_back(field);
+
+    std::vector<String> present;
+    present.reserve(server.args());
+    for (uint8_t i = 0; i < server.args(); ++i)
+        present.emplace_back(server.argName(i));
+
+    const std::vector<String> missing = PortalSecurity::missingRequiredFields(expected, present);
+    if (!missing.empty())
+    {
+        rejectPortalPost(route,
+                         400,
+                         String(F("Missing required POST field(s): ")) + PortalSecurity::joinFieldNames(missing),
+                         jsonResponse);
+        return false;
+    }
+
+    if (!PortalSecurity::isValidCsrfToken(server.arg(PortalSecurity::kCsrfFieldName), csrfToken_))
+    {
+        rejectPortalPost(route, 403, F("Invalid CSRF token."), jsonResponse);
+        return false;
+    }
+
+    return true;
+}
+
+void WiFiPortalService::logConfigSave(const char *route, const std::vector<String> &changedFields)
+{
+    PortalSecurity::logConfigSave(log_, route, currentClientIp(), changedFields);
+}
+
+std::vector<String> WiFiPortalService::collectChangedConfigFields(const AppConfig &before, const AppConfig &after) const
+{
+    std::vector<String> changed;
+
+#define RADPRO_APPEND_CHANGED_FIELD(field) PortalSecurity::appendChangedField(changed, #field, before.field != after.field)
+    RADPRO_APPEND_CHANGED_FIELD(deviceName);
+    RADPRO_APPEND_CHANGED_FIELD(mqttEnabled);
+    RADPRO_APPEND_CHANGED_FIELD(mqttHost);
+    RADPRO_APPEND_CHANGED_FIELD(mqttPort);
+    RADPRO_APPEND_CHANGED_FIELD(mqttClient);
+    RADPRO_APPEND_CHANGED_FIELD(mqttUser);
+    RADPRO_APPEND_CHANGED_FIELD(mqttPassword);
+    RADPRO_APPEND_CHANGED_FIELD(mqttTopic);
+    RADPRO_APPEND_CHANGED_FIELD(mqttFullTopic);
+    RADPRO_APPEND_CHANGED_FIELD(readIntervalMs);
+    RADPRO_APPEND_CHANGED_FIELD(openSenseMapEnabled);
+    RADPRO_APPEND_CHANGED_FIELD(openSenseBoxId);
+    RADPRO_APPEND_CHANGED_FIELD(openSenseApiKey);
+    RADPRO_APPEND_CHANGED_FIELD(openSenseTubeRateSensorId);
+    RADPRO_APPEND_CHANGED_FIELD(openSenseDoseRateSensorId);
+    RADPRO_APPEND_CHANGED_FIELD(gmcMapEnabled);
+    RADPRO_APPEND_CHANGED_FIELD(gmcMapAccountId);
+    RADPRO_APPEND_CHANGED_FIELD(gmcMapDeviceId);
+    RADPRO_APPEND_CHANGED_FIELD(radmonEnabled);
+    RADPRO_APPEND_CHANGED_FIELD(radmonUser);
+    RADPRO_APPEND_CHANGED_FIELD(radmonPassword);
+    RADPRO_APPEND_CHANGED_FIELD(openRadiationEnabled);
+    RADPRO_APPEND_CHANGED_FIELD(openRadiationDeviceId);
+    RADPRO_APPEND_CHANGED_FIELD(openRadiationApiKey);
+    RADPRO_APPEND_CHANGED_FIELD(openRadiationUserId);
+    RADPRO_APPEND_CHANGED_FIELD(openRadiationUserPassword);
+    RADPRO_APPEND_CHANGED_FIELD(openRadiationMeasurementEnvironment);
+    RADPRO_APPEND_CHANGED_FIELD(openRadiationMeasurementHeight);
+    RADPRO_APPEND_CHANGED_FIELD(openRadiationLatitude);
+    RADPRO_APPEND_CHANGED_FIELD(openRadiationLongitude);
+    RADPRO_APPEND_CHANGED_FIELD(openRadiationAltitude);
+    RADPRO_APPEND_CHANGED_FIELD(openRadiationAccuracy);
+    RADPRO_APPEND_CHANGED_FIELD(safecastEnabled);
+    RADPRO_APPEND_CHANGED_FIELD(safecastApiBaseUrl);
+    RADPRO_APPEND_CHANGED_FIELD(safecastUseTestApi);
+    RADPRO_APPEND_CHANGED_FIELD(safecastCustomApiBaseUrl);
+    RADPRO_APPEND_CHANGED_FIELD(safecastApiKey);
+    RADPRO_APPEND_CHANGED_FIELD(safecastDeviceId);
+    RADPRO_APPEND_CHANGED_FIELD(safecastLatitude);
+    RADPRO_APPEND_CHANGED_FIELD(safecastLongitude);
+    RADPRO_APPEND_CHANGED_FIELD(safecastHeightCm);
+    RADPRO_APPEND_CHANGED_FIELD(safecastLocationName);
+    RADPRO_APPEND_CHANGED_FIELD(safecastUnit);
+    RADPRO_APPEND_CHANGED_FIELD(safecastUploadIntervalSeconds);
+    RADPRO_APPEND_CHANGED_FIELD(safecastDebug);
+#undef RADPRO_APPEND_CHANGED_FIELD
+
+    return changed;
 }
 
 void WiFiPortalService::handleLogsJson()
