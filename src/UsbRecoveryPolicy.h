@@ -17,7 +17,9 @@ inline bool shouldRestart(unsigned long now,
                           bool usbDeviceObserved,
                           bool restartRunsInBackground)
 {
-    if (!usbDeviceObserved && !restartRunsInBackground)
+    (void)restartRunsInBackground;
+
+    if (!usbDeviceObserved)
         return false;
 
     if (disconnectedSinceMs == 0)

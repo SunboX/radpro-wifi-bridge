@@ -30,9 +30,10 @@ void testBlockingRestartRequiresAnObservedUsbDevice()
     assert(!UsbRecoveryPolicy::shouldRestart(60000, 1000, 0, false, false));
 }
 
-void testBackgroundRestartCanRecoverDescriptorFailures()
+void testBackgroundRestartStillRequiresAnObservedUsbDevice()
 {
-    assert(UsbRecoveryPolicy::shouldRestart(60000, 1000, 0, false, true));
+    assert(!UsbRecoveryPolicy::shouldRestart(60000, 1000, 0, false, true));
+    assert(UsbRecoveryPolicy::shouldRestart(60000, 1000, 0, true, true));
 }
 } // namespace
 
@@ -41,7 +42,7 @@ int main()
     testRequiresDisconnectGracePeriod();
     testRespectsRestartInterval();
     testBlockingRestartRequiresAnObservedUsbDevice();
-    testBackgroundRestartCanRecoverDescriptorFailures();
+    testBackgroundRestartStillRequiresAnObservedUsbDevice();
     std::cout << "usb recovery policy tests passed\n";
     return 0;
 }
