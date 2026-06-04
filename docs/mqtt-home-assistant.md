@@ -79,7 +79,8 @@ Once entities appear, you can:
 
 | Symptom | Fix |
 | --- | --- |
-| `MQTT connect failed: -1` | Broker unreachable (check host, port, Wi-Fi) |
+| `MQTT connect failed: -1` | Broker unreachable (check host, port, Wi-Fi, Firewall) |
+| `MQTT connect failed: -2` | Broker unreachable (check host, port, Wi-Fi, Firewall) |
 | `MQTT connect failed: 5` | Bad username/password or anonymous disabled |
 | Entities missing after rename | Clear retained `homeassistant/` topics and restart bridge |
 | State updates delayed | Lower `readIntervalMs` (>= 500 ms) and ensure broker isn’t rate-limited |
