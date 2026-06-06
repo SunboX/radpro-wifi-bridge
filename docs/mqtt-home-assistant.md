@@ -11,7 +11,7 @@ This guide walks through configuring the RadPro WiFi Bridge to publish RadPro te
    - **Home Assistant add-on:** set `anonymous: true` under the add-on options, *or* add a user in Home Assistant and grant MQTT access.
 3. Note the broker host/IP and port (default 1883).
 
-> **Tip:** A `MQTT connect failed: 5` log on the bridge means the broker rejected the credentials.
+> **Tip:** A `MQTT connect failed: 5` log on the bridge means the broker rejected the credentials. `MQTT connect failed: -1` or `-2` usually means the bridge cannot open the TCP connection to the broker.
 
 ## 2. Configure MQTT in the Portal
 
@@ -79,9 +79,11 @@ Once entities appear, you can:
 
 | Symptom | Fix |
 | --- | --- |
-| `MQTT connect failed: -1` | Broker unreachable (check host, port, Wi-Fi) |
+| `MQTT connect failed: -1` or `-2` | Broker unreachable (check host, port, Wi-Fi, firewall rules, VLAN/routing, and Home Assistant add-on network access) |
 | `MQTT connect failed: 5` | Bad username/password or anonymous disabled |
 | Entities missing after rename | Clear retained `homeassistant/` topics and restart bridge |
 | State updates delayed | Lower `readIntervalMs` (>= 500 ms) and ensure broker isn’t rate-limited |
 
-For more detail on the firmware internals, see the “MQTT Publishing” section in the root README. \ No newline at end of file
+If a desktop MQTT client can connect but the bridge still logs `-1` or `-2`, test from the same Wi-Fi/VLAN as the bridge and check that no firewall rule blocks traffic from the bridge IP to the broker port.
+
+For more detail on the firmware internals, see the “MQTT Publishing” section in the root README.
