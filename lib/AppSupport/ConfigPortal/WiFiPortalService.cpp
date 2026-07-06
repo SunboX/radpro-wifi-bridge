@@ -5,6 +5,7 @@
 #include "ConfigPortal/WiFiPortalService.h"
 
 #include "ConfigPortal/PortalSecurity.h"
+#include "ConfigPortal/WiFiReconnectPolicy.h"
 #include "FileSystem/BridgeFileSystem.h"
 #include "Ota/OtaUpdateService.h"
 #include "Mqtt/MqttPublisher.h"
@@ -342,6 +343,8 @@ bool WiFiPortalService::connect(bool forcePortal)
 
     onboardingMode_ = forcePortal && !haveStoredCredentials;
 
+    const bool recoveryPortal = forcePortal && haveStoredCredentials;
+
     if (forcePortal)
     {
         String apName = config_.deviceName.length() ? config_.deviceName : String("RadPro WiFi Bridge");
@@ -355,13 +358,25 @@ bool WiFiPortalService::connect(bool forcePortal)
             prepareConfigPortalAp(apName);
         }
         manager_.setConfigPortalTimeout(0);
+        manager_.setConfigPortalBlocking(!recoveryPortal);
         connected = manager_.startConfigPortal(apName.c_str());
-        log_.println(connected ? F("Configuration portal completed (credentials supplied).") : F("Configuration portal exited without connection."));
+        if (recoveryPortal && manager_.getConfigPortalActive())
+        {
+            pendingReconnect_ = true;
+            lastReconnectAttemptMs_ = 0;
+            waitingForIpSinceMs_ = 0;
+            log_.println(F("Configuration portal running in background; stored Wi-Fi credentials will be retried."));
+        }
+        else
+        {
+            log_.println(connected ? F("Configuration portal completed (credentials supplied).") : F("Configuration portal exited without connection."));
+        }
         logPortalState("after startConfigPortal");
     }
     else
     {
         manager_.setConfigPortalTimeout(30);
+        manager_.setConfigPortalBlocking(true);
         log_.println(F("Attempting Wi-Fi autoConnect()…"));
         connected = manager_.autoConnect(config_.deviceName.c_str());
         log_.println(connected ? F("autoConnect() succeeded.") : F("autoConnect() failed or timed out."));
@@ -369,7 +384,8 @@ bool WiFiPortalService::connect(bool forcePortal)
             logPortalState("autoConnect failed");
     }
 
-    if (!connected)
+    const bool portalRunningForRecovery = recoveryPortal && manager_.getConfigPortalActive();
+    if (!connected && !portalRunningForRecovery)
     {
         led_.activateFault(FaultCode::WifiPortalStuck);
         log_.println(F("WiFiPortalService::connect() returning failure."));
@@ -400,8 +416,8 @@ bool WiFiPortalService::connect(bool forcePortal)
 void WiFiPortalService::maintain()
 {
     const bool connected = WiFi.status() == WL_CONNECTED;
-    const bool configPortalActive = manager_.getConfigPortalActive();
-    const bool webPortalActive = manager_.getWebPortalActive();
+    bool configPortalActive = manager_.getConfigPortalActive();
+    bool webPortalActive = manager_.getWebPortalActive();
     bool haveStoredCredentials = hasStoredCredentials();
     if (onboardingMode_ && haveStoredCredentials)
     {
@@ -413,6 +429,15 @@ void WiFiPortalService::maintain()
         }
     }
     const bool onboarding = onboardingMode_ || !haveStoredCredentials;
+
+    if (connected && configPortalActive && !onboarding)
+    {
+        log_.println(F("Wi-Fi reconnected; stopping configuration portal."));
+        manager_.stopConfigPortal();
+        configPortalActive = manager_.getConfigPortalActive();
+        webPortalActive = manager_.getWebPortalActive();
+        logPortalState("stopConfigPortalAfterReconnect");
+    }
 
     if (connected)
     {
@@ -473,7 +498,7 @@ void WiFiPortalService::maintain()
 
     if (pendingReconnect_)
     {
-        if (configPortalActive || onboarding)
+        if (WiFiReconnectPolicy::shouldSuppressRetry(configPortalActive, onboarding, haveStoredCredentials))
         {
             pendingReconnect_ = false;
             lastReconnectAttemptMs_ = 0;
@@ -494,7 +519,7 @@ void WiFiPortalService::maintain()
             else
             {
                 unsigned long now = millis();
-                if (lastReconnectAttemptMs_ == 0 || now - lastReconnectAttemptMs_ >= 5000)
+                if (WiFiReconnectPolicy::isRetryDue(now, lastReconnectAttemptMs_))
                 {
                     attemptReconnect();
                     if (WiFi.status() != WL_CONNECTED)
@@ -978,8 +1003,9 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
         lastIp_ = IPAddress();
         {
             bool portalActive = manager_.getConfigPortalActive();
-            bool onboarding = onboardingMode_ || !hasStoredCredentials();
-            if (portalActive || onboarding)
+            bool haveCredentials = hasStoredCredentials();
+            bool onboarding = onboardingMode_ || !haveCredentials;
+            if (WiFiReconnectPolicy::shouldSuppressRetry(portalActive, onboarding, haveCredentials))
             {
                 log_.println(F("Ignoring STA disconnect while captive portal is active/onboarding."));
                 pendingReconnect_ = false;
@@ -1232,7 +1258,8 @@ void WiFiPortalService::attemptReconnect()
     lastReconnectAttemptMs_ = millis();
     log_.println("Wi-Fi reconnect pending; attempting to rejoin.");
 
-    WiFi.mode(WIFI_STA);
+    WiFiReconnectPolicy::StationMode mode = WiFiReconnectPolicy::reconnectMode(manager_.getConfigPortalActive());
+    WiFi.mode(mode == WiFiReconnectPolicy::StationMode::ApAndStation ? WIFI_AP_STA : WIFI_STA);
 
     if (WiFi.reconnect())
     {
