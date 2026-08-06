@@ -9,6 +9,7 @@
 #include <WiFi.h>
 #include <WiFiManager.h>
 #include <esp_wifi_types.h>
+#include <ping/ping_sock.h>
 #include <vector>
 #include <functional>
 #include <initializer_list>
@@ -22,6 +23,7 @@
 #include "Ota/OtaUpdateService.h"
 #include "Logging/DebugLogStream.h"
 #include "Publishing/PublisherHealth.h"
+#include "ConfigPortal/WiFiReconnectPolicy.h"
 
 class SafecastPublisher;
 
@@ -66,6 +68,12 @@ private:
     void logConnectionDetails(const IPAddress &ip, const IPAddress &gateway, const IPAddress &mask);
     void logStatus();
     void attemptReconnect();
+    void maintainGatewayMonitor(bool connected);
+    bool startGatewayProbe(const IPAddress &gateway, unsigned long now);
+    void resetGatewayMonitor(const IPAddress &gateway = IPAddress());
+    static void onGatewayPingSuccess(esp_ping_handle_t handle, void *args);
+    static void onGatewayPingTimeout(esp_ping_handle_t handle, void *args);
+    static void onGatewayPingEnd(esp_ping_handle_t handle, void *args);
     void sendOpenRadiationForm(const String &message = String());
     void handleOpenRadiationPost();
     void handleOpenRadiationDryRun();
@@ -161,6 +169,16 @@ private:
     bool pendingReconnect_ = false;
     unsigned long lastReconnectAttemptMs_ = 0;
     unsigned long waitingForIpSinceMs_ = 0;
+    IPAddress monitoredGateway_;
+    WiFiReconnectPolicy::GatewayHealthState gatewayHealth_;
+    unsigned long lastGatewayProbeMs_ = 0;
+    uint32_t gatewayLeaseGeneration_ = 0;
+    uint32_t gatewayProbeGeneration_ = 0;
+    uint32_t gatewayProbeResultGeneration_ = 0;
+    bool gatewayProbeInFlight_ = false;
+    bool gatewayProbeFinished_ = false;
+    bool gatewayProbeSucceeded_ = false;
+    portMUX_TYPE gatewayProbeLock_ = portMUX_INITIALIZER_UNLOCKED;
     bool onboardingMode_ = false;
     String lastKnownSsid_;
     String lastKnownPass_;

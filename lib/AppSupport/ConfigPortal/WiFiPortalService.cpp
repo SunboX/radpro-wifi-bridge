@@ -279,6 +279,8 @@ void WiFiPortalService::begin()
 {
     ensureCsrfToken();
     manager_.setDebugOutput(true);
+    manager_.setWiFiAutoReconnect(false);
+    WiFi.setAutoReconnect(false);
     manager_.setClass("invert");
     manager_.setConnectTimeout(10);
     manager_.setConnectRetries(1);
@@ -416,6 +418,7 @@ bool WiFiPortalService::connect(bool forcePortal)
 void WiFiPortalService::maintain()
 {
     const bool connected = WiFi.status() == WL_CONNECTED;
+    const unsigned long now = millis();
     bool configPortalActive = manager_.getConfigPortalActive();
     bool webPortalActive = manager_.getWebPortalActive();
     bool haveStoredCredentials = hasStoredCredentials();
@@ -484,16 +487,12 @@ void WiFiPortalService::maintain()
 
     logStatusIfNeeded();
 
-    if (waitingForIpSinceMs_ > 0 && WiFi.status() == WL_CONNECTED)
+    if (waitingForIpSinceMs_ > 0 &&
+        !WiFiReconnectPolicy::isConnectionAttemptInFlight(now, waitingForIpSinceMs_))
     {
-        if (WiFi.localIP() == IPAddress(0, 0, 0, 0))
-        {
-            unsigned long now = millis();
-            if (now - waitingForIpSinceMs_ > 7000)
-            {
-                led_.activateFault(FaultCode::WifiDhcpFailure);
-            }
-        }
+        waitingForIpSinceMs_ = 0;
+        led_.activateFault(FaultCode::WifiDhcpFailure);
+        log_.println(F("Wi-Fi connection attempt timed out while waiting for an IP address."));
     }
 
     if (pendingReconnect_)
@@ -508,9 +507,15 @@ void WiFiPortalService::maintain()
         else
         {
             wl_status_t status = WiFi.status();
-            if (status == WL_CONNECTED)
+            if (WiFiReconnectPolicy::isConnectionAttemptInFlight(now, waitingForIpSinceMs_))
+            {
+                // Association/reconnect is in progress. Give DHCP time to emit GOT_IP.
+            }
+            else if (status == WL_CONNECTED)
             {
                 pendingReconnect_ = false;
+                lastReconnectAttemptMs_ = 0;
+                waitingForIpSinceMs_ = 0;
                 hasLoggedIp_ = false;
                 logStatusIfNeeded();
                 log_.println("Wi-Fi reconnect complete.");
@@ -518,7 +523,6 @@ void WiFiPortalService::maintain()
             }
             else
             {
-                unsigned long now = millis();
                 if (WiFiReconnectPolicy::isRetryDue(now, lastReconnectAttemptMs_))
                 {
                     attemptReconnect();
@@ -528,6 +532,8 @@ void WiFiPortalService::maintain()
             }
         }
     }
+
+    maintainGatewayMonitor(connected);
 
     if (restartScheduled_)
     {
@@ -926,7 +932,10 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
         IPAddress netmask(info.got_ip.ip_info.netmask.addr);
         logConnectionDetails(ip, gateway, netmask);
         lastStatus_ = WL_CONNECTED;
+        pendingReconnect_ = false;
+        lastReconnectAttemptMs_ = 0;
         waitingForIpSinceMs_ = 0;
+        resetGatewayMonitor(gateway);
         led_.clearFault(FaultCode::WifiDhcpFailure);
         led_.clearFault(FaultCode::WifiPortalStuck);
         led_.clearFault(FaultCode::PortalReconnectFailed);
@@ -986,7 +995,11 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
         }
         logPortalState("event:STA_CONNECTED");
         lastStatus_ = WL_CONNECTED;
-        waitingForIpSinceMs_ = millis();
+        if (waitingForIpSinceMs_ == 0)
+        {
+            const unsigned long now = millis();
+            waitingForIpSinceMs_ = now == 0 ? 1 : now;
+        }
         led_.clearFault(FaultCode::WifiAuthFailure);
         break;
     }
@@ -1014,9 +1027,15 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
                 break;
             }
         }
-        pendingReconnect_ = true;
-        lastReconnectAttemptMs_ = 0;
-        waitingForIpSinceMs_ = 0;
+        {
+            const bool alreadyPending = pendingReconnect_;
+            pendingReconnect_ = true;
+            lastReconnectAttemptMs_ = WiFiReconnectPolicy::lastAttemptAfterDisconnect(
+                alreadyPending, lastReconnectAttemptMs_);
+            if (!alreadyPending)
+                waitingForIpSinceMs_ = 0;
+        }
+        resetGatewayMonitor();
         switch (info.wifi_sta_disconnected.reason)
         {
         case WIFI_REASON_AUTH_EXPIRE:
@@ -1253,9 +1272,162 @@ void WiFiPortalService::restorePortalPowerSave()
     portalPsDisabled_ = false;
 }
 
+void WiFiPortalService::resetGatewayMonitor(const IPAddress &gateway)
+{
+    ++gatewayLeaseGeneration_;
+    monitoredGateway_ = gateway;
+    lastGatewayProbeMs_ = 0;
+    WiFiReconnectPolicy::resetGatewayHealth(gatewayHealth_);
+}
+
+void WiFiPortalService::maintainGatewayMonitor(bool connected)
+{
+    bool probeFinished = false;
+    bool probeSucceeded = false;
+    uint32_t probeGeneration = 0;
+
+    portENTER_CRITICAL(&gatewayProbeLock_);
+    if (gatewayProbeFinished_)
+    {
+        probeFinished = true;
+        probeSucceeded = gatewayProbeSucceeded_;
+        probeGeneration = gatewayProbeResultGeneration_;
+        gatewayProbeFinished_ = false;
+        gatewayProbeSucceeded_ = false;
+    }
+    portEXIT_CRITICAL(&gatewayProbeLock_);
+
+    if (probeFinished)
+    {
+        gatewayProbeInFlight_ = false;
+        if (connected && probeGeneration == gatewayLeaseGeneration_)
+        {
+            const uint8_t previousFailures = gatewayHealth_.consecutiveFailures;
+            const WiFiReconnectPolicy::GatewayProbeOutcome outcome =
+                WiFiReconnectPolicy::recordGatewayProbe(gatewayHealth_, probeSucceeded);
+
+            switch (outcome)
+            {
+            case WiFiReconnectPolicy::GatewayProbeOutcome::Armed:
+                log_.print(F("Wi-Fi gateway monitor armed after successful probe to "));
+                log_.println(monitoredGateway_);
+                break;
+            case WiFiReconnectPolicy::GatewayProbeOutcome::Healthy:
+                if (previousFailures > 0)
+                    log_.println(F("Wi-Fi gateway probe recovered."));
+                break;
+            case WiFiReconnectPolicy::GatewayProbeOutcome::Suspect:
+                log_.print(F("Wi-Fi gateway probe failed ("));
+                log_.print(gatewayHealth_.consecutiveFailures);
+                log_.print('/');
+                log_.print(WiFiReconnectPolicy::kGatewayFailureThreshold);
+                log_.println(F(")."));
+                break;
+            case WiFiReconnectPolicy::GatewayProbeOutcome::Stale:
+                log_.print(F("Wi-Fi gateway unreachable after "));
+                log_.print(gatewayHealth_.consecutiveFailures);
+                log_.println(F(" probes; forcing stale-link recovery."));
+                resetGatewayMonitor();
+                pendingReconnect_ = true;
+                lastReconnectAttemptMs_ = 0;
+                waitingForIpSinceMs_ = 0;
+                attemptReconnect();
+                return;
+            case WiFiReconnectPolicy::GatewayProbeOutcome::IgnoredUntilProven:
+                break;
+            }
+        }
+    }
+
+    if (!connected || pendingReconnect_ || gatewayProbeInFlight_ ||
+        monitoredGateway_ == IPAddress(0, 0, 0, 0))
+    {
+        return;
+    }
+
+    const unsigned long now = millis();
+    if (lastGatewayProbeMs_ != 0 &&
+        now - lastGatewayProbeMs_ < WiFiReconnectPolicy::kGatewayProbeIntervalMs)
+    {
+        return;
+    }
+
+    startGatewayProbe(monitoredGateway_, now);
+}
+
+bool WiFiPortalService::startGatewayProbe(const IPAddress &gateway, unsigned long now)
+{
+    lastGatewayProbeMs_ = now == 0 ? 1 : now;
+
+    esp_ping_config_t config = ESP_PING_DEFAULT_CONFIG();
+    config.count = 1;
+    config.timeout_ms = 1000;
+    IP4_ADDR(ip_2_ip4(&config.target_addr), gateway[0], gateway[1], gateway[2], gateway[3]);
+    IP_SET_TYPE_VAL(config.target_addr, IPADDR_TYPE_V4);
+
+    esp_ping_callbacks_t callbacks = {};
+    callbacks.cb_args = this;
+    callbacks.on_ping_success = &WiFiPortalService::onGatewayPingSuccess;
+    callbacks.on_ping_timeout = &WiFiPortalService::onGatewayPingTimeout;
+    callbacks.on_ping_end = &WiFiPortalService::onGatewayPingEnd;
+
+    esp_ping_handle_t handle = nullptr;
+    esp_err_t err = esp_ping_new_session(&config, &callbacks, &handle);
+    if (err != ESP_OK)
+    {
+        log_.print(F("Could not create Wi-Fi gateway probe: "));
+        log_.println(esp_err_to_name(err));
+        return false;
+    }
+
+    portENTER_CRITICAL(&gatewayProbeLock_);
+    gatewayProbeSucceeded_ = false;
+    gatewayProbeFinished_ = false;
+    portEXIT_CRITICAL(&gatewayProbeLock_);
+    gatewayProbeGeneration_ = gatewayLeaseGeneration_;
+    gatewayProbeInFlight_ = true;
+
+    err = esp_ping_start(handle);
+    if (err != ESP_OK)
+    {
+        gatewayProbeInFlight_ = false;
+        esp_ping_delete_session(handle);
+        log_.print(F("Could not start Wi-Fi gateway probe: "));
+        log_.println(esp_err_to_name(err));
+        return false;
+    }
+
+    return true;
+}
+
+void WiFiPortalService::onGatewayPingSuccess(esp_ping_handle_t, void *args)
+{
+    WiFiPortalService *service = static_cast<WiFiPortalService *>(args);
+    portENTER_CRITICAL(&service->gatewayProbeLock_);
+    service->gatewayProbeSucceeded_ = true;
+    portEXIT_CRITICAL(&service->gatewayProbeLock_);
+}
+
+void WiFiPortalService::onGatewayPingTimeout(esp_ping_handle_t, void *)
+{
+}
+
+void WiFiPortalService::onGatewayPingEnd(esp_ping_handle_t handle, void *args)
+{
+    WiFiPortalService *service = static_cast<WiFiPortalService *>(args);
+    esp_ping_delete_session(handle);
+
+    portENTER_CRITICAL(&service->gatewayProbeLock_);
+    service->gatewayProbeResultGeneration_ = service->gatewayProbeGeneration_;
+    service->gatewayProbeFinished_ = true;
+    portEXIT_CRITICAL(&service->gatewayProbeLock_);
+}
+
 void WiFiPortalService::attemptReconnect()
 {
-    lastReconnectAttemptMs_ = millis();
+    const unsigned long now = millis();
+    lastReconnectAttemptMs_ = now == 0 ? 1 : now;
+    waitingForIpSinceMs_ = lastReconnectAttemptMs_;
     log_.println("Wi-Fi reconnect pending; attempting to rejoin.");
 
     WiFiReconnectPolicy::StationMode mode = WiFiReconnectPolicy::reconnectMode(manager_.getConfigPortalActive());
