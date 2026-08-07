@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "UsbCdcHost.h"
+#include "UsbDescriptorClientPolicy.h"
 #include <array>
 #include <cstring>
 #include "usb/vcp.hpp"       // VCP service (C++)
@@ -133,13 +134,20 @@ bool UsbCdcHost::begin()
         return false;
     }
 
-    usb_host_client_config_t cfg = {
-        .is_synchronous = false,
-        .max_num_event_msg = 16,
-        .async = {.client_event_callback = &UsbCdcHost::DbgClientCb, .callback_arg = this}};
-    if (usb_host_client_register(&cfg, &dbg_client_) == ESP_OK)
+    if (UsbDescriptorClientPolicy::isEnabled())
     {
-        xTaskCreatePinnedToCore(DbgClientTaskThunk, "usb_dbg", 4096, this, 19, &dbg_task_, tskNO_AFFINITY);
+        usb_host_client_config_t cfg = {
+            .is_synchronous = false,
+            .max_num_event_msg = 16,
+            .async = {.client_event_callback = &UsbCdcHost::DbgClientCb, .callback_arg = this}};
+        if (usb_host_client_register(&cfg, &dbg_client_) == ESP_OK)
+        {
+            xTaskCreatePinnedToCore(DbgClientTaskThunk, "usb_dbg", 4096, this, 19, &dbg_task_, tskNO_AFFINITY);
+        }
+    }
+    else
+    {
+        ESP_LOGW(TAG, "USB descriptor client disabled for diagnostic build");
     }
 
     if (xTaskCreatePinnedToCore(UsbLibTaskThunk, "usb_lib", 4096, this, 20, &lib_task_, tskNO_AFFINITY) != pdPASS ||
