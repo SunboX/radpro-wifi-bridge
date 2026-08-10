@@ -40,6 +40,7 @@
 #include "Logging/DebugLogStream.h"
 #include "Publishing/PublisherHealth.h"
 #include "Runtime/CooperativePump.h"
+#include "RtcWatchdogRecovery.h"
 #include "UsbRecoveryPolicy.h"
 
 #ifndef BRIDGE_FIRMWARE_VERSION
@@ -142,6 +143,10 @@ void setup()
     esp_ota_mark_app_valid_cancel_rollback();
 
     DBG.println("Initializing RadPro WiFi Bridge…");
+    if (RtcWatchdogRecovery::isActive())
+        DBG.println("RTC watchdog recovery active (30000 ms, fed from CPU0 tick)");
+    else
+        DBG.println("WARNING: RTC watchdog recovery unavailable; retained RTC watchdog disabled");
 
     if (!BridgeFileSystem::mount(DBG, "setup-initial", true))
     {

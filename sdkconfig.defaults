@@ -24,6 +24,12 @@ CONFIG_ARDUINO_LOOP_STACK_SIZE=65536
 # WiFiManager config portal runs on the ESP-IDF "main" task; bump its stack so
 # route registration and template rendering don't blow the default 3.5 KB.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=12288
+# Keep the independent RTC watchdog alive after app_main starts. A CPU0 tick
+# hook feeds it during healthy operation; if the SYSTIMER/tick path stalls, its
+# RESET_RTC action can recover more completely than the Timer Group watchdogs.
+CONFIG_BOOTLOADER_WDT_ENABLE=y
+CONFIG_BOOTLOADER_WDT_DISABLE_IN_USER_CODE=y
+CONFIG_BOOTLOADER_WDT_TIME_MS=30000
 # Keep flash protection enabled; OTA writes go to the inactive slot only.
 CONFIG_SPI_FLASH_DANGEROUS_WRITE_ABORTS=y
 

@@ -4,6 +4,8 @@
 
 #include <Arduino.h>
 
+#include "RtcWatchdogRecovery.h"
+
 // Forward declarations (Arduino.h usually declares these, but this is explicit)
 void setup();
 void loop();
@@ -12,6 +14,10 @@ extern "C" void app_main(void)
 {
     // Initialize Arduino (pins, serial, timers, etc.)
     initArduino();
+
+    // Keep the boot RTC watchdog as a stronger recovery path. The CPU0 tick
+    // hook stops feeding it if the SYSTIMER/tick path stalls.
+    RtcWatchdogRecovery::begin();
 
     // Run your Arduino sketch entry points
     setup();
