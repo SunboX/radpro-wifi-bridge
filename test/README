@@ -1,11 +1,28 @@
 
-This directory is intended for PlatformIO Test Runner and project tests.
+Host and portal tests
 
-Unit Testing is a software testing method by which individual units of
-source code, sets of one or more MCU program modules together with associated
-control data, usage procedures, and operating procedures, are tested to
-determine whether they are fit for use. Unit testing finds problems early
-in the development cycle.
+Install the PlatformIO project dependencies first (pio pkg install). Then run
+the standalone C++17 and Node.js tests from the repository root:
 
-More information about PlatformIO Unit Testing:
-- https://docs.platformio.org/en/latest/advanced/unit-testing/index.html
+    python3 tools/run_host_tests.py
+
+Requires Python 3, a C++17 compiler, Node.js, and ArduinoJson in the project's
+.pio/libdeps/esp32-s3-devkitc-1 directory. No physical bridge is needed or flashed.
+Use --cxx or --node to select a compiler or Node.js executable. On macOS,
+--sdk can select an SDK compatible
+with the installed compiler/linker.
+
+To run just the metrics regression tests:
+
+    python3 tools/run_host_tests.py --filter device_info_prometheus
+
+To also parse the generated responses with an installed official promtool:
+
+    python3 tools/run_host_tests.py --promtool /path/to/promtool
+
+The Prometheus tests compile the actual DeviceInfoPage and DeviceInfoStore,
+with host shims only for Arduino, FreeRTOS, WiFiManager/WebServer and LittleFS.
+They cover empty readings at boot, USB disconnect, cleared measurements,
+independently missing values, real zero readings, numeric precision, escaping
+of every label, and UTF-8. The optional promtool checks parse ten captured
+responses. Test binaries, logs and responses are written under build/host-tests.

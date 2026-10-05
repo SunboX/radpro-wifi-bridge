@@ -194,6 +194,18 @@ public:
         return value_.c_str();
     }
 
+    size_t write(uint8_t ch)
+    {
+        value_.push_back(static_cast<char>(ch));
+        return 1;
+    }
+
+    size_t write(const uint8_t *data, size_t size)
+    {
+        value_.append(reinterpret_cast<const char *>(data), size);
+        return size;
+    }
+
     friend bool operator==(const String &lhs, const String &rhs)
     {
         return lhs.value_ == rhs.value_;

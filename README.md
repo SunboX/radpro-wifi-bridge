@@ -33,6 +33,7 @@ The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides s
 -   **MQTT publisher** with templated topics. Every successful RadPro response is forwarded at the configured `readIntervalMs`; publish success/failure drives LED pulses and console messages.
 -   **Cloud publishers** for MQTT, OpenSenseMap, OpenRadiation, GMCMap, and Radmon.org with per-service toggles in the web portal.
 -   **Home Assistant discovery** payloads so MQTT entities appear automatically once the bridge is online.
+-   **Prometheus metrics** at `/metrics` for radiation and battery readings, with device information labels. See [docs/prometheus.md](docs/prometheus.md) for scrape configuration and metric details.
 -   **OTA bridge firmware updates** via the web portal (or browser-based ESP Web Tools installer) so you can stay current without reflashing over USB.
 -   **RGB LED state machine** (WS2812 on GPIO 48) that communicates boot, Wi-Fi, USB, and error states without needing the serial console.
 

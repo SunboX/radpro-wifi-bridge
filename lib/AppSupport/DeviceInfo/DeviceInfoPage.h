@@ -16,6 +16,7 @@ public:
 
     void handlePage(WiFiManager *manager);
     void handleJson(WiFiManager *manager);
+    void handlePrometheus(WiFiManager *manager);
 
 private:
     DeviceInfoStore &store_;

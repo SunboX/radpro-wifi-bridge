@@ -616,7 +616,7 @@ void WiFiPortalService::attachParameters()
             return;
         }
         routesRegistered_ = true;
-        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /openradiation /openradiation/dry-run /openradiation/latest /gmc /safecast /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /logs /logs.json /ota /ota/status /ota/fetch /ota/upload/* /restart"));
+        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /openradiation /openradiation/dry-run /openradiation/latest /gmc /safecast /metrics /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /logs /logs.json /ota /ota/status /ota/fetch /ota/upload/* /restart"));
 
         manager_.server->on("/mqtt", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /mqtt"));
@@ -786,6 +786,11 @@ void WiFiPortalService::attachParameters()
             if (!requirePortalPost("/safecast", {"safecastAction", "safecastApiBaseUrl", "safecastCustomApiBaseUrl", "safecastApiKey", "safecastDeviceId", "safecastLatitude", "safecastLongitude", "safecastHeightCm", "safecastLocationName", "safecastUnit", "safecastUploadIntervalSeconds"}))
                 return;
             handleSafecastPost();
+        });
+
+        manager_.server->on("/metrics", HTTP_GET, [this]() {
+            log_.println(F("HTTP GET /metrics"));
+            deviceInfoPage_.handlePrometheus(&manager_);
         });
 
         manager_.server->on("/device", HTTP_GET, [this]() {
