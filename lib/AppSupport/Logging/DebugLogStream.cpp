@@ -4,6 +4,11 @@
 
 #include "Logging/DebugLogStream.h"
 
+#include <cstdio>
+#include <ctime>
+#include <sys/time.h>
+#include <esp_timer.h>
+
 DebugLogStream::DebugLogStream(HardwareSerial &serial, size_t maxEntries)
     : serial_(serial),
       maxEntries_(maxEntries ? maxEntries : 1),
@@ -55,27 +60,64 @@ void DebugLogStream::flush()
 
 size_t DebugLogStream::write(uint8_t ch)
 {
-    size_t written = serial_.write(ch);
-    if (mutex_ && xSemaphoreTake(mutex_, portMAX_DELAY) == pdTRUE)
-    {
-        appendCharLocked(static_cast<char>(ch));
-        xSemaphoreGive(mutex_);
-    }
-    return written;
+    return write(&ch, 1);
 }
 
 size_t DebugLogStream::write(const uint8_t *buffer, size_t size)
 {
-    size_t written = serial_.write(buffer, size);
-    if (size && mutex_ && xSemaphoreTake(mutex_, portMAX_DELAY) == pdTRUE)
+    if (!size)
+        return 0;
+    if (!mutex_ || xSemaphoreTake(mutex_, portMAX_DELAY) != pdTRUE)
+        return serial_.write(buffer, size);
+
+    size_t written = 0;
+    while (written < size)
     {
-        for (size_t i = 0; i < size; ++i)
-        {
-            appendCharLocked(static_cast<char>(buffer[i]));
-        }
-        xSemaphoreGive(mutex_);
+        if (atLineStart_)
+            startLineLocked();
+
+        size_t end = written;
+        while (end < size && buffer[end] != '\n')
+            ++end;
+        if (end < size)
+            ++end;
+
+        const size_t requested = end - written;
+        const size_t count = serial_.write(buffer + written, requested);
+        for (size_t i = 0; i < count; ++i)
+            appendCharLocked(static_cast<char>(buffer[written + i]));
+        written += count;
+        if (count < requested)
+            break;
     }
+    xSemaphoreGive(mutex_);
     return written;
+}
+
+void DebugLogStream::startLineLocked()
+{
+    char prefix[48];
+    timeval now{};
+    constexpr time_t kMinValidEpoch = 1704067200; // 2024-01-01, as in TimeSync.
+    if (gettimeofday(&now, nullptr) == 0 && now.tv_sec >= kMinValidEpoch)
+    {
+        tm utc{};
+        gmtime_r(&now.tv_sec, &utc);
+        snprintf(prefix, sizeof(prefix), "[%02d:%02d:%02d.%03ld UTC] ",
+                 utc.tm_hour, utc.tm_min, utc.tm_sec, static_cast<long>(now.tv_usec / 1000));
+    }
+    else
+    {
+        const uint64_t uptimeMs = static_cast<uint64_t>(esp_timer_get_time()) / 1000;
+        snprintf(prefix, sizeof(prefix), "[up %02llu:%02u:%02u.%03u] ",
+                 static_cast<unsigned long long>(uptimeMs / 3600000),
+                 static_cast<unsigned>((uptimeMs / 60000) % 60),
+                 static_cast<unsigned>((uptimeMs / 1000) % 60),
+                 static_cast<unsigned>(uptimeMs % 1000));
+    }
+    linePrefix_ = prefix;
+    serial_.print(linePrefix_);
+    atLineStart_ = false;
 }
 
 void DebugLogStream::copyEntries(std::vector<DebugLogEntry> &out) const
@@ -139,10 +181,14 @@ void DebugLogStream::appendCharLocked(char c)
     if (c == '\r')
         return;
 
+    if (!currentLine_.length())
+        currentLine_ = linePrefix_;
+
     if (c == '\n')
     {
         pushLineLocked(currentLine_);
         currentLine_.clear();
+        atLineStart_ = true;
         return;
     }
 

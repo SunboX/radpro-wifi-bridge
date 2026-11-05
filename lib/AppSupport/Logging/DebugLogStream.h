@@ -42,12 +42,15 @@ public:
     size_t maxEntries() const { return maxEntries_; }
 
 private:
+    void startLineLocked();
     void appendCharLocked(char c);
     void pushLineLocked(const String &line);
 
     HardwareSerial &serial_;
     size_t maxEntries_;
     String currentLine_;
+    String linePrefix_;
+    bool atLineStart_ = true;
     std::vector<DebugLogEntry> entries_;
     uint32_t nextId_;
     SemaphoreHandle_t mutex_;

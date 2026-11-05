@@ -117,6 +117,11 @@ public:
         return value_.size();
     }
 
+    void clear()
+    {
+        value_.clear();
+    }
+
     char operator[](size_t index) const
     {
         return value_[index];
@@ -252,7 +257,7 @@ public:
     virtual ~Print() = default;
     virtual size_t write(uint8_t ch) = 0;
 
-    size_t write(const uint8_t *buffer, size_t size)
+    virtual size_t write(const uint8_t *buffer, size_t size)
     {
         size_t written = 0;
         for (size_t i = 0; i < size; ++i)
@@ -313,6 +318,34 @@ public:
         size_t written = print(text);
         return written + println();
     }
+};
+
+class Stream : public Print
+{
+public:
+    virtual int available() = 0;
+    virtual int read() = 0;
+    virtual int peek() = 0;
+    virtual void flush() = 0;
+};
+
+class HardwareSerial : public Stream
+{
+public:
+    void begin(unsigned long) {}
+    void begin(unsigned long, uint32_t) {}
+    void end() {}
+    int available() override { return 0; }
+    int read() override { return -1; }
+    int peek() override { return -1; }
+    void flush() override {}
+    size_t write(uint8_t ch) override
+    {
+        output += static_cast<char>(ch);
+        return 1;
+    }
+    using Print::write;
+    std::string output;
 };
 
 inline unsigned long g_test_millis = 0;

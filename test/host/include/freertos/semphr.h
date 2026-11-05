@@ -23,3 +23,7 @@ inline int xSemaphoreTake(SemaphoreHandle_t, TickType_t)
 inline void xSemaphoreGive(SemaphoreHandle_t)
 {
 }
+
+inline void vSemaphoreDelete(SemaphoreHandle_t)
+{
+}

@@ -211,6 +211,13 @@ While waiting for the boot delay the console prints `Starting in …` once per s
 
 Raw USB logging is invaluable when reverse-engineering RadPro responses; disable it once finished to minimise serial traffic.
 
+Application debug messages carry the same timestamp in the serial console and
+web debug console: `[HH:MM:SS.mmm UTC]` once the clock is synchronized. Before
+that, `[up HH:MM:SS.mmm]` shows elapsed time since boot. A timestamp is captured
+when a line starts, so separate `print()` calls share one timestamp. Existing
+entries keep their original timestamps when the web console is opened later.
+ESP-IDF and bootloader messages retain their own logging format.
+
 ---
 
 ## Device Telemetry Flow

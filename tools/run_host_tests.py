@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXTRA_SOURCES = {
     "bridge_led_policy_test": ["src/BridgeDiagnostics.cpp", "lib/AppSupport/Mqtt/MqttFaultPolicy.cpp"],
     "cooperative_pump_test": ["lib/AppSupport/Runtime/CooperativePump.cpp"],
+    "debug_log_stream_test": ["lib/AppSupport/Logging/DebugLogStream.cpp"],
     "device_manager_gc01_metadata_test": ["lib/DeviceManager/DeviceManager.cpp"],
     "device_info_prometheus_test": ["lib/AppSupport/DeviceInfo/DeviceInfoPage.cpp", "lib/AppSupport/DeviceInfo/DeviceInfoStore.cpp"],
     "led_controller_test": ["lib/AppSupport/Led/LedController.cpp"],
@@ -60,6 +61,8 @@ def main():
             if name == "led_controller_test":
                 dirs[0], dirs[1] = dirs[1], dirs[0]
             command = [args.cxx, "-std=c++17", "-DF(x)=x"]
+            if name == "debug_log_stream_test":
+                command += ["-Dgettimeofday=radpro_test_gettimeofday"]
             if args.sdk:
                 command += ["-isysroot", args.sdk]
             command += [arg for directory in dirs for arg in ("-I", str(directory))]
