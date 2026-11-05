@@ -114,12 +114,14 @@ static int calculate_baud_divisor(unsigned int baud_rate, unsigned char *factor,
 // It strictly follows interface defined in interface/usb/cdc_acm_host_inteface.h
 static esp_err_t ch34x_set_control_line_state(cdc_acm_dev_hdl_t cdc_hdl, bool dtr, bool rts)
 {
-    uint16_t wValue = 0;
+    // CH34x modem-control bits are active low (same polarity as upstream esp-usb).
+    // GQ GMC-800 uses these lines for boot selection and reset.
+    uint16_t wValue = CH34X_CONTROL_DTR | CH34X_CONTROL_RTS;
     if (dtr) {
-        wValue |= CH34X_CONTROL_DTR;
+        wValue &= ~CH34X_CONTROL_DTR;
     }
     if (rts) {
-        wValue |= CH34X_CONTROL_RTS;
+        wValue &= ~CH34X_CONTROL_RTS;
     }
     return cdc_acm_host_send_custom_request(cdc_hdl, CH34X_WRITE_REQ, CH34X_CMD_MODEM_OUT, wValue, cdc_hdl->notif.intf_desc->bInterfaceNumber, 0, NULL);
 }

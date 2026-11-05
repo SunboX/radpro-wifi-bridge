@@ -39,7 +39,7 @@
         bridgeFirmware: readInitialBridgeFirmware()
     }
 
-    const normalizeSubtitleLabel = (value) => {
+    function normalizeSubtitleLabel(value) {
         if (!value || typeof value !== 'string') return ''
         return value.trim()
     }

@@ -6,6 +6,7 @@
 
 #pragma once
 #include <Arduino.h>
+#include <atomic>
 #include <utility>
 #include <vector>
 #include "esp_log.h"
@@ -46,6 +47,15 @@ public:
 
     // Line coding (ignored if device doesn’t support it)
     bool setBaud(uint32_t baud);
+    // Exclusive, synchronous binary transport for the ROM firmware updater.
+    bool beginFirmwareSession();
+    void endFirmwareSession();
+    bool firmwareWrite(const uint8_t *data, size_t len);
+    bool firmwareRead(uint8_t *data, size_t len, uint32_t timeout_ms);
+    void firmwareDrain();
+    bool setFirmwareLineCoding(uint32_t baud, bool evenParity);
+    bool setFirmwareSignals(bool dtr, bool rts);
+    uint32_t connectionGeneration() const { return connection_generation_.load(); }
     bool restart();
     bool requestRestart();
     bool restartRunsInBackground() const { return true; }
@@ -130,6 +140,10 @@ private:
     };
     QueueHandle_t tx_q_ = nullptr;
     SemaphoreHandle_t tx_mutex_ = nullptr;
+    QueueHandle_t firmware_rx_ = nullptr;
+    std::atomic<bool> firmware_mode_{false};
+    std::atomic<bool> firmware_rx_overflow_{false};
+    std::atomic<uint32_t> connection_generation_{0};
 
     struct VidPid
     {

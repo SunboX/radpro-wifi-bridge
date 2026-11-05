@@ -1,0 +1,60 @@
+<!-- SPDX-FileCopyrightText: 2026 André Fiedler -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!DOCTYPE html>
+<html lang="{{LOCALE}}">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>RadPro Detector Update</title>
+        <link rel="stylesheet" href="/portal/portal.css" />
+        <style>
+            [hidden] { display: none !important; }
+            button:disabled { opacity: 0.45; cursor: not-allowed; }
+            .update-support--unsupported {
+                padding: 16px;
+                border: 1px solid #ffca28;
+                border-radius: 8px;
+                background: rgba(255, 202, 40, 0.12);
+                color: #ffd86b;
+                font-weight: 600;
+                line-height: 1.5;
+            }
+        </style>
+    </head>
+    <body class="invert" data-i18n-title="T_PAGE_RADPRO_UPDATE" data-portal-locale-value="{{LOCALE}}">
+        <div class="wrap">
+            <h1 data-i18n="T_PAGE_RADPRO_UPDATE">RadPro Detector Update</h1>
+            <input type="hidden" id="csrfToken" value="{{CSRF_TOKEN}}" />
+            <p id="updateScope" hidden data-i18n="T_RADPRO_SCOPE">Update the connected detector to Rad Pro 3.1.1. Requires stable Rad Pro 3.0.2 or later (3.x) on Bosean FS-600, FS-1000, FS-5000 or GQ GMC-800.</p>
+            <section>
+                <dl><dt data-i18n="T_FIELD_MODEL">Model</dt><dd id="updateModel">—</dd>
+                    <dt data-i18n="T_FIELD_FIRMWARE">Firmware</dt><dd id="updateFirmware">—</dd></dl>
+                <p id="updateSupport" role="status" hidden></p>
+                <div id="updateInstallation" hidden>
+                    <label for="updateLocale" data-i18n="T_RADPRO_LANGUAGE">Firmware language</label>
+                    <select id="updateLocale" disabled></select>
+                    <p><a id="updateDownload" hidden data-i18n="T_RADPRO_DOWNLOAD">Download the official firmware file</a></p>
+                    <p data-i18n="T_RADPRO_SELECT">Download the file above, then select it here. The bridge checks its model, size and SHA-256 before entering the bootloader.</p>
+                    <input type="file" id="updateFile" accept=".bin" disabled />
+                    <p data-i18n="T_RADPRO_POWER">Keep the detector and bridge powered and connected throughout the update. Measurements pause during flashing. An interrupted flash may need recovery with the upstream installer. Settings and log pages are not deliberately erased; back up important data first.</p>
+                    <p><a href="https://github.com/Gissio/radpro/blob/3.1.1/docs/legal.md" target="_blank" rel="noopener" data-i18n="T_RADPRO_TERMS">Rad Pro terms and conditions</a></p>
+                    <label class="toggle"><input type="checkbox" id="updateConfirm" /> <span data-i18n="T_RADPRO_CONFIRM">I accept the Rad Pro terms and want to install 3.1.1 on this detector.</span></label>
+                    <button type="button" id="updateStart" disabled data-i18n="T_RADPRO_START">Upload &amp; install on detector</button>
+                    <button type="button" id="updateRetry" hidden data-i18n="T_RADPRO_RETRY">Retry staged firmware</button>
+                    <button type="button" id="updateCancel" data-i18n="T_RADPRO_CANCEL">Discard staged upload</button>
+                    <progress id="updateProgress" max="100" value="0" style="width:100%"></progress>
+                    <p id="updateStatus" role="status" aria-live="polite"></p>
+                </div>
+                <p id="updateError" role="alert"></p>
+            </section>
+            <section>
+                <h2 data-i18n="T_RADPRO_OTHER">Other devices and recovery</h2>
+                <p data-i18n="T_RADPRO_UNSUPPORTED">FNIRSI GC-01, JOY-IT JT-RAD01 and GC-03 use vendor USB drive bootloaders; the upstream guides require Windows. FS2011 and YT-203B need an external programmer. These methods are not implemented by this bridge.</p>
+                <p><a href="https://github.com/Gissio/radpro/tree/3.1.1/docs/devices" target="_blank" rel="noopener" data-i18n="T_RADPRO_GUIDES">Device installation guides</a> · <a href="https://gissio.github.io/radpro-installer/" target="_blank" rel="noopener" data-i18n="T_RADPRO_RECOVERY">Official web installer / recovery</a></p>
+            </section>
+            <form action="/" method="get"><button type="submit" data-i18n="T_BUTTON_BACK">Back to Main Menu</button></form>
+        </div>
+        <script src="/portal/portal-locale.js"></script>
+        <script src="/portal/js/radpro-update.js"></script>
+    </body>
+</html>

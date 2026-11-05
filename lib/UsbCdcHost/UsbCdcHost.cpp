@@ -107,7 +107,8 @@ bool UsbCdcHost::begin()
 
     tx_q_ = xQueueCreate(16, sizeof(TxItem *));
     tx_mutex_ = xSemaphoreCreateMutex();
-    if (!tx_q_ || !tx_mutex_)
+    firmware_rx_ = xQueueCreate(1024, sizeof(uint8_t));
+    if (!tx_q_ || !tx_mutex_ || !firmware_rx_)
     {
         ESP_LOGE(TAG, "Failed to create TX queue/mutex");
         stop();
@@ -202,6 +203,12 @@ void UsbCdcHost::stop()
         vQueueDelete(tx_q_);
         tx_q_ = nullptr;
     }
+    if (firmware_rx_)
+    {
+        vQueueDelete(firmware_rx_);
+        firmware_rx_ = nullptr;
+    }
+    firmware_mode_ = false;
     if (tx_mutex_)
     {
         vSemaphoreDelete(tx_mutex_);
@@ -236,7 +243,7 @@ void UsbCdcHost::stop()
 
 bool UsbCdcHost::enqueueRaw(const uint8_t *data, size_t len, uint32_t timeout_ms)
 {
-    if (!data || !len || !tx_q_ || !tx_mutex_)
+    if (firmware_mode_ || !data || !len || !tx_q_ || !tx_mutex_)
         return false;
 
     auto *item = new TxItem();
@@ -255,16 +262,15 @@ bool UsbCdcHost::enqueueRaw(const uint8_t *data, size_t len, uint32_t timeout_ms
     bool ok = false;
     if (xSemaphoreTake(tx_mutex_, pdMS_TO_TICKS(200)) == pdTRUE)
     {
-        ok = (xQueueSend(tx_q_, &item, pdMS_TO_TICKS(50)) == pdTRUE);
-        if (!ok)
-        {
-            free(item->data);
-            delete item;
-        }
+        ok = !firmware_mode_ && (xQueueSend(tx_q_, &item, pdMS_TO_TICKS(50)) == pdTRUE);
         xSemaphoreGive(tx_mutex_);
     }
     if (!ok)
+    {
+        free(item->data);
+        delete item;
         ESP_LOGW(TAG, "enqueueRaw: queue full/busy; dropping");
+    }
     return ok;
 }
 
@@ -358,6 +364,84 @@ bool UsbCdcHost::sendCommand(const String &cmd, bool append_crlf, uint32_t timeo
         out += "\r\n";
     ESP_LOGI(TAG, "Queue cmd: %s", out.c_str());
     return enqueueRaw(reinterpret_cast<const uint8_t *>(out.c_str()), out.length(), timeout_ms);
+}
+
+bool UsbCdcHost::beginFirmwareSession()
+{
+    if (!isConnected() || !firmware_rx_ || !tx_mutex_ || restart_requested_)
+        return false;
+    xSemaphoreTake(tx_mutex_, portMAX_DELAY);
+    if (firmware_mode_.exchange(true))
+    {
+        xSemaphoreGive(tx_mutex_);
+        return false;
+    }
+    TxItem *item = nullptr;
+    while (xQueueReceive(tx_q_, &item, 0) == pdTRUE)
+    {
+        free(item->data);
+        delete item;
+    }
+    xSemaphoreGive(tx_mutex_);
+    // Let the final telemetry response finish before the first private command.
+    delay(300);
+    firmwareDrain();
+    return isConnected();
+}
+
+void UsbCdcHost::endFirmwareSession()
+{
+    setFirmwareLineCoding(115200, false);
+    firmwareDrain();
+    firmware_mode_ = false;
+}
+
+bool UsbCdcHost::firmwareWrite(const uint8_t *data, size_t len)
+{
+    if (!firmware_mode_ || !isConnected() || firmware_rx_overflow_)
+        return false;
+    if (use_vcp_ && vcp_dev_)
+        return vcp_dev_->tx_blocking(const_cast<uint8_t *>(data), len, 2000) == ESP_OK;
+    return dev_ && cdc_acm_host_data_tx_blocking(dev_, data, len, 2000) == ESP_OK;
+}
+
+bool UsbCdcHost::firmwareRead(uint8_t *data, size_t len, uint32_t timeout_ms)
+{
+    const unsigned long started = millis();
+    for (size_t i = 0; i < len; ++i)
+    {
+        const unsigned long elapsed = millis() - started;
+        if (!firmware_mode_ || !isConnected() || firmware_rx_overflow_ || elapsed >= timeout_ms ||
+            xQueueReceive(firmware_rx_, data + i, pdMS_TO_TICKS(timeout_ms - elapsed)) != pdTRUE)
+            return false;
+    }
+    return true;
+}
+
+void UsbCdcHost::firmwareDrain()
+{
+    uint8_t value;
+    if (firmware_rx_)
+        while (xQueueReceive(firmware_rx_, &value, 0) == pdTRUE) {}
+    firmware_rx_overflow_ = false;
+}
+
+bool UsbCdcHost::setFirmwareLineCoding(uint32_t baud, bool evenParity)
+{
+    cdc_acm_line_coding_t lc{};
+    lc.dwDTERate = baud;
+    lc.bDataBits = 8;
+    lc.bParityType = evenParity ? 2 : 0;
+    if (use_vcp_ && vcp_dev_)
+        return vcp_dev_->line_coding_set(&lc) == ESP_OK;
+    return dev_ && cdc_acm_host_line_coding_set(dev_, &lc) == ESP_OK;
+}
+
+bool UsbCdcHost::setFirmwareSignals(bool dtr, bool rts)
+{
+    if (use_vcp_ && vcp_dev_)
+        return vcp_dev_->set_control_line_state(dtr, rts) == ESP_OK;
+    return dev_ && cdc_acm_host_set_control_line_state(dev_, dtr, rts) == ESP_OK;
 }
 
 bool UsbCdcHost::setBaud(uint32_t baud)
@@ -518,6 +602,7 @@ void UsbCdcHost::cdcTask()
                             lc.bDataBits = 8;
                             (void)vcp_dev_->line_coding_set(&lc);
                     ready_after_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(40);
+                            ++connection_generation_;
                             if (on_connected_)
                                 on_connected_();
                             return true;
@@ -549,6 +634,7 @@ void UsbCdcHost::cdcTask()
                         }
                         (void)configureLineCoding(target_baud_);
                     ready_after_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(40);
+                        ++connection_generation_;
                         if (on_connected_)
                             on_connected_();
                         return true;
@@ -657,6 +743,14 @@ void UsbCdcHost::txTask()
             line_buf_.clear();
         }
 
+        xSemaphoreTake(tx_mutex_, portMAX_DELAY);
+        if (firmware_mode_)
+        {
+            xSemaphoreGive(tx_mutex_);
+            free(it->data);
+            delete it;
+            continue;
+        }
         ESP_LOGI(TAG, "TX %u bytes (intf=%u)", (unsigned)it->len, (unsigned)opened_intf_idx_);
         esp_err_t err = ESP_FAIL;
         if (use_vcp_ && vcp_dev_)
@@ -667,6 +761,7 @@ void UsbCdcHost::txTask()
         {
             err = cdc_acm_host_data_tx_blocking(dev_, reinterpret_cast<const uint8_t *>(it->data), it->len, it->timeout_ms);
         }
+        xSemaphoreGive(tx_mutex_);
         if (err != ESP_OK)
         {
             ESP_LOGW(TAG, "TX failed: %s", esp_err_to_name(err));
@@ -711,6 +806,13 @@ void UsbCdcHost::DevEventCb(const cdc_acm_host_dev_event_data_t *event, void *us
 
 bool UsbCdcHost::onRx(const uint8_t *data, size_t len)
 {
+    if (firmware_mode_)
+    {
+        for (size_t i = 0; i < len; ++i)
+            if (xQueueSend(firmware_rx_, data + i, 0) != pdTRUE)
+                firmware_rx_overflow_ = true;
+        return true;
+    }
     if (on_raw_)
         on_raw_(data, len);              // raw bytes
     last_rx_tick_ = xTaskGetTickCount(); // remember last RX
@@ -746,6 +848,7 @@ void UsbCdcHost::onDevEvent(const cdc_acm_host_dev_event_data_t *event)
     switch (event->type)
     {
     case CDC_ACM_HOST_DEVICE_DISCONNECTED:
+        ++connection_generation_;
         ESP_LOGI(TAG, "CDC device disconnected");
         if (event->data.cdc_hdl)
             cdc_acm_host_close(event->data.cdc_hdl);

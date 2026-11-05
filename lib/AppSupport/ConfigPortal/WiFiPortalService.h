@@ -26,6 +26,7 @@
 #include "ConfigPortal/WiFiReconnectPolicy.h"
 
 class SafecastPublisher;
+class RadProUpdateService;
 
 class WiFiPortalService
 {
@@ -52,6 +53,7 @@ public:
     void enableStatusLogging();
     void setOtaStartCallback(std::function<void()> cb);
     void setSafecastPublisher(SafecastPublisher &publisher);
+    void setRadProUpdater(RadProUpdateService &updater) { radProUpdater_ = &updater; }
 
 private:
     void prepareConfigPortalAp(const String &ssid);
@@ -89,6 +91,7 @@ private:
     bool importConfigJson(const String &body, String &errorMessage);
     static String htmlEscape(const String &value);
     void sendOtaPage(const String &message = String());
+    void registerRadProUpdateRoutes();
     bool sendTemplate(const char *path, const TemplateReplacements &replacements);
     bool readFile(const char *path, String &out);
     void sendTemplateError(const char *path);
@@ -155,6 +158,7 @@ private:
     LedController &led_;
     const PublisherHealth &openRadiationHealth_;
     SafecastPublisher *safecastPublisher_ = nullptr;
+    RadProUpdateService *radProUpdater_ = nullptr;
 
     bool paramsAttached_;
     String csrfToken_;

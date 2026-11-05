@@ -35,6 +35,7 @@ The ESP32-S3 enumerates the detector as a vendor-specific CDC device, provides s
 -   **Home Assistant discovery** payloads so MQTT entities appear automatically once the bridge is online.
 -   **Prometheus metrics** at `/metrics` for radiation and battery readings, with device information labels. See [docs/prometheus.md](docs/prometheus.md) for scrape configuration and metric details.
 -   **OTA bridge firmware updates** via the web portal (or browser-based ESP Web Tools installer) so you can stay current without reflashing over USB.
+-   **Experimental detector firmware updates** to Rad Pro 3.1.1 for compatible Bosean and GQ models, with image checks and readback verification. See [supported devices and manual testing](docs/radpro-detector-update.md).
 -   **RGB LED state machine** (WS2812 on GPIO 48) that communicates boot, Wi-Fi, USB, and error states without needing the serial console.
 
 ---

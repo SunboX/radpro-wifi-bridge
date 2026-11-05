@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "ConfigPortal/WiFiPortalService.h"
+#include "RadProUpdate/RadProUpdateService.h"
 
 #include "ConfigPortal/PortalSecurity.h"
 #include "ConfigPortal/WiFiReconnectPolicy.h"
@@ -616,6 +617,7 @@ void WiFiPortalService::attachParameters()
             return;
         }
         routesRegistered_ = true;
+        registerRadProUpdateRoutes();
         log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /openradiation /openradiation/dry-run /openradiation/latest /gmc /safecast /metrics /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /logs /logs.json /ota /ota/status /ota/fetch /ota/upload/* /restart"));
 
         manager_.server->on("/mqtt", HTTP_GET, [this]() {
@@ -904,6 +906,11 @@ void WiFiPortalService::attachParameters()
         });
 
         manager_.server->on("/restart", HTTP_GET, [this]() {
+            if (radProUpdater_ && radProUpdater_->blocksBridgeUpdate())
+            {
+                manager_.server->send(409, "text/plain", "Finish or cancel the detector update first.");
+                return;
+            }
             log_.println(F("HTTP GET /restart"));
             manager_.server->send(200, "text/plain", "Restarting...\n");
             log_.println("Restart requested from Wi-Fi portal.");
@@ -1510,6 +1517,7 @@ void WiFiPortalService::handleConfigDownload()
         return;
 
     auto &server = *manager_.server;
+
     String json = exportConfigJson();
     server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     server.sendHeader("Pragma", "no-cache");
@@ -2516,6 +2524,15 @@ bool WiFiPortalService::requirePortalPost(const char *route,
     if (!PortalSecurity::isValidCsrfToken(server.arg(PortalSecurity::kCsrfFieldName), csrfToken_))
     {
         rejectPortalPost(route, 403, F("Invalid CSRF token."), jsonResponse);
+        return false;
+    }
+
+    // Filesystem OTA and settings/restart actions must not interfere with a detector flash.
+    if (radProUpdater_ &&
+        ((radProUpdater_->ownsUsb() && !String(route).startsWith("/radpro-update/")) ||
+         (radProUpdater_->blocksBridgeUpdate() && String(route).startsWith("/ota/"))))
+    {
+        rejectPortalPost(route, 409, "Finish or cancel the detector update first.", jsonResponse);
         return false;
     }
 

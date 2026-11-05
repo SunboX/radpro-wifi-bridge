@@ -41,6 +41,7 @@
 #include "Publishing/PublisherHealth.h"
 #include "Runtime/CooperativePump.h"
 #include "UsbRecoveryPolicy.h"
+#include "RadProUpdate/RadProUpdateService.h"
 
 #ifndef BRIDGE_FIRMWARE_VERSION
 #define BRIDGE_FIRMWARE_VERSION "0.0.0"
@@ -100,6 +101,7 @@ static const std::vector<std::pair<uint16_t, uint16_t>> kSupportedUsbVidPid = {
 static LedController ledController;
 static BridgeDiagnostics diagnostics(DBG, ledController);
 static DeviceInfoStore deviceInfoStore;
+static RadProUpdateService radProUpdater(usb, device_manager, deviceInfoStore);
 static bool lastDeviceReadyLogged = false;
 
 static AppConfig appConfig;
@@ -307,6 +309,7 @@ void setup()
         ledController.clearFault(FaultCode::NvsLoadFailure);
     }
 
+    portalService.setRadProUpdater(radProUpdater);
     portalService.begin();
     portalService.setSafecastPublisher(safecastPublisher);
     openRadiationPublisher.begin();
@@ -357,27 +360,41 @@ void setup()
 
 void loop()
 {
+    radProUpdater.poll();
+    bool detectorUpdating = radProUpdater.ownsUsb();
     const bool wifiConnected = WiFi.status() == WL_CONNECTED;
     timeSync.loop(wifiConnected);
     peripheralStarter.startIfNeeded(wifiConnected, timeSync.synced(), kSupportedUsbVidPid);
 
+    static bool wasDetectorUpdating = false;
+    if (detectorUpdating && !wasDetectorUpdating)
+    {
+        deviceActivityMonitor.reset();
+        deviceInfoStore.clearLiveData();
+        clearPendingMeasurementPublishers();
+        safecastPublisher.clearPendingData();
+        deviceReady = false;
+        commandError = false;
+    }
+    wasDetectorUpdating = detectorUpdating;
     if (!isRunning)
     {
         handleStartupLogic();
     }
-    else
+    else if (!detectorUpdating)
     {
         runMainLogic();
     }
 
-    if (!updateInProgress && peripheralStarter.started())
+    if (!updateInProgress && !detectorUpdating && peripheralStarter.started())
     {
         device_manager.loop();
     }
     portalService.syncIfRequested();
     portalService.maintain();
     portalService.process();
-    if (!updateInProgress && peripheralStarter.started())
+    detectorUpdating = radProUpdater.ownsUsb();
+    if (!updateInProgress && !detectorUpdating && peripheralStarter.started())
     {
         mqttPublisher.updateConfig();
         mqttPublisher.loop();
@@ -420,7 +437,7 @@ void loop()
         deviceReady = false;
         lastDeviceReadyLogged = false;
 
-        if (!updateInProgress &&
+        if (!updateInProgress && !detectorUpdating &&
             peripheralStarter.started() &&
             wifiConnected &&
             UsbRecoveryPolicy::shouldRestart(now,
@@ -447,7 +464,7 @@ void loop()
     {
         usbDisconnectedSinceMs = 0;
     }
-    if (usbConnected && peripheralStarter.started())
+    if (!detectorUpdating && usbConnected && peripheralStarter.started())
     {
         DeviceActivityFault previousActivityFault = deviceActivityMonitor.fault();
         DeviceActivityFault currentActivityFault = deviceActivityMonitor.evaluate(millis());

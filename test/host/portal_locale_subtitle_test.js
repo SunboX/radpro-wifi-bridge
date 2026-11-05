@@ -7,7 +7,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const vm = require('node:vm')
 
-function loadPortalLocaleChrome() {
+function loadPortalLocaleChrome(bootstrap = null) {
     const scriptPath = path.join(__dirname, '..', '..', 'data', 'portal', 'portal-locale.js')
     const source = fs.readFileSync(scriptPath, 'utf8')
     const sandbox = {
@@ -25,6 +25,7 @@ function loadPortalLocaleChrome() {
     }
 
     sandbox.window = sandbox
+    sandbox.portalHeadBootstrap = bootstrap
     sandbox.document = {
         body: {
             dataset: {},
@@ -93,4 +94,8 @@ function testCanSkipExistingIpFallbackWhileBootstrapPending() {
 testReplacesDashSeparatedIpWithVersion()
 testFallsBackToExistingLabelWhenVersionMissing()
 testCanSkipExistingIpFallbackWhileBootstrapPending()
+// The main menu loads the header bootstrap before this script. Its cached version
+// must be readable during state initialization, before helper assignments run.
+assert.ok(loadPortalLocaleChrome({ readCachedVersion: () => '1.15.14' }))
+assert.ok(loadPortalLocaleChrome({ state: { version: '1.15.14' } }))
 console.log('portal locale subtitle tests passed')
