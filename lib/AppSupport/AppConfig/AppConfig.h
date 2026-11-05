@@ -10,6 +10,9 @@
 #include <Preferences.h>
 
 constexpr uint32_t kMinReadIntervalMs = 500;
+constexpr uint32_t kDefaultUsbRecoveryTimeoutSeconds = 300;
+constexpr uint32_t kMinUsbRecoveryTimeoutSeconds = 60;
+constexpr uint32_t kMaxUsbRecoveryTimeoutSeconds = 3600;
 constexpr size_t kDeviceNameParamLen = 32;
 constexpr size_t kMqttHostParamLen = 64;
 constexpr size_t kMqttClientParamLen = 48;
@@ -49,6 +52,7 @@ struct AppConfig
     String mqttTopic = "radpro/%deviceid%";
     String mqttFullTopic = "%prefix%/%topic%/";
     uint32_t readIntervalMs = 1000;
+    uint32_t usbRecoveryTimeoutSeconds = kDefaultUsbRecoveryTimeoutSeconds;
     bool openSenseMapEnabled = false;
     String openSenseBoxId;
     String openSenseApiKey;

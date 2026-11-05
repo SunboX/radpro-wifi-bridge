@@ -1,0 +1,36 @@
+<!--
+SPDX-FileCopyrightText: 2026 André Fiedler
+
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<!DOCTYPE html>
+<html lang="{{LOCALE}}">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>USB Recovery</title>
+        <link rel="stylesheet" href="/portal/portal.css" />
+    </head>
+    <body class="invert" data-i18n-title="T_PAGE_USB_RECOVERY" data-portal-locale-value="{{LOCALE}}">
+        <div class="wrap wrap--compact">
+            <h1 data-i18n="T_PAGE_USB_RECOVERY">USB Recovery</h1>
+            <p data-i18n="T_USB_RECOVERY_HELP">Restart the bridge if a previously responding detector stops replying. The default is 5 minutes. USB host restarts do not reset this timer.</p>
+            <p class="notice {{NOTICE_CLASS}}" data-i18n="{{NOTICE_KEY}}"></p>
+            <form method="POST" action="/usb-recovery">
+                <input type="hidden" name="csrf" value="{{CSRF_TOKEN}}" />
+                <label class="toggle">
+                    <input id="enabled" name="enabled" type="checkbox" value="1" {{RECOVERY_ENABLED}} />
+                    <span data-i18n="T_USB_RECOVERY_ENABLE">Restart automatically after loss of detector communication</span>
+                </label>
+                <label for="timeoutMinutes" data-i18n="T_USB_RECOVERY_TIMEOUT">Restart after (minutes)</label>
+                <input id="timeoutMinutes" name="timeoutMinutes" type="number" min="1" max="60" step="1" required value="{{RECOVERY_MINUTES}}" />
+                <p data-i18n="T_USB_RECOVERY_NOTE">The timer starts only after the detector has replied. It is suspended during firmware updates and allows at least three polling intervals.</p>
+                <button type="submit" data-i18n="T_USB_RECOVERY_SAVE">Save USB recovery settings</button>
+            </form>
+            <form action="/" method="get" class="back-form">
+                <button type="submit" data-i18n="T_BUTTON_BACK">Back to Main Menu</button>
+            </form>
+        </div>
+        <script src="/portal/portal-locale.js"></script>
+    </body>
+</html>

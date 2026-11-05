@@ -85,6 +85,8 @@ private:
                           const String &resultHtml = String());
     void handleSafecastPost();
     void sendConfigBackupPage(const String &message = String());
+    void sendUsbRecoveryForm(const char *noticeKey = nullptr, bool error = false);
+    void handleUsbRecoveryPost();
     void handleConfigDownload();
     void handleConfigRestore();
     String exportConfigJson() const;

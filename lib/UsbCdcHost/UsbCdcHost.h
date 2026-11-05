@@ -75,6 +75,7 @@ public:
     // Status
     bool isConnected() const { return dev_ != nullptr || vcp_dev_ != nullptr; }
     bool hasObservedDevice() const { return observed_device_seq_ != 0 || isConnected(); }
+    unsigned long observationReadyAtMs() const { return observed_device_ready_ms_; }
     uint16_t connectedVid() const { return connected_vid_; }
     uint16_t connectedPid() const { return connected_pid_; }
     esp_err_t lastError() const { return last_err_; }

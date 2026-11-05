@@ -144,6 +144,16 @@ Enable the Radmon toggle, enter your station username plus data-sending password
 
 ---
 
+## USB Recovery
+
+The bridge restarts automatically if a previously responding detector stops
+replying for five minutes and USB host recovery does not restore communication.
+Use **USB Recovery** in the web interface to disable this watchdog or change the
+timeout. It stays inactive until the first detector response and during firmware
+updates. See [docs/usb-recovery.md](docs/usb-recovery.md) for details.
+
+---
+
 ## LED Feedback
 
 Base modes communicate long-running state (default brightness is gentle to avoid glare):

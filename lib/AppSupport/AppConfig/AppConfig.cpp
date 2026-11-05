@@ -43,6 +43,11 @@ bool AppConfigStore::load(AppConfig &cfg)
     cfg.mqttFullTopic.trim();
 
     cfg.readIntervalMs = prefs_.getUInt("readInterval", cfg.readIntervalMs);
+    cfg.usbRecoveryTimeoutSeconds = prefs_.getUInt("usbRecoverSec", cfg.usbRecoveryTimeoutSeconds);
+    if (cfg.usbRecoveryTimeoutSeconds != 0 &&
+        (cfg.usbRecoveryTimeoutSeconds < kMinUsbRecoveryTimeoutSeconds ||
+         cfg.usbRecoveryTimeoutSeconds > kMaxUsbRecoveryTimeoutSeconds))
+        cfg.usbRecoveryTimeoutSeconds = kDefaultUsbRecoveryTimeoutSeconds;
 
     cfg.openSenseMapEnabled = prefs_.getBool("osemEnabled", cfg.openSenseMapEnabled);
     cfg.openSenseBoxId = prefs_.getString("osemBoxId", cfg.openSenseBoxId);
@@ -132,6 +137,7 @@ bool AppConfigStore::save(const AppConfig &cfg)
     prefs_.putString("mqttTopic", cfg.mqttTopic);
     prefs_.putString("mqttFullTopic", cfg.mqttFullTopic);
     prefs_.putUInt("readInterval", cfg.readIntervalMs);
+    prefs_.putUInt("usbRecoverSec", cfg.usbRecoveryTimeoutSeconds);
     prefs_.putBool("osemEnabled", cfg.openSenseMapEnabled);
     prefs_.putString("osemBoxId", cfg.openSenseBoxId);
     prefs_.putString("osemApiKey", cfg.openSenseApiKey);

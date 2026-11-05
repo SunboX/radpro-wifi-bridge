@@ -6,6 +6,7 @@
 #include "UsbCdcHost.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_attr.h"
 #include "esp_ota_ops.h"
 #if defined(__has_include)
 #if __has_include(<esp_app_desc.h>)
@@ -34,6 +35,7 @@
 #include "PeripheralStarter.h"
 #include "Time/TimeSync.h"
 #include "DeviceHealth/DeviceActivityMonitor.h"
+#include "DeviceHealth/UsbRecoveryWatchdog.h"
 #include "DeviceInfo/DeviceInfoStore.h"
 #include "Ota/OtaUpdateService.h"
 #include "FileSystem/BridgeFileSystem.h"
@@ -129,6 +131,9 @@ static unsigned long lastUsbRestartAttemptMs = 0;
 static PeripheralStarter peripheralStarter(device_manager, usb, mqttPublisher, openSenseMapPublisher, gmcMapPublisher, radmonPublisher, ledController, DBG, ALLOW_EARLY_START, BRIDGE_FIRMWARE_VERSION);
 static LedMode lastLoggedMode = LedMode::Booting;
 static DeviceActivityMonitor deviceActivityMonitor;
+static UsbRecoveryWatchdog usbRecoveryWatchdog;
+static constexpr uint32_t kUsbRecoveryResetMarker = 0x55534257;
+RTC_NOINIT_ATTR static uint32_t usbRecoveryResetMarker;
 
 // =========================
 // Arduino setup / loop
@@ -191,6 +196,9 @@ void setup()
 #endif
 
     esp_reset_reason_t resetReason = esp_reset_reason();
+    if (resetReason == ESP_RST_SW && usbRecoveryResetMarker == kUsbRecoveryResetMarker)
+        DBG.println("Previous restart: USB recovery watchdog (detector stopped responding).");
+    usbRecoveryResetMarker = 0;
     if (resetReason == ESP_RST_BROWNOUT)
     {
         ledController.activateFault(FaultCode::PowerBrownout);
@@ -248,6 +256,18 @@ void setup()
             return;
         }
 
+        const bool telemetryResponse = type == DeviceManager::CommandType::DevicePower ||
+                                       type == DeviceManager::CommandType::DeviceBatteryVoltage ||
+                                       type == DeviceManager::CommandType::TubePulseCount ||
+                                       type == DeviceManager::CommandType::TubeRate;
+        if (telemetryResponse && appConfig.usbRecoveryTimeoutSeconds &&
+            !updateInProgress && !radProUpdater.ownsUsb())
+        {
+            const bool wasArmed = usbRecoveryWatchdog.armed();
+            usbRecoveryWatchdog.recordResponse(millis());
+            if (!wasArmed)
+                DBG.println("USB recovery watchdog armed after detector telemetry response.");
+        }
         commandError = false;
         DeviceActivityFault previousActivityFault = deviceActivityMonitor.fault();
         DeviceActivityFault currentActivityFault = deviceActivityMonitor.onCommandResult(type, value, true, millis());
@@ -363,6 +383,8 @@ void loop()
     radProUpdater.poll();
     bool detectorUpdating = radProUpdater.ownsUsb();
     const bool wifiConnected = WiFi.status() == WL_CONNECTED;
+    if (updateInProgress || detectorUpdating)
+        usbRecoveryWatchdog.reset();
     timeSync.loop(wifiConnected);
     peripheralStarter.startIfNeeded(wifiConnected, timeSync.synced(), kSupportedUsbVidPid);
 
@@ -444,7 +466,8 @@ void loop()
                                              usbDisconnectedSinceMs,
                                              lastUsbRestartAttemptMs,
                                              usb.hasObservedDevice(),
-                                             usb.restartRunsInBackground()))
+                                             usb.restartRunsInBackground(),
+                                             usb.observationReadyAtMs()))
         {
             DBG.println("USB disconnected too long; restarting USB host.");
             lastUsbRestartAttemptMs = now;
@@ -473,6 +496,20 @@ void loop()
     }
     diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
     ledController.update();
+
+    const uint32_t recoveryTimeoutMs = UsbRecoveryWatchdog::effectiveTimeoutMs(
+        appConfig.usbRecoveryTimeoutSeconds, appConfig.readIntervalMs);
+    if (usbRecoveryWatchdog.shouldRestart(millis(), recoveryTimeoutMs,
+                                           updateInProgress || detectorUpdating))
+    {
+        DBG.print("USB recovery watchdog: no detector response for ");
+        DBG.print(recoveryTimeoutMs / 1000);
+        DBG.println(" seconds; restarting bridge.");
+        usbRecoveryResetMarker = kUsbRecoveryResetMarker;
+        DBG.flush();
+        delay(100);
+        ESP.restart();
+    }
 
     // Keep loop snappy; USB host runs in its own tasks
     delay(5);

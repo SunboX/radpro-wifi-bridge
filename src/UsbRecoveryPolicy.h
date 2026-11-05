@@ -15,7 +15,8 @@ inline bool shouldRestart(unsigned long now,
                           unsigned long disconnectedSinceMs,
                           unsigned long lastRestartAttemptMs,
                           bool usbDeviceObserved,
-                          bool restartRunsInBackground)
+                          bool restartRunsInBackground,
+                          unsigned long observationReadyAtMs = 0)
 {
     (void)restartRunsInBackground;
 
@@ -23,6 +24,11 @@ inline bool shouldRestart(unsigned long now,
         return false;
 
     if (disconnectedSinceMs == 0)
+        return false;
+
+    // A detector plugged in long after boot still needs time to finish opening.
+    if (observationReadyAtMs != 0 &&
+        static_cast<long>(now - observationReadyAtMs) < static_cast<long>(kDisconnectGraceMs))
         return false;
 
     if (static_cast<long>(now - disconnectedSinceMs) < static_cast<long>(kDisconnectGraceMs))

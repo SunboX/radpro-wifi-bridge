@@ -39,6 +39,7 @@
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <ArduinoJson.h>
+#include "AppConfig/UsbRecoverySettings.h"
 
 namespace
 {
@@ -618,7 +619,7 @@ void WiFiPortalService::attachParameters()
         }
         routesRegistered_ = true;
         registerRadProUpdateRoutes();
-        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /openradiation /openradiation/dry-run /openradiation/latest /gmc /safecast /metrics /device /device.json /bridge /bridge.json /backup /backup.json /backup/restore /logs /logs.json /ota /ota/status /ota/fetch /ota/upload/* /restart"));
+        log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /openradiation /openradiation/dry-run /openradiation/latest /gmc /safecast /metrics /device /device.json /bridge /bridge.json /usb-recovery /backup /backup.json /backup/restore /logs /logs.json /ota /ota/status /ota/fetch /ota/upload/* /restart"));
 
         manager_.server->on("/mqtt", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /mqtt"));
@@ -817,6 +818,15 @@ void WiFiPortalService::attachParameters()
         manager_.server->on("/bridge.json", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /bridge.json"));
             bridgeInfoPage_.handleJson(&manager_);
+        });
+
+        manager_.server->on("/usb-recovery", HTTP_GET, [this]() {
+            sendUsbRecoveryForm();
+        });
+        manager_.server->on("/usb-recovery", HTTP_POST, [this]() {
+            if (!requirePortalPost("/usb-recovery", {"timeoutMinutes"}))
+                return;
+            handleUsbRecoveryPost();
         });
 
         manager_.server->on("/logs", HTTP_GET, [this]() {
@@ -1585,6 +1595,7 @@ String WiFiPortalService::exportConfigJson() const
     doc["mqttTopic"] = config_.mqttTopic;
     doc["mqttFullTopic"] = config_.mqttFullTopic;
     doc["readIntervalMs"] = config_.readIntervalMs;
+    UsbRecoverySettings::appendConfig(doc, config_);
     doc["openSenseMapEnabled"] = config_.openSenseMapEnabled;
     doc["openSenseBoxId"] = config_.openSenseBoxId;
     doc["openSenseApiKey"] = config_.openSenseApiKey;
@@ -1688,6 +1699,11 @@ bool WiFiPortalService::importConfigJson(const String &body, String &errorMessag
     setString(updated.mqttTopic, doc["mqttTopic"]);
     setString(updated.mqttFullTopic, doc["mqttFullTopic"]);
     setUint32(updated.readIntervalMs, doc["readIntervalMs"]);
+    if (!UsbRecoverySettings::applyConfig(doc.as<JsonVariantConst>(), updated))
+    {
+        errorMessage = F("USB recovery timeout must be 0 (disabled) or 60–3600 seconds.");
+        return false;
+    }
     setBool(updated.openSenseMapEnabled, doc["openSenseMapEnabled"]);
     setString(updated.openSenseBoxId, doc["openSenseBoxId"]);
     setString(updated.openSenseApiKey, doc["openSenseApiKey"]);
@@ -2559,6 +2575,7 @@ std::vector<String> WiFiPortalService::collectChangedConfigFields(const AppConfi
     RADPRO_APPEND_CHANGED_FIELD(mqttTopic);
     RADPRO_APPEND_CHANGED_FIELD(mqttFullTopic);
     RADPRO_APPEND_CHANGED_FIELD(readIntervalMs);
+    RADPRO_APPEND_CHANGED_FIELD(usbRecoveryTimeoutSeconds);
     RADPRO_APPEND_CHANGED_FIELD(openSenseMapEnabled);
     RADPRO_APPEND_CHANGED_FIELD(openSenseBoxId);
     RADPRO_APPEND_CHANGED_FIELD(openSenseApiKey);

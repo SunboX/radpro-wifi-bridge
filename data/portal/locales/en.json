@@ -164,5 +164,14 @@
     "T_RADPRO_PHASE_WRITING": "Writing and verifying firmware. Keep power connected.",
     "T_RADPRO_PHASE_RESTARTING": "Restarting detector and confirming firmware…",
     "T_RADPRO_PHASE_COMPLETE": "Rad Pro 3.1.1 verified. Telemetry is resuming.",
-    "T_RADPRO_PHASE_FAILED": "Update stopped. Read the error below; keep power connected. Retry the staged firmware if offered, or use the official installer."
+    "T_RADPRO_PHASE_FAILED": "Update stopped. Read the error below; keep power connected. Retry the staged firmware if offered, or use the official installer.",
+  "T_PAGE_USB_RECOVERY": "USB Recovery",
+  "T_USB_RECOVERY_HELP": "Restart the bridge if a previously responding detector stops replying. The default is 5 minutes. USB host restarts do not reset this timer.",
+  "T_USB_RECOVERY_ENABLE": "Restart automatically after loss of detector communication",
+  "T_USB_RECOVERY_TIMEOUT": "Restart after (minutes)",
+  "T_USB_RECOVERY_NOTE": "The timer starts only after the detector has replied. It is suspended during firmware updates and allows at least three polling intervals.",
+  "T_USB_RECOVERY_SAVE": "Save USB recovery settings",
+  "T_USB_RECOVERY_SAVED": "USB recovery settings saved.",
+  "T_USB_RECOVERY_INVALID": "Enter a whole number from 1 to 60 minutes.",
+  "T_USB_RECOVERY_SAVE_FAILED": "Could not save USB recovery settings."
 }

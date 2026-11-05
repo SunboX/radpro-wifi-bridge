@@ -35,6 +35,17 @@ void testBackgroundRestartStillRequiresAnObservedUsbDevice()
     assert(!UsbRecoveryPolicy::shouldRestart(60000, 1000, 0, false, true));
     assert(UsbRecoveryPolicy::shouldRestart(60000, 1000, 0, true, true));
 }
+
+void testLateAttachGetsItsOwnOpeningGracePeriod()
+{
+    // USB has been absent since boot, but was observed only just now.
+    constexpr unsigned long readyAt = 120250;
+    assert(!UsbRecoveryPolicy::shouldRestart(120000, 1000, 0, true, true, readyAt));
+    assert(!UsbRecoveryPolicy::shouldRestart(135249, 1000, 0, true, true, readyAt));
+    assert(UsbRecoveryPolicy::shouldRestart(135250, 1000, 0, true, true, readyAt));
+    // Once the device is gone, the original disconnect/retry policy applies.
+    assert(UsbRecoveryPolicy::shouldRestart(160000, 140000, 0, true, true, 0));
+}
 } // namespace
 
 int main()
@@ -43,6 +54,7 @@ int main()
     testRespectsRestartInterval();
     testBlockingRestartRequiresAnObservedUsbDevice();
     testBackgroundRestartStillRequiresAnObservedUsbDevice();
+    testLateAttachGetsItsOwnOpeningGracePeriod();
     std::cout << "usb recovery policy tests passed\n";
     return 0;
 }

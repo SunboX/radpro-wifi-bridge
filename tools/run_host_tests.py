@@ -19,6 +19,7 @@ EXTRA_SOURCES = {
     "device_info_prometheus_test": ["lib/AppSupport/DeviceInfo/DeviceInfoPage.cpp", "lib/AppSupport/DeviceInfo/DeviceInfoStore.cpp"],
     "led_controller_test": ["lib/AppSupport/Led/LedController.cpp"],
     "openradiation_settings_persistence_test": ["lib/AppSupport/AppConfig/AppConfig.cpp"],
+    "usb_recovery_settings_test": ["lib/AppSupport/AppConfig/AppConfig.cpp"],
     "safecast_settings_persistence_test": ["lib/AppSupport/AppConfig/AppConfig.cpp"],
 }
 

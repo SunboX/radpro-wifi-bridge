@@ -23,6 +23,7 @@ function assertFormHasCsrfToken(relPath, action) {
 
 function testPostFormsIncludeCsrfToken() {
     assertFormHasCsrfToken('data/portal/mqtt.html', '/mqtt')
+    assertFormHasCsrfToken('data/portal/usb-recovery.html', '/usb-recovery')
     assertFormHasCsrfToken('data/portal/osem.html', '/osem')
     assertFormHasCsrfToken('data/portal/radmon.html', '/radmon')
     assertFormHasCsrfToken('data/portal/gmc.html', '/gmc')
