@@ -658,7 +658,9 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
     {
         objectIdField = objectUid;
     }
-    doc["object_id"] = objectIdField;
+    // Entity IDs require a domain and underscores instead of MQTT slug hyphens.
+    objectIdField.replace('-', '_');
+    doc["default_entity_id"] = String(component) + "." + objectIdField;
     if (unit && *unit)
         doc["unit_of_measurement"] = unit;
     if (deviceClass && *deviceClass)
