@@ -634,7 +634,9 @@ static void runMainLogic()
 
 static void serviceCooperativeTasksDuringNetworkWait()
 {
+    portalService.maintain();
     portalService.process();
+    mqttPublisher.serviceConnection();
     diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
     ledController.update();
     delay(10);

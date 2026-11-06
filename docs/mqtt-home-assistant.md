@@ -34,6 +34,19 @@ Once connected, every RadPro response is forwarded to MQTT. The bridge publishes
 - `tubePulseCount`, `tubeRate`, `tubeDoseRate`, `tubeDeadTime`, `tubeDeadTimeCompensation`
 - `tubeHvFrequency`, `tubeHvDutyCycle`
 - Diagnostic entries like `randomData` or `dataLog` (not retained)
+- A retained bridge `availability` status (`online` or `offline`). Its topic uses
+  the bridge's `esp32s3-<MAC>` identifier instead of the detector ID, following
+  the same topic templates. With default settings it is
+  `stat/radpro/esp32s3-<MAC>/availability`.
+
+Every discovered entity uses this availability topic. On an unexpected power or
+Wi-Fi loss, the MQTT broker publishes the retained `offline` Last Will. The
+15-second MQTT keepalive lets the broker detect a silent connection, typically
+within about 23 seconds. Pausing publishing for an update, disabling MQTT, or
+changing MQTT settings sends `offline` before disconnecting. Reconnection sends
+`online` and republishes discovery and retained readings. Existing entity unique
+IDs and telemetry topics are unchanged. Availability describes the bridge's
+MQTT connection; it does not indicate whether the detector itself is connected.
 
 Topic templating variables:
 

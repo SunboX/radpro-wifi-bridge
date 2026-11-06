@@ -7,6 +7,7 @@
 #include "ConfigPortal/PortalSecurity.h"
 #include "ConfigPortal/WiFiPortalService.h"
 #include "Mqtt/MqttFaultPolicy.h"
+#include "Mqtt/MqttAvailability.h"
 #include <WebServer.h>
 
 namespace
@@ -58,6 +59,8 @@ void MqttPublisher::begin()
 {
     // Discovery payloads can get fairly large; use a bigger MQTT buffer.
     mqtt_client_.setBufferSize(1024);
+    mqtt_client_.setKeepAlive(MqttAvailability::kKeepAliveSeconds);
+    mqtt_client_.setSocketTimeout(MqttAvailability::kSocketTimeoutSeconds);
     updateConfig();
 }
 
@@ -65,8 +68,7 @@ void MqttPublisher::updateConfig()
 {
     if (paused_)
     {
-        if (mqtt_client_.connected())
-            mqtt_client_.disconnect();
+        disconnectWithAvailability();
         return;
     }
 
@@ -76,8 +78,7 @@ void MqttPublisher::updateConfig()
 
     if (!config_.mqttEnabled || host.isEmpty())
     {
-        if (mqtt_client_.connected())
-            mqtt_client_.disconnect();
+        disconnectWithAvailability();
         led_.clearFault(FaultCode::MqttUnreachable);
         led_.clearFault(FaultCode::MqttAuthFailure);
         led_.clearFault(FaultCode::MqttConnectionReset);
@@ -103,7 +104,7 @@ void MqttPublisher::updateConfig()
         versionDiscoveryDone_ = false;
     }
 
-    if (host == currentHost_ && port == currentPort_ &&
+    if (configValid_ && host == currentHost_ && port == currentPort_ &&
         config_.mqttUser == currentUser_ &&
         config_.mqttPassword == currentPassword_ &&
         config_.mqttClient == clientIdBase_ &&
@@ -113,6 +114,8 @@ void MqttPublisher::updateConfig()
         return;
     }
 
+    // Announce offline on the old session/topic before replacing its settings.
+    disconnectWithAvailability();
     currentHost_ = host;
     currentPort_ = port;
     currentUser_ = config_.mqttUser;
@@ -141,11 +144,6 @@ void MqttPublisher::updateConfig()
         log_.println("MQTT config updated: host empty, MQTT disabled.");
     }
 
-    if (mqtt_client_.connected())
-    {
-        mqtt_client_.disconnect();
-    }
-
     if (currentHost_.length())
     {
         mqtt_client_.setServer(currentHost_.c_str(), currentPort_);
@@ -160,10 +158,13 @@ void MqttPublisher::updateConfig()
 
 void MqttPublisher::loop()
 {
+    MqttCommandQueue::Result result;
+    for (size_t i = 0; i < MqttCommandQueue::kCapacity && pendingCommands_.pop(result); ++i)
+        handleCommandResult(result.type, result.value);
+
     if (paused_)
     {
-        if (mqtt_client_.connected())
-            mqtt_client_.disconnect();
+        disconnectWithAvailability();
         return;
     }
 
@@ -186,7 +187,20 @@ void MqttPublisher::loop()
     }
 }
 
+void MqttPublisher::serviceConnection()
+{
+    // Network publishers may wait for responses. Keep MQTT alive without
+    // reconnecting or recursively publishing another batch from that wait.
+    if (!paused_ && config_.mqttEnabled && mqtt_client_.connected())
+        mqtt_client_.loop();
+}
+
 void MqttPublisher::onCommandResult(DeviceManager::CommandType type, const String &value)
+{
+    pendingCommands_.push(type, value);
+}
+
+void MqttPublisher::handleCommandResult(DeviceManager::CommandType type, const String &value)
 {
     if (paused_)
         return;
@@ -253,10 +267,18 @@ void MqttPublisher::onCommandResult(DeviceManager::CommandType type, const Strin
 void MqttPublisher::pause(bool paused)
 {
     paused_ = paused;
-    if (paused_ && mqtt_client_.connected())
-    {
+    if (paused_)
+        disconnectWithAvailability();
+}
+
+void MqttPublisher::disconnectWithAvailability()
+{
+    if (!mqtt_client_.connected())
+        return;
+    if (mqtt_client_.publish(connectedAvailabilityTopic_.c_str(), "offline", true))
         mqtt_client_.disconnect();
-    }
+    else
+        wifi_client_.stop(); // Keep the broker's Last Will active if publishing failed.
 }
 
 bool MqttPublisher::ensureConnected()
@@ -293,19 +315,28 @@ bool MqttPublisher::ensureConnected()
     }
 
     bool connected = false;
+    const String availabilityTopic = MqttAvailability::topic(topicTemplate_, fullTopicTemplate_, fallbackId_);
     if (currentUser_.length())
     {
-        connected = mqtt_client_.connect(clientId.c_str(), currentUser_.c_str(), currentPassword_.c_str());
+        connected = mqtt_client_.connect(clientId.c_str(), currentUser_.c_str(), currentPassword_.c_str(),
+                                         availabilityTopic.c_str(), 1, true, "offline");
     }
     else
     {
-        connected = mqtt_client_.connect(clientId.c_str());
+        connected = mqtt_client_.connect(clientId.c_str(), availabilityTopic.c_str(), 1, true, "offline");
     }
 
     int state = mqtt_client_.state();
 
     if (connected)
     {
+        connectedAvailabilityTopic_ = availabilityTopic;
+        if (!mqtt_client_.publish(availabilityTopic.c_str(), "online", true))
+        {
+            wifi_client_.stop();
+            log_.println("MQTT online announcement failed; reconnecting later.");
+            return false;
+        }
         log_.println("MQTT connected.");
         discoveryPublished_ = false;
         lastDiscoveryAttempt_ = 0;
@@ -646,6 +677,7 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
     doc["name"] = fullName;
     doc["state_topic"] = stateTopic;
     doc["unique_id"] = objectUid;
+    MqttAvailability::appendDiscovery(doc, MqttAvailability::topic(topicTemplate_, fullTopicTemplate_, fallbackId_));
     String deviceNameSlug = makeSlug(deviceName);
     String objectIdField;
     if (deviceNameSlug.length())

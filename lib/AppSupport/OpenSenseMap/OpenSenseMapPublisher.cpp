@@ -379,10 +379,11 @@ void OpenSenseMapPublisher::SendPortalForm(WiFiPortalService &portal, const Stri
 bool OpenSenseMapPublisher::sendPayload(const JsonDocument &payload)
 {
     WiFiClientSecure client;
-    client.setTimeout(10);
+    client.setTimeout(3);
+    client.setHandshakeTimeout(5);
     client.setCACert(kOpenSenseMapRootCa);
 
-    if (!client.connect(kHost, kPort))
+    if (!client.connect(kHost, kPort, 3000))
     {
         log_.println("OpenSenseMap: connect failed.");
         lastTlsErrorCode_ = logTlsError(log_, client, "connect", &lastTlsErrorText_);
@@ -470,9 +471,8 @@ bool OpenSenseMapPublisher::sendPayload(const JsonDocument &payload)
 
     health_.noteSuccess(millis(), response.statusCode, response.statusLine);
 
-    // Consume remainder
-    while (client.connected() || client.available())
-        client.read();
+    // The response body is unused; do not wait indefinitely for peer closure.
+    client.stop();
 
     return true;
 }

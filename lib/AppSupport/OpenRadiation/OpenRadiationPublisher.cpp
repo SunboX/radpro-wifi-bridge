@@ -392,8 +392,7 @@ bool OpenRadiationPublisher::sendPayload(const String &payload)
 
     health_.noteSuccess(millis(), response.statusCode, response.statusLine);
 
-    while (client.connected() || client.available())
-        client.read();
+    client.stop();
 
     return true;
 }

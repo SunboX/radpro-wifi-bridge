@@ -266,8 +266,7 @@ bool RadmonPublisher::sendRequest(const String &query)
 
     health_.noteSuccess(millis(), response.statusCode, response.statusLine);
 
-    while (client.connected() || client.available())
-        client.read();
+    client.stop();
 
     return true;
 }

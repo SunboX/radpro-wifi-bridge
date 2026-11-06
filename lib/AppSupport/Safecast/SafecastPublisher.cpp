@@ -505,8 +505,7 @@ SafecastPublisher::UploadResult SafecastPublisher::sendRequest(Client &client,
     if (updateHealthState)
         health_.noteSuccess(millis(), response.statusCode, response.statusLine);
 
-    while (client.connected() || client.available())
-        client.read();
+    client.stop();
 
     return result;
 }

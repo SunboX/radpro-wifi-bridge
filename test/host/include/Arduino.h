@@ -99,6 +99,32 @@ public:
         return equalsIgnoreCase(other.c_str());
     }
 
+    bool endsWith(const char *suffix) const
+    {
+        const std::string tail(suffix ? suffix : "");
+        return value_.size() >= tail.size() &&
+               value_.compare(value_.size() - tail.size(), tail.size(), tail) == 0;
+    }
+
+    void remove(size_t index)
+    {
+        if (index < value_.size())
+            value_.erase(index);
+    }
+
+    void replace(const char *from, const String &to)
+    {
+        const std::string needle(from ? from : "");
+        if (needle.empty())
+            return;
+        size_t offset = 0;
+        while ((offset = value_.find(needle, offset)) != std::string::npos)
+        {
+            value_.replace(offset, needle.size(), to.value_);
+            offset += to.value_.size();
+        }
+    }
+
     void trim()
     {
         auto notSpace = [](unsigned char ch) { return !std::isspace(ch); };

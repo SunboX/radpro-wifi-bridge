@@ -13,6 +13,7 @@
 #include <functional>
 #include "AppConfig/AppConfig.h"
 #include "DeviceManager.h"
+#include "Mqtt/MqttCommandQueue.h"
 #include "Led/LedController.h"
 
 class WebServer;
@@ -26,6 +27,7 @@ public:
     void begin();
     void updateConfig();
     void loop();
+    void serviceConnection();
     void onCommandResult(DeviceManager::CommandType type, const String &value);
     void setPublishCallback(std::function<void(bool)> cb) { publishCallback_ = std::move(cb); }
     void setBridgeVersion(const String &version);
@@ -40,6 +42,8 @@ public:
 
 private:
     bool ensureConnected();
+    void disconnectWithAvailability();
+    void handleCommandResult(DeviceManager::CommandType type, const String &value);
     void refreshTopics();
     void publishDiscovery();
     bool publishDiscoveryEntity(DeviceManager::CommandType type,
@@ -94,6 +98,7 @@ private:
     String deviceId_;
     String deviceSlug_;
     String fallbackId_;
+    String connectedAvailabilityTopic_;
     String topicBase_;
     String fullTopicPattern_;
     std::function<void(bool)> publishCallback_;
@@ -112,4 +117,5 @@ private:
     bool bridgeVersionDirty_ = true;
     bool versionDiscoveryDone_ = false;
     bool paused_ = false;
+    MqttCommandQueue pendingCommands_;
 };
