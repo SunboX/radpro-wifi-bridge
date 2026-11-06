@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: 2026 André Fiedler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Arduino-ESP32 2.0.17 checks stale errno after a successful zero-byte recv().
+# A failed cloud upload can therefore disconnect an unrelated HTTP/MQTT client.
+# Compile a corrected copy inside this build; leave the shared framework intact.
+idf_component_get_property(arduino_target framework-arduinoespressif32 COMPONENT_LIB)
+get_target_property(arduino_sources ${arduino_target} SOURCES)
+get_target_property(arduino_dir ${arduino_target} SOURCE_DIR)
+set(wifi_client_found FALSE)
+
+foreach(source IN LISTS arduino_sources)
+    get_filename_component(source_path "${source}" ABSOLUTE BASE_DIR "${arduino_dir}")
+    if(source_path MATCHES "/libraries/WiFi/src/WiFiClient\\.cpp$")
+        if(wifi_client_found)
+            message(FATAL_ERROR "Multiple Arduino WiFiClient sources; review the compatibility patch")
+        endif()
+        set(wifi_client_found TRUE)
+        file(READ "${source_path}" original)
+        set(before "        // recv only sets errno if res is <= 0\n        if (res <= 0){")
+        set(after "        // errno is meaningful only when recv() fails.\n        if (res < 0){")
+        string(FIND "${original}" "${before}" patch_position)
+        if(patch_position EQUAL -1)
+            message(FATAL_ERROR "Arduino WiFiClient changed; review the stale-errno compatibility patch")
+        endif()
+        string(REPLACE "${before}" "${after}" patched "${original}")
+        set(destination "${CMAKE_BINARY_DIR}/framework-patches/WiFiClient.cpp")
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/framework-patches")
+        set(existing "")
+        if(EXISTS "${destination}")
+            file(READ "${destination}" existing)
+        endif()
+        if(NOT patched STREQUAL existing)
+            file(WRITE "${destination}" "${patched}")
+        endif()
+        list(REMOVE_ITEM arduino_sources "${source}")
+        list(APPEND arduino_sources "${destination}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${source_path}")
+    endif()
+endforeach()
+
+if(NOT wifi_client_found)
+    message(FATAL_ERROR "Arduino WiFiClient source missing; compatibility patch was not applied")
+endif()
+set_property(TARGET ${arduino_target} PROPERTY SOURCES "${arduino_sources}")

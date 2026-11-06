@@ -40,7 +40,7 @@ def main():
         "lib/AppSupport/DeviceInfo", "lib/UsbCdcHost",
         ".pio/libdeps/esp32-s3-devkitc-1/ArduinoJson/src")]
     tests = [path for path in sorted((ROOT / "test/host").glob("*_test.*"))
-             if path.suffix in (".cpp", ".js") and args.filter in path.stem]
+             if path.suffix in (".cpp", ".js", ".py") and args.filter in path.stem]
     if not tests:
         parser.error("No tests matched")
     required = []
@@ -58,6 +58,10 @@ def main():
         name = path.stem
         if path.suffix == ".js":
             command = [args.node, str(path)]
+        elif path.suffix == ".py":
+            command = [sys.executable, str(path), "--cxx", args.cxx]
+            if args.sdk:
+                command += ["--sdk", args.sdk]
         else:
             dirs = list(includes)
             if name == "led_controller_test":

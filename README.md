@@ -77,6 +77,19 @@ Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no loc
     - Native USB-OTG port → leave free for the RadPro sensor.
 4. Flash with `platformio run --target upload` (or `--target upload --target monitor` to auto-open the serial monitor).
 
+The pinned Arduino-ESP32 2.0.17 core needs a small socket compatibility fix.
+`cmake/arduino_wifi_client.cmake` generates a corrected `WiFiClient.cpp` inside the
+build directory. Both ESP-IDF and PlatformIO's WiFi library use that copy, without
+changing the installed framework. It prevents
+a failed cloud upload's leftover `errno` from disconnecting a healthy HTTP or
+MQTT socket. Genuine socket errors still disconnect normally. Revisit this patch
+when upgrading the core; an unexpected source change deliberately stops the build.
+
+Run the host regression tests with `python3 tools/run_host_tests.py` after installing
+the PlatformIO dependencies. The socket test checks the actual core method before
+and after patching, including real-error handling and the framework-change guard.
+On macOS, pass `--sdk <path-to-MacOSX.sdk>` if the compiler needs an explicit SDK.
+
 ---
 
 ## First Boot & Portal
