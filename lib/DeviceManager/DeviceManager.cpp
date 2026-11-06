@@ -141,6 +141,8 @@ void DeviceManager::begin(const std::vector<std::pair<uint16_t, uint16_t>> &vid_
     enabled_ = false;
     device_id_logged_ = false;
     device_details_logged_ = false;
+    synchronizing_replies_ = false;
+    known_device_id_ = String();
     awaiting_response_ = false;
     has_current_command_ = false;
     command_queue_.clear();
@@ -173,6 +175,8 @@ void DeviceManager::enable(bool active)
         return;
 
     enabled_ = active;
+    synchronizing_replies_ = false;
+    known_device_id_ = String();
 
     command_queue_.clear();
     awaiting_response_ = false;
@@ -209,7 +213,7 @@ void DeviceManager::requestStats()
 void DeviceManager::requestRandomData()
 {
     StateLockGuard lock(state_mutex_);
-    if (!enabled_ || !host_.isConnected())
+    if (!enabled_ || !host_.isConnected() || synchronizing_replies_)
         return;
     if (!isCommandPending("GET randomData"))
         enqueueCommand("GET randomData", CommandType::RandomData, 0, true);
@@ -219,7 +223,7 @@ void DeviceManager::requestRandomData()
 void DeviceManager::requestDataLog(const String &args)
 {
     StateLockGuard lock(state_mutex_);
-    if (!enabled_ || !host_.isConnected())
+    if (!enabled_ || !host_.isConnected() || synchronizing_replies_)
         return;
     String cmd = "GET datalog";
     if (args.length())
@@ -276,7 +280,9 @@ void DeviceManager::loop()
                 // First DeviceId timeout immediately after attach: force a single host restart to re-enumerate cleanly.
                 initial_deviceid_recovery_done_ = true;
                 if (line_handler_)
-                    line_handler_(String("DeviceId timed out immediately after attach; restarting USB host once."));
+                    line_handler_(synchronizing_replies_
+                        ? String("USB reply synchronization timed out; restarting USB host once.")
+                        : String("DeviceId timed out immediately after attach; restarting USB host once."));
                 awaiting_response_ = false;
                 has_current_command_ = false;
                 command_queue_.clear();
@@ -284,7 +290,10 @@ void DeviceManager::loop()
                 host_.restart();
                 return;
             }
-            handleError();
+            if (current_command_.type == CommandType::DeviceId)
+                handleError();
+            else
+                synchronizeReplies();
         }
         return;
     }
@@ -295,6 +304,8 @@ void DeviceManager::loop()
 void DeviceManager::onConnected()
 {
     StateLockGuard lock(state_mutex_);
+    synchronizing_replies_ = false;
+    known_device_id_ = String();
     device_id_logged_ = false;
     device_details_logged_ = false;
     initial_deviceid_recovery_done_ = false;
@@ -320,6 +331,8 @@ void DeviceManager::onConnected()
 void DeviceManager::onDisconnected()
 {
     StateLockGuard lock(state_mutex_);
+    synchronizing_replies_ = false;
+    known_device_id_ = String();
     device_id_logged_ = false;
     device_details_logged_ = false;
     awaiting_response_ = false;
@@ -352,7 +365,10 @@ void DeviceManager::onLine(const String &line)
 
     if (trimmed.equalsIgnoreCase("ERROR"))
     {
-        handleError();
+        // An error may also belong to the timed-out command. Only an identity
+        // reply establishes a new boundary while resynchronizing.
+        if (!synchronizing_replies_)
+            handleError();
         return;
     }
 
@@ -375,19 +391,25 @@ void DeviceManager::onLine(const String &line)
         int secondSemi = (firstSemi >= 0) ? payload.indexOf(';', firstSemi + 1) : -1;
         String deviceId;
 
-        if (firstSemi > 0)
-        {
-            if (secondSemi > firstSemi && secondSemi > 0)
-                deviceId = payload.substring(secondSemi + 1);
-            else
-                deviceId = payload.substring(firstSemi + 1);
-            deviceId.trim();
-            if (!device_id_logged_ && line_handler_)
-                line_handler_(String("Device ID: ") + deviceId);
-            device_id_logged_ = true;
-            if (deviceId.length())
-                emitResult(CommandType::DeviceId, deviceId, true);
-        }
+        // Numeric OK replies are not identity responses and must never release
+        // the synchronization barrier, including during initial connection.
+        if (firstSemi <= 0)
+            return;
+        deviceId = payload.substring(secondSemi > firstSemi ? secondSemi + 1 : firstSemi + 1);
+        deviceId.trim();
+        if (!deviceId.length() ||
+            (synchronizing_replies_ && known_device_id_.length() && deviceId != known_device_id_))
+            return;
+
+        if (synchronizing_replies_ && line_handler_)
+            line_handler_(String("USB reply synchronization complete; detector identity verified."));
+        synchronizing_replies_ = false;
+        known_device_id_ = deviceId;
+
+        if (!device_id_logged_ && line_handler_)
+            line_handler_(String("Device ID: ") + deviceId);
+        device_id_logged_ = true;
+        emitResult(CommandType::DeviceId, deviceId, true);
 
         if (!device_details_logged_)
         {
@@ -695,6 +717,8 @@ void DeviceManager::processQueue()
     unsigned long now = millis();
     for (auto it = command_queue_.begin(); it != command_queue_.end(); ++it)
     {
+        if (synchronizing_replies_ && it->type != CommandType::DeviceId)
+            continue;
         if (static_cast<long>(now - it->ready_ms) >= 0)
         {
             current_command_ = *it;
@@ -714,16 +738,9 @@ void DeviceManager::issueCurrentCommand()
     if (current_command_.announce && verbose_logging_enabled_ && line_handler_)
         line_handler_(String("-> Queue: ") + current_command_.command);
 
-    if (current_command_.type == CommandType::DeviceId)
-    {
-        host_.sendCommand(current_command_.command, true);
-        host_.sendCommand(current_command_.command + "\n", false);
-        host_.sendCommand(current_command_.command + "\r", false);
-    }
-    else
-    {
-        host_.sendCommand(current_command_.command, true);
-    }
+    // One request per transaction, including identity probes. Sending multiple
+    // terminator variants at once leaves extra replies in the following batch.
+    host_.sendCommand(current_command_.command, true);
 
     awaiting_response_ = true;
     last_request_ms_ = millis();
@@ -734,6 +751,27 @@ void DeviceManager::handleSuccess()
     awaiting_response_ = false;
     has_current_command_ = false;
     current_command_ = PendingCommand{};
+    processQueue();
+}
+
+void DeviceManager::synchronizeReplies()
+{
+    const CommandType failedType = current_command_.type;
+    awaiting_response_ = false;
+    has_current_command_ = false;
+    current_command_ = PendingCommand{};
+    command_queue_.clear();
+    device_id_logged_ = false;
+    device_details_logged_ = false;
+    device_sensitivity_cpm_per_uSv_ = 0.0f;
+    synchronizing_replies_ = true;
+    if (line_handler_)
+        line_handler_(String("USB reply synchronization lost; discarding late replies until detector identity is verified."));
+    emitResult(failedType, String(), false);
+    // The serial stream is ordered. The distinctive identity response comes
+    // after the expired command's replies; never advance through numeric
+    // commands by guessing which late OK value belongs to which request.
+    scheduleDeviceId(DEVICE_ID_RETRY_DELAY_MS, true);
     processQueue();
 }
 

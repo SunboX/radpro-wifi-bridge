@@ -34,10 +34,8 @@ void testStartupSkipsUnsupportedHvMetadataQueries()
     manager.loop();
 
     const auto &initialCommands = host.sentCommands();
-    assert(initialCommands.size() == 3);
+    assert(initialCommands.size() == 1);
     assert(initialCommands[0] == "GET deviceId\r\n");
-    assert(initialCommands[1] == "GET deviceId\n");
-    assert(initialCommands[2] == "GET deviceId\r");
 
     host.simulateLine("OK FNIRSI GC-01;Rad Pro 3.1/en;gc01-123456");
     expectLastCommand(host, "GET devicePower\r\n");

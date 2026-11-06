@@ -100,6 +100,7 @@ private:
     void issueCurrentCommand();
     void handleSuccess();
     void handleError();
+    void synchronizeReplies();
     void emitResult(CommandType type, const String &value, bool success);
 
     UsbCdcHost &host_;
@@ -122,4 +123,6 @@ private:
     unsigned long last_request_ms_ = 0;
     float device_sensitivity_cpm_per_uSv_ = 0.0f;
     bool initial_deviceid_recovery_done_ = false;
+    bool synchronizing_replies_ = false;
+    String known_device_id_;
 };

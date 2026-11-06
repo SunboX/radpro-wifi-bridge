@@ -16,6 +16,7 @@ EXTRA_SOURCES = {
     "cooperative_pump_test": ["lib/AppSupport/Runtime/CooperativePump.cpp"],
     "debug_log_stream_test": ["lib/AppSupport/Logging/DebugLogStream.cpp"],
     "device_manager_gc01_metadata_test": ["lib/DeviceManager/DeviceManager.cpp"],
+    "device_manager_reply_sync_test": ["lib/DeviceManager/DeviceManager.cpp"],
     "device_info_prometheus_test": ["lib/AppSupport/DeviceInfo/DeviceInfoPage.cpp", "lib/AppSupport/DeviceInfo/DeviceInfoStore.cpp"],
     "led_controller_test": ["lib/AppSupport/Led/LedController.cpp"],
     "openradiation_settings_persistence_test": ["lib/AppSupport/AppConfig/AppConfig.cpp"],
