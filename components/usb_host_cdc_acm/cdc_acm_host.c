@@ -154,15 +154,21 @@ static void cdc_acm_client_task(void *arg)
  * @param[in] transfer Transfer to be cancelled
  * @return esp_err_t
  */
-static esp_err_t cdc_acm_reset_transfer_endpoint(usb_device_handle_t dev_hdl, usb_transfer_t *transfer)
+static esp_err_t cdc_acm_stop_transfer_endpoint(usb_device_handle_t dev_hdl, usb_transfer_t *transfer)
 {
     assert(dev_hdl);
     assert(transfer);
 
     ESP_RETURN_ON_ERROR(usb_host_endpoint_halt(dev_hdl, transfer->bEndpointAddress), TAG,);
     ESP_RETURN_ON_ERROR(usb_host_endpoint_flush(dev_hdl, transfer->bEndpointAddress), TAG,);
-    usb_host_endpoint_clear(dev_hdl, transfer->bEndpointAddress);
     return ESP_OK;
+}
+
+static esp_err_t cdc_acm_reset_transfer_endpoint(usb_device_handle_t dev_hdl, usb_transfer_t *transfer)
+{
+    esp_err_t ret = cdc_acm_stop_transfer_endpoint(dev_hdl, transfer);
+    if (ret == ESP_OK) ret = usb_host_endpoint_clear(dev_hdl, transfer->bEndpointAddress);
+    return ret;
 }
 
 /**
@@ -410,9 +416,7 @@ esp_err_t cdc_acm_host_uninstall()
     xSemaphoreTake(p_cdc_acm_obj->open_close_mutex, portMAX_DELAY); // Wait for all open/close calls to finish
 
     CDC_ACM_ENTER_CRITICAL();
-    if (SLIST_EMPTY(&p_cdc_acm_obj->cdc_devices_list)) { // Check that device list is empty (all devices closed)
-        p_cdc_acm_obj = NULL; // NULL static driver pointer: No open/close calls form this point
-    } else {
+    if (!SLIST_EMPTY(&p_cdc_acm_obj->cdc_devices_list)) {
         ret = ESP_ERR_INVALID_STATE;
         CDC_ACM_EXIT_CRITICAL();
         goto unblock;
@@ -426,6 +430,10 @@ esp_err_t cdc_acm_host_uninstall()
         xEventGroupWaitBits(cdc_acm_obj->event_group, CDC_ACM_TEARDOWN_COMPLETE, pdFALSE, pdFALSE, pdMS_TO_TICKS(100)),
         ESP_ERR_NOT_FINISHED, unblock, TAG,);
 
+    // Event callbacks still need the driver until the event task has exited.
+    CDC_ACM_ENTER_CRITICAL();
+    p_cdc_acm_obj = NULL;
+    CDC_ACM_EXIT_CRITICAL();
     // Free remaining resources and return
     vEventGroupDelete(cdc_acm_obj->event_group);
     xSemaphoreGive(cdc_acm_obj->open_close_mutex);
@@ -667,34 +675,43 @@ esp_err_t cdc_acm_host_close(cdc_acm_dev_hdl_t cdc_hdl)
     }
 
     // No user callbacks from this point
+    cdc_dev->closing = true;
     cdc_dev->notif.cb = NULL;
     cdc_dev->data.in_cb = NULL;
     CDC_ACM_EXIT_CRITICAL();
 
     // Cancel polling of BULK IN and INTERRUPT IN
     if (cdc_dev->data.in_xfer) {
-        esp_err_t err = cdc_acm_reset_transfer_endpoint(cdc_dev->dev_hdl, cdc_dev->data.in_xfer);
+        esp_err_t err = cdc_acm_stop_transfer_endpoint(cdc_dev->dev_hdl, cdc_dev->data.in_xfer);
         if (err != ESP_OK && err != ESP_ERR_NOT_FOUND) {
             ESP_LOGW(TAG, "reset data IN ep failed: %s", esp_err_to_name(err));
         }
     }
     if (cdc_dev->notif.xfer != NULL) {
-        esp_err_t err = cdc_acm_reset_transfer_endpoint(cdc_dev->dev_hdl, cdc_dev->notif.xfer);
+        esp_err_t err = cdc_acm_stop_transfer_endpoint(cdc_dev->dev_hdl, cdc_dev->notif.xfer);
         if (err != ESP_OK && err != ESP_ERR_NOT_FOUND) {
             ESP_LOGW(TAG, "reset notif ep failed: %s", esp_err_to_name(err));
         }
     }
 
     // Release all interfaces
-    esp_err_t rel = usb_host_interface_release(p_cdc_acm_obj->cdc_acm_client_hdl, cdc_dev->dev_hdl, cdc_dev->data.intf_desc->bInterfaceNumber);
-    if (rel != ESP_OK && rel != ESP_ERR_NOT_FOUND) {
-        ESP_LOGW(TAG, "release data intf failed: %s", esp_err_to_name(rel));
-    }
+    // Flush completion is asynchronous. The client task must run its callbacks
+    // before IDF will allow interface/transfer storage to be released.
+    TickType_t close_started = xTaskGetTickCount();
+    esp_err_t rel;
+    do {
+        rel = usb_host_interface_release(p_cdc_acm_obj->cdc_acm_client_hdl, cdc_dev->dev_hdl, cdc_dev->data.intf_desc->bInterfaceNumber);
+        if (rel != ESP_ERR_INVALID_STATE) break;
+        vTaskDelay(1);
+    } while ((TickType_t)(xTaskGetTickCount() - close_started) < pdMS_TO_TICKS(2000));
+    if (rel != ESP_OK && rel != ESP_ERR_NOT_FOUND) goto close_failed;
     if ((cdc_dev->notif.intf_desc != NULL) && (cdc_dev->notif.intf_desc != cdc_dev->data.intf_desc)) {
-        rel = usb_host_interface_release(p_cdc_acm_obj->cdc_acm_client_hdl, cdc_dev->dev_hdl, cdc_dev->notif.intf_desc->bInterfaceNumber);
-        if (rel != ESP_OK && rel != ESP_ERR_NOT_FOUND) {
-            ESP_LOGW(TAG, "release notif intf failed: %s", esp_err_to_name(rel));
-        }
+        do {
+            rel = usb_host_interface_release(p_cdc_acm_obj->cdc_acm_client_hdl, cdc_dev->dev_hdl, cdc_dev->notif.intf_desc->bInterfaceNumber);
+            if (rel != ESP_ERR_INVALID_STATE) break;
+            vTaskDelay(1);
+        } while ((TickType_t)(xTaskGetTickCount() - close_started) < pdMS_TO_TICKS(2000));
+        if (rel != ESP_OK && rel != ESP_ERR_NOT_FOUND) goto close_failed;
     }
 
     CDC_ACM_ENTER_CRITICAL();
@@ -704,6 +721,12 @@ esp_err_t cdc_acm_host_close(cdc_acm_dev_hdl_t cdc_hdl)
     cdc_acm_device_remove(cdc_dev);
     xSemaphoreGive(p_cdc_acm_obj->open_close_mutex);
     return ESP_OK;
+
+close_failed:
+    // Keep the device and its transfers alive for a later close attempt.
+    ESP_LOGW(TAG, "close still pending: %s", esp_err_to_name(rel));
+    xSemaphoreGive(p_cdc_acm_obj->open_close_mutex);
+    return rel == ESP_ERR_INVALID_STATE ? ESP_ERR_TIMEOUT : rel;
 }
 
 void cdc_acm_host_desc_print(cdc_acm_dev_hdl_t cdc_hdl)
@@ -764,6 +787,11 @@ static void in_xfer_cb(usb_transfer_t *transfer)
     ESP_LOGD(TAG, "in xfer cb");
     cdc_dev_t *cdc_dev = (cdc_dev_t *)transfer->context;
 
+    CDC_ACM_ENTER_CRITICAL();
+    bool closing = cdc_dev->closing;
+    CDC_ACM_EXIT_CRITICAL();
+    if (closing) return;
+
     if (!cdc_acm_is_transfer_completed(transfer)) {
         return;
     }
@@ -819,6 +847,11 @@ static void notif_xfer_cb(usb_transfer_t *transfer)
 {
     ESP_LOGD(TAG, "notif xfer cb");
     cdc_dev_t *cdc_dev = (cdc_dev_t *)transfer->context;
+
+    CDC_ACM_ENTER_CRITICAL();
+    bool closing = cdc_dev->closing;
+    CDC_ACM_EXIT_CRITICAL();
+    if (closing) return;
 
     if (cdc_acm_is_transfer_completed(transfer)) {
         cdc_notification_t *notif = (cdc_notification_t *)transfer->data_buffer;

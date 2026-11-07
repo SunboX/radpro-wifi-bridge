@@ -85,6 +85,15 @@ a failed cloud upload's leftover `errno` from disconnecting a healthy HTTP or
 MQTT socket. Genuine socket errors still disconnect normally. Revisit this patch
 when upgrading the core; an unexpected source change deliberately stops the build.
 
+`cmake/arduino_http_headers.cmake` also patches the outer HTTP header reader.
+It yields while waiting for bytes and limits the complete request line and headers
+to three seconds and 8 KiB, so a slow sender cannot starve the task watchdog.
+Request bodies, including uploads, keep their existing parsing and timeouts.
+
+`cmake/esp_idf_usb_hub.cmake` keeps the pinned ESP-IDF 4.4.7 hub state alive
+until its root-port interrupt is disabled during host teardown. Like the Arduino
+patches, it generates a build-local copy and rejects unexpected framework changes.
+
 Run the host regression tests with `python3 tools/run_host_tests.py` after installing
 the PlatformIO dependencies. The socket test checks the actual core method before
 and after patching, including real-error handling and the framework-change guard.
@@ -164,6 +173,11 @@ replying for five minutes and USB host recovery does not restore communication.
 Use **USB Recovery** in the web interface to disable this watchdog or change the
 timeout. It stays inactive until the first detector response and during firmware
 updates. See [docs/usb-recovery.md](docs/usb-recovery.md) for details.
+
+USB host restarts stop workers cooperatively, drain canceled transfers before
+releasing interfaces, and uninstall the host on the core that installed it.
+Disconnect callbacks defer device cleanup to the worker so USB event processing
+can finish; a cleanup timeout keeps the resources intact for a later retry.
 
 ---
 

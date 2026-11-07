@@ -73,7 +73,7 @@ public:
     void addVidPidFilter(uint16_t vid, uint16_t pid);
 
     // Status
-    bool isConnected() const { return dev_ != nullptr || vcp_dev_ != nullptr; }
+    bool isConnected() const { return running_ && connected_ && !disconnect_pending_; }
     bool hasObservedDevice() const { return observed_device_seq_ != 0 || isConnected(); }
     unsigned long observationReadyAtMs() const { return observed_device_ready_ms_; }
     uint16_t connectedVid() const { return connected_vid_; }
@@ -91,6 +91,7 @@ private:
     void cdcTask();
     void txTask();
     void restartTask();
+    bool closeDeviceHandles();
 
     // CDC callbacks
     static bool DataCb(const uint8_t *data, size_t len, void *user_arg);
@@ -117,8 +118,14 @@ private:
     cdc_acm_dev_hdl_t dev_ = nullptr;
 
     uint32_t target_baud_ = 115200;
-    volatile bool running_ = false;
-    volatile bool restart_requested_ = false;
+    std::atomic<bool> running_{false};
+    std::atomic<bool> connected_{false};
+    std::atomic<bool> restart_requested_{false};
+    std::atomic<bool> disconnect_pending_{false};
+    std::atomic<bool> daemon_running_{false};
+    std::atomic<bool> lib_stopped_{true}, cdc_stopped_{true}, tx_stopped_{true}, dbg_stopped_{true};
+    bool host_installed_ = false;
+    BaseType_t host_core_ = 0; // Interrupt allocation and teardown must use the same core.
     uint8_t opened_intf_idx_ = 0xFF; // which CDC interface we opened (for logs)
 
     // Callbacks
@@ -162,7 +169,7 @@ private:
 
     // VCP wrapper state (when using the VCP service for CH34x/CP210x/FTDI)
     bool use_vcp_ = false;
-    CdcAcmDevice *vcp_dev_ = nullptr; // returned by VCP::open(); owned by the VCP service
+    CdcAcmDevice *vcp_dev_ = nullptr; // returned by VCP::open(); owned by this host
 
     // Descriptor logging client
     usb_host_client_handle_t dbg_client_ = nullptr;

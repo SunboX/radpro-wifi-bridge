@@ -33,6 +33,7 @@
 
 typedef struct cdc_dev_s cdc_dev_t;
 struct cdc_dev_s {
+    bool closing;                        // Protected by the CDC lock; stops RX resubmission while draining.
     cdc_acm_intf_t intf_func;             // CDC interface function table
     usb_device_handle_t dev_hdl;          // USB device handle
     void *cb_arg;                         // Common argument for user's callbacks (data IN and Notification)

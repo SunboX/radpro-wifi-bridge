@@ -54,8 +54,12 @@ namespace
     constexpr uint8_t kLastInterfaceCandidate = 2;
 }
 
-UsbCdcHost::UsbCdcHost() {}
-UsbCdcHost::~UsbCdcHost() { stop(); }
+UsbCdcHost::UsbCdcHost() : tx_mutex_(xSemaphoreCreateMutex()) {}
+UsbCdcHost::~UsbCdcHost()
+{
+    stop();
+    if (tx_mutex_ && !host_installed_) vSemaphoreDelete(tx_mutex_);
+}
 
 void UsbCdcHost::setDeviceCallbacks(DeviceCb on_connected, DeviceCb on_disconnected)
 {
@@ -93,7 +97,12 @@ bool UsbCdcHost::begin()
 {
     if (running_)
         return true;
-    running_ = true;
+    if (host_installed_) {
+        stop();
+        if (host_installed_) return false;
+    }
+    connected_ = false;
+    disconnect_pending_ = false;
     last_err_ = ESP_OK;
 
 #if __has_include("usb/vcp.hpp")
@@ -106,7 +115,7 @@ bool UsbCdcHost::begin()
 #endif
 
     tx_q_ = xQueueCreate(16, sizeof(TxItem *));
-    tx_mutex_ = xSemaphoreCreateMutex();
+    if (!tx_mutex_) tx_mutex_ = xSemaphoreCreateMutex();
     firmware_rx_ = xQueueCreate(1024, sizeof(uint8_t));
     if (!tx_q_ || !tx_mutex_ || !firmware_rx_)
     {
@@ -118,6 +127,7 @@ bool UsbCdcHost::begin()
     // Try to install the USB host with level-1 IRQ affinity first; if that IRQ line
     // is already taken (ESP_ERR_NOT_FOUND), fall back to the default allocation.
     usb_host_config_t host_cfg = {.skip_phy_setup = false, .intr_flags = ESP_INTR_FLAG_LEVEL1};
+    host_core_ = xPortGetCoreID();
     esp_err_t err = usb_host_install(&host_cfg);
     if (err == ESP_ERR_NOT_FOUND)
     {
@@ -127,27 +137,42 @@ bool UsbCdcHost::begin()
             ESP_LOGW(TAG, "usb_host_install fallback succeeded with intr_flags=0");
     }
     last_err_ = err;
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
+    if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "usb_host_install failed: %s", esp_err_to_name(err));
         stop();
         return false;
     }
 
+    host_installed_ = true;
+    running_ = true;
+    daemon_running_ = true;
+    auto startTask = [this](TaskFunction_t function, const char *name, uint32_t stack,
+                            UBaseType_t priority, TaskHandle_t *handle, std::atomic<bool> &stopped) {
+        stopped = false;
+        if (xTaskCreatePinnedToCore(function, name, stack, this, priority, handle, tskNO_AFFINITY) == pdPASS)
+            return true;
+        stopped = true;
+        return false;
+    };
+    if (!startTask(UsbLibTaskThunk, "usb_lib", 4096, 20, &lib_task_, lib_stopped_)) {
+        last_err_ = ESP_ERR_NO_MEM;
+        stop();
+        return false;
+    }
     usb_host_client_config_t cfg = {
         .is_synchronous = false,
         .max_num_event_msg = 16,
         .async = {.client_event_callback = &UsbCdcHost::DbgClientCb, .callback_arg = this}};
-    if (usb_host_client_register(&cfg, &dbg_client_) == ESP_OK)
-    {
-        xTaskCreatePinnedToCore(DbgClientTaskThunk, "usb_dbg", 4096, this, 19, &dbg_task_, tskNO_AFFINITY);
+    if (usb_host_client_register(&cfg, &dbg_client_) == ESP_OK &&
+        !startTask(DbgClientTaskThunk, "usb_dbg", 4096, 19, &dbg_task_, dbg_stopped_)) {
+        last_err_ = ESP_ERR_NO_MEM;
+        stop();
+        return false;
     }
-
-    if (xTaskCreatePinnedToCore(UsbLibTaskThunk, "usb_lib", 4096, this, 20, &lib_task_, tskNO_AFFINITY) != pdPASS ||
-        xTaskCreatePinnedToCore(CdcTaskThunk, "cdc", 6144, this, 21, &cdc_task_, tskNO_AFFINITY) != pdPASS ||
-        xTaskCreatePinnedToCore(TxTaskThunk, "cdc_tx", 4096, this, 22, &tx_task_, tskNO_AFFINITY) != pdPASS)
-    {
-        ESP_LOGE(TAG, "Failed to create one or more tasks");
+    if (!startTask(CdcTaskThunk, "cdc", 6144, 21, &cdc_task_, cdc_stopped_) ||
+        !startTask(TxTaskThunk, "cdc_tx", 4096, 22, &tx_task_, tx_stopped_)) {
+        last_err_ = ESP_ERR_NO_MEM;
         stop();
         return false;
     }
@@ -156,94 +181,108 @@ bool UsbCdcHost::begin()
     return true;
 }
 
-void UsbCdcHost::stop()
+bool UsbCdcHost::closeDeviceHandles()
 {
-    if (!running_)
-        return;
-    running_ = false;
-    last_err_ = ESP_OK;
-
-    if (tx_task_)
-    {
-        vTaskDelete(tx_task_);
-        tx_task_ = nullptr;
+    connected_ = false;
+    // TX must complete before the driver drains and releases its endpoints.
+    if (tx_mutex_ && xSemaphoreTake(tx_mutex_, pdMS_TO_TICKS(3000)) != pdTRUE) {
+        last_err_ = ESP_ERR_TIMEOUT;
+        return false;
     }
-    if (cdc_task_)
-    {
-        vTaskDelete(cdc_task_);
-        cdc_task_ = nullptr;
-    }
-    if (dev_)
-    {
-        cdc_acm_host_close(dev_);
-        dev_ = nullptr;
+    esp_err_t result = ESP_OK;
+    if (dev_) {
+        result = cdc_acm_host_close(dev_);
+        if (result == ESP_OK) dev_ = nullptr;
     }
 #if __has_include("usb/vcp.hpp")
-    if (vcp_dev_)
-    {
-        (void)vcp_dev_->close();
-        vcp_dev_ = nullptr;
+    if (result == ESP_OK && vcp_dev_) {
+        result = vcp_dev_->close();
+        if (result == ESP_OK) {
+            delete vcp_dev_;
+            vcp_dev_ = nullptr;
+        }
     }
 #endif
-    use_vcp_ = false;
-    connected_vid_ = 0;
-    connected_pid_ = 0;
+    if (result == ESP_OK) {
+        use_vcp_ = false;
+        connected_vid_ = connected_pid_ = 0;
+        ready_after_tick_ = 0;
+        line_buf_.clear();
+        disconnect_pending_ = false;
+    } else {
+        last_err_ = result;
+        ESP_LOGW(TAG, "USB close pending: %s", esp_err_to_name(result));
+    }
+    if (tx_mutex_) xSemaphoreGive(tx_mutex_);
+    return result == ESP_OK;
+}
 
-    if (tx_q_)
-    {
-        TxItem *it = nullptr;
-        while (xQueueReceive(tx_q_, &it, 0) == pdTRUE)
-        {
-            if (it)
-            {
-                free(it->data);
-                delete it;
+void UsbCdcHost::stop()
+{
+    if (!running_ && !host_installed_ && !tx_q_ && !firmware_rx_) return;
+    running_ = false;
+    const TickType_t started = xTaskGetTickCount();
+    auto expired = [started]() { return xTaskGetTickCount() - started >= pdMS_TO_TICKS(6000); };
+    // Let workers release their locks and buffers. Never delete a task in a USB
+    // call, and keep the host daemon alive until client cleanup has completed.
+    while (!tx_stopped_ || !cdc_stopped_ || !dbg_stopped_) {
+        if (expired()) { last_err_ = ESP_ERR_TIMEOUT; return; }
+        vTaskDelay(1);
+    }
+    tx_task_ = cdc_task_ = dbg_task_ = nullptr;
+    if (!closeDeviceHandles()) return;
+    if (dbg_client_) {
+        esp_err_t err = usb_host_client_deregister(dbg_client_);
+        if (err != ESP_OK) { last_err_ = err; return; }
+        dbg_client_ = nullptr;
+    }
+    if (host_installed_) {
+        esp_err_t err = cdc_acm_host_uninstall();
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) { last_err_ = err; return; }
+        usb_host_lib_info_t info = {};
+        for (;;) {
+            if (lib_stopped_) {
+                uint32_t flags = 0;
+                (void)usb_host_device_free_all();
+                (void)usb_host_lib_handle_events(0, &flags);
             }
+            err = usb_host_lib_info(&info);
+            if (err != ESP_OK) { last_err_ = err; return; }
+            if (info.num_clients == 0 && info.num_devices == 0) break;
+            if (expired()) { last_err_ = ESP_ERR_TIMEOUT; return; }
+            vTaskDelay(1);
+        }
+        daemon_running_ = false;
+        while (!lib_stopped_) {
+            if (expired()) { last_err_ = ESP_ERR_TIMEOUT; return; }
+            vTaskDelay(1);
+        }
+        lib_task_ = nullptr;
+        // Drain a final ALL_FREE notification after the daemon has exited.
+        uint32_t flags = 0;
+        (void)usb_host_lib_handle_events(0, &flags);
+        err = usb_host_uninstall();
+        if (err != ESP_OK) { last_err_ = err; return; }
+        host_installed_ = false;
+    }
+    // Stable across restarts: queued senders can wake and observe running_ == false.
+    if (tx_mutex_) xSemaphoreTake(tx_mutex_, portMAX_DELAY);
+    if (tx_q_) {
+        TxItem *item = nullptr;
+        while (xQueueReceive(tx_q_, &item, 0) == pdTRUE) {
+            if (item) { free(item->data); delete item; }
         }
         vQueueDelete(tx_q_);
         tx_q_ = nullptr;
     }
-    if (firmware_rx_)
-    {
-        vQueueDelete(firmware_rx_);
-        firmware_rx_ = nullptr;
-    }
+    if (firmware_rx_) { vQueueDelete(firmware_rx_); firmware_rx_ = nullptr; }
     firmware_mode_ = false;
-    if (tx_mutex_)
-    {
-        vSemaphoreDelete(tx_mutex_);
-        tx_mutex_ = nullptr;
-    }
-
-    if (dbg_task_)
-    {
-        vTaskDelete(dbg_task_);
-        dbg_task_ = nullptr;
-    }
-    if (dbg_client_)
-    {
-        usb_host_client_deregister(dbg_client_);
-        dbg_client_ = nullptr;
-    }
-
-    esp_err_t err = cdc_acm_host_uninstall();
-    if (err != ESP_OK)
-        ESP_LOGW(TAG, "cdc_acm_host_uninstall: %s", esp_err_to_name(err));
-
-    err = usb_host_uninstall();
-    if (err != ESP_OK)
-        ESP_LOGW(TAG, "usb_host_uninstall: %s", esp_err_to_name(err));
-
-    if (lib_task_)
-    {
-        vTaskDelete(lib_task_);
-        lib_task_ = nullptr;
-    }
+    if (tx_mutex_) xSemaphoreGive(tx_mutex_);
 }
 
 bool UsbCdcHost::enqueueRaw(const uint8_t *data, size_t len, uint32_t timeout_ms)
 {
-    if (firmware_mode_ || !data || !len || !tx_q_ || !tx_mutex_)
+    if (!data || !len || !tx_mutex_)
         return false;
 
     auto *item = new TxItem();
@@ -262,7 +301,7 @@ bool UsbCdcHost::enqueueRaw(const uint8_t *data, size_t len, uint32_t timeout_ms
     bool ok = false;
     if (xSemaphoreTake(tx_mutex_, pdMS_TO_TICKS(200)) == pdTRUE)
     {
-        ok = !firmware_mode_ && (xQueueSend(tx_q_, &item, pdMS_TO_TICKS(50)) == pdTRUE);
+        ok = running_ && tx_q_ && !firmware_mode_ && (xQueueSend(tx_q_, &item, pdMS_TO_TICKS(50)) == pdTRUE);
         xSemaphoreGive(tx_mutex_);
     }
     if (!ok)
@@ -320,17 +359,16 @@ bool UsbCdcHost::restart()
 {
     ESP_LOGW(TAG, "Restarting USB host by request.");
     stop();
+    if (host_installed_) return false;
     vTaskDelay(pdMS_TO_TICKS(50));
     return begin();
 }
 
 bool UsbCdcHost::requestRestart()
 {
-    if (restart_requested_)
+    if (restart_requested_.exchange(true))
         return true;
-
-    restart_requested_ = true;
-    if (xTaskCreatePinnedToCore(RestartTaskThunk, "usb_restart", 4096, this, 18, &restart_task_, tskNO_AFFINITY) != pdPASS)
+    if (xTaskCreatePinnedToCore(RestartTaskThunk, "usb_restart", 4096, this, 18, &restart_task_, host_core_) != pdPASS)
     {
         restart_task_ = nullptr;
         restart_requested_ = false;
@@ -497,13 +535,14 @@ void UsbCdcHost::TxTaskThunk(void *arg) { static_cast<UsbCdcHost *>(arg)->txTask
 
 void UsbCdcHost::usbLibTask()
 {
-    while (running_)
+    while (daemon_running_)
     {
         uint32_t flags = 0;
-        usb_host_lib_handle_events(portMAX_DELAY, &flags);
+        usb_host_lib_handle_events(pdMS_TO_TICKS(20), &flags);
         if (flags & USB_HOST_LIB_EVENT_FLAGS_NO_CLIENTS)
             usb_host_device_free_all();
     }
+    lib_stopped_ = true;
     vTaskDelete(nullptr);
 }
 
@@ -531,23 +570,11 @@ void UsbCdcHost::cdcTask()
     dev_cfg.data_cb = &UsbCdcHost::DataCb;
     dev_cfg.user_arg = this;
 
-    // housekeeping in case we were restarted
-    if (dev_)
-    {
-        cdc_acm_host_close(dev_);
-        dev_ = nullptr;
-    }
-    if (vcp_dev_)
-    {
-#if __has_include("usb/vcp.hpp")
-        (void)vcp_dev_->close();
-#endif
-        vcp_dev_ = nullptr;
-    }
-    use_vcp_ = false;
-
     while (running_)
     {
+        if (disconnect_pending_) {
+            if (!closeDeviceHandles()) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
+        }
         // If we aren’t open yet, try to find & open a CDC-ACM interface
         if (!dev_ && !vcp_dev_)
         {
@@ -603,6 +630,7 @@ void UsbCdcHost::cdcTask()
                             (void)vcp_dev_->line_coding_set(&lc);
                     ready_after_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(40);
                             ++connection_generation_;
+                            connected_ = true;
                             if (on_connected_)
                                 on_connected_();
                             return true;
@@ -635,6 +663,7 @@ void UsbCdcHost::cdcTask()
                         (void)configureLineCoding(target_baud_);
                     ready_after_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(40);
                         ++connection_generation_;
+                        connected_ = true;
                         if (on_connected_)
                             on_connected_();
                         return true;
@@ -693,20 +722,11 @@ void UsbCdcHost::cdcTask()
         }
     }
 
-    // Cleanup on task exit
-    if (dev_)
-    {
-        cdc_acm_host_close(dev_);
-        dev_ = nullptr;
-    }
-#if __has_include("usb/vcp.hpp")
-    if (vcp_dev_)
-        (void)vcp_dev_->close();
-    vcp_dev_ = nullptr;
-#endif
-    use_vcp_ = false;
-
+    while (!tx_stopped_) vTaskDelay(1);
+    (void)closeDeviceHandles();
     ESP_LOGI(TAG, "CDC task stopped");
+    cdc_stopped_ = true;
+    vTaskDelete(nullptr);
 }
 
 void UsbCdcHost::txTask()
@@ -719,7 +739,7 @@ void UsbCdcHost::txTask()
             continue;
 
         // Wait for device
-        while (running_ && dev_ == nullptr && vcp_dev_ == nullptr)
+        while (running_ && !isConnected())
             vTaskDelay(pdMS_TO_TICKS(50));
         if (!running_)
         {
@@ -744,7 +764,7 @@ void UsbCdcHost::txTask()
         }
 
         xSemaphoreTake(tx_mutex_, portMAX_DELAY);
-        if (firmware_mode_)
+        if (firmware_mode_ || !isConnected())
         {
             xSemaphoreGive(tx_mutex_);
             free(it->data);
@@ -788,6 +808,7 @@ void UsbCdcHost::txTask()
         }
     }
     ESP_LOGI(TAG, "TX task exit");
+    tx_stopped_ = true;
     vTaskDelete(nullptr);
 }
 
@@ -848,26 +869,15 @@ void UsbCdcHost::onDevEvent(const cdc_acm_host_dev_event_data_t *event)
     switch (event->type)
     {
     case CDC_ACM_HOST_DEVICE_DISCONNECTED:
+        connected_ = false;
         ++connection_generation_;
         ESP_LOGI(TAG, "CDC device disconnected");
-        if (event->data.cdc_hdl)
-            cdc_acm_host_close(event->data.cdc_hdl);
-        dev_ = nullptr;
-        connected_vid_ = 0;
-        connected_pid_ = 0;
+        // The callback runs on the CDC event task. Defer close so that task
+        // can return and drain the canceled transfer callbacks.
+        disconnect_pending_ = true;
+        connected_vid_ = connected_pid_ = 0;
         ready_after_tick_ = 0;
         emitDebugLine("USB diag: CDC device disconnected");
-        if (!line_buf_.isEmpty() && on_line_)
-        {
-            on_line_(line_buf_);
-            line_buf_.clear();
-        }
-#if __has_include("usb/vcp.hpp")
-        if (vcp_dev_)
-            (void)vcp_dev_->close();
-#endif
-        vcp_dev_ = nullptr; // if we were on VCP
-        use_vcp_ = false;
         if (on_disconnected_)
             on_disconnected_();
         break;
@@ -896,6 +906,7 @@ void UsbCdcHost::dbgClientTask()
         if (err != ESP_OK && err != ESP_ERR_TIMEOUT)
             ESP_LOGW(TAG, "dbg handle_events: %s", esp_err_to_name(err));
     }
+    dbg_stopped_ = true;
     vTaskDelete(nullptr);
 }
 

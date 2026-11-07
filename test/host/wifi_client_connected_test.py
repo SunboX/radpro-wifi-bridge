@@ -20,6 +20,8 @@ packages = Path(os.environ.get("PLATFORMIO_CORE_DIR", Path.home() / ".platformio
 framework = Path(os.environ.get("RADPRO_ARDUINO_FRAMEWORK_DIR", packages / "framework-arduinoespressif32"))
 source = framework / "libraries/WiFi/src/WiFiClient.cpp"
 original = source.read_text()
+parser_source = framework / "libraries/WebServer/src/Parsing.cpp"
+original_parser = parser_source.read_text()
 cmake = shutil.which("cmake") or str(packages / "tool-cmake/bin/cmake")
 
 harness = r'''
@@ -76,20 +78,30 @@ with tempfile.TemporaryDirectory(prefix="radpro-wifi-client-") as temporary:
     fixture = work / "libraries/WiFi/src/WiFiClient.cpp"
     fixture.parent.mkdir(parents=True)
     fixture.write_text(original)
+    parser_fixture = work / "libraries/WebServer/src/Parsing.cpp"
+    parser_fixture.parent.mkdir(parents=True)
+    parser_fixture.write_text(original_parser)
     (work / "CMakeLists.txt").write_text(f'''cmake_minimum_required(VERSION 3.16)
 project(wifi_client_patch LANGUAGES CXX)
-add_library(arduino_under_test STATIC "{fixture}")
+add_library(arduino_under_test STATIC "{fixture}" "{parser_fixture}")
 function(idf_component_get_property output component property)
     set(${{output}} arduino_under_test PARENT_SCOPE)
 endfunction()
 include("{ROOT / 'cmake/arduino_wifi_client.cmake'}")
+include("{ROOT / 'cmake/arduino_http_headers.cmake'}")
 get_target_property(patched_sources arduino_under_test SOURCES)
 file(WRITE "${{CMAKE_BINARY_DIR}}/selected-sources.txt" "${{patched_sources}}")
 ''')
     command = [cmake, "-S", str(work), "-B", str(work / "build")]
     subprocess.run(command, check=True, capture_output=True, text=True)
     patched_file = work / "build/framework-patches/WiFiClient.cpp"
-    assert (work / "build/selected-sources.txt").read_text() == str(patched_file)
+    patched_parser = work / "build/framework-patches/Parsing.cpp"
+    assert set((work / "build/selected-sources.txt").read_text().split(';')) == {str(patched_file), str(patched_parser)}
+    parser_text = patched_parser.read_text()
+    assert parser_text.count('headerReader.readLine(client, req,') == 3
+    # Only request/header reads change; multipart/form body reads remain intact.
+    assert parser_text.count("client.readStringUntil('\\r')") == original_parser.count("client.readStringUntil('\\r')") - 3
+    assert (work / "build/framework-patches/HttpHeaderReader.h").read_bytes() == (ROOT / "lib/AppSupport/Http/HttpHeaderReader.h").read_bytes()
     patched = patched_file.read_text()
     assert patched == original.replace(
         "        // recv only sets errno if res is <= 0\n        if (res <= 0){",
@@ -111,6 +123,7 @@ file(WRITE "${{CMAKE_BINARY_DIR}}/selected-sources.txt" "${{patched_sources}}")
     runpy.run_path(str(ROOT / "tools/arduino_wifi_client.py"),
                    init_globals={"env": build_env, "Import": lambda name: None})
     assert build_env.callback(build_env, SourceNode(source)) == patched_file
+    assert build_env.callback(build_env, SourceNode(parser_source)) == patched_parser
     unrelated = SourceNode(work / "other/WiFiClient.cpp")
     assert build_env.callback(build_env, unrelated) is unrelated
     patched_file.unlink()
@@ -134,6 +147,11 @@ file(WRITE "${{CMAKE_BINARY_DIR}}/selected-sources.txt" "${{patched_sources}}")
     fixture.write_text(original.replace("// recv only sets errno if res is <= 0", "// changed upstream"))
     rejected = subprocess.run(command, capture_output=True, text=True)
     assert rejected.returncode != 0 and "review the stale-errno compatibility patch" in rejected.stderr
+    fixture.write_text(original)
+    parser_fixture.write_text(original_parser.replace("String req = client.readStringUntil", "String changed = client.readStringUntil"))
+    rejected = subprocess.run(command, capture_output=True, text=True)
+    assert rejected.returncode != 0 and "review the header compatibility patch" in rejected.stderr
     assert source.read_text() == original
+    assert parser_source.read_text() == original_parser
 
 print("Original stale-errno failure reproduced; patched method preserves healthy sockets and rejects real errors")
