@@ -1,3 +1,5 @@
+<img src="docs/pictures/radpro-icon.svg" width="112" height="112" alt="RadPro WiFi Bridge radiation trefoil icon" />
+
 # RadPro WiFi Bridge (ESP32-S3)
 
 ![RadPro WiFi Bridge](docs/pictures/radpro_wifi_bridge_connected_to_fs-600.jpg)
@@ -62,7 +64,7 @@ See [docs/board-requirements.md](docs/board-requirements.md) if you want to comp
 
 ## Web Installer (ESP Web Tools)
 
-Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.15.20)
+Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.15.21)
 
 Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required. OTA updates of the bridge firmware are also available from the web portal once a network connection is active.
 

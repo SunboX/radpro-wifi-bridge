@@ -25,6 +25,17 @@ Copyright: 2026 André Fiedler
 License: CERN-OHL-S-2.0
 
 Files:
+ data/portal/icon.svg
+ data/portal/favicon.ico
+ data/portal/apple-touch-icon.png
+ data/portal/safari-pinned-tab.svg
+ docs/web-install/favicon.ico
+ docs/web-install/apple-touch-icon.png
+ docs/web-install/safari-pinned-tab.svg
+Copyright: 2026 André Fiedler
+License: CC-BY-SA-4.0
+
+Files:
  docs/web-install/firmware/*.zip
  docs/web-install/firmware/latest/.gitkeep
  docs/web-install/firmware/latest/*.bin

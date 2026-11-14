@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- SPDX-FileCopyrightText: 2026 André Fiedler -->
+  <!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+  <g fill="#000">
+    <path d="M20 64a44 44 0 0 1 22-38.105L55.5 49.278A17 17 0 0 0 47 64Z"/>
+    <path d="M86 25.895A44 44 0 0 1 108 64H81a17 17 0 0 0-8.5-14.722Z"/>
+    <path d="M86 102.105a44 44 0 0 1-44 0l13.5-23.383a17 17 0 0 0 17 0Z"/>
+    <circle cx="64" cy="64" r="9"/>
+  </g>
+</svg>

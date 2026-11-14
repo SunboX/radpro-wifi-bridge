@@ -46,7 +46,13 @@
 namespace
 {
 constexpr const char kPortalHeadElement[] =
+    "<link rel=\"icon\" href=\"/favicon.ico\" sizes=\"16x16 32x32 48x48\">"
+    "<link rel=\"icon\" href=\"/portal/icon.svg\" type=\"image/svg+xml\" sizes=\"any\">"
+    "<link rel=\"apple-touch-icon\" href=\"/portal/apple-touch-icon.png\">"
+    "<link rel=\"mask-icon\" href=\"/portal/safari-pinned-tab.svg\" color=\"#b87813\">"
     "<style>"
+    ".wrap > h1::before{content:'';display:block;width:56px;height:56px;"
+    "margin-bottom:12px;background:url('/portal/icon.svg') center/contain no-repeat;}"
     "html.portal-subtitle-pending body .wrap > h3{visibility:hidden;}"
     "html.portal-subtitle-ready body .wrap > h3{visibility:visible;}"
     "</style>"
@@ -622,6 +628,26 @@ void WiFiPortalService::attachParameters()
         routesRegistered_ = true;
         registerRadProUpdateRoutes();
         log_.println(F("Custom Wi-Fi portal routes: /mqtt /osem /radmon /openradiation /openradiation/dry-run /openradiation/latest /gmc /safecast /metrics /device /device.json /bridge /bridge.json /usb-recovery /backup /backup.json /backup/restore /logs /logs.json /ota /ota/status /ota/fetch /ota/upload/* /restart"));
+
+        manager_.server->on("/favicon.ico", HTTP_GET, [this]() {
+            if (!sendStaticFile("/portal/favicon.ico", "image/x-icon"))
+                sendTemplateError("/portal/favicon.ico");
+        });
+
+        manager_.server->on("/portal/icon.svg", HTTP_GET, [this]() {
+            if (!sendStaticFile("/portal/icon.svg", "image/svg+xml"))
+                sendTemplateError("/portal/icon.svg");
+        });
+
+        manager_.server->on("/portal/apple-touch-icon.png", HTTP_GET, [this]() {
+            if (!sendStaticFile("/portal/apple-touch-icon.png", "image/png"))
+                sendTemplateError("/portal/apple-touch-icon.png");
+        });
+
+        manager_.server->on("/portal/safari-pinned-tab.svg", HTTP_GET, [this]() {
+            if (!sendStaticFile("/portal/safari-pinned-tab.svg", "image/svg+xml"))
+                sendTemplateError("/portal/safari-pinned-tab.svg");
+        });
 
         manager_.server->on("/mqtt", HTTP_GET, [this]() {
             log_.println(F("HTTP GET /mqtt"));
@@ -1939,7 +1965,9 @@ void WiFiPortalService::sendOpenRadiationForm(const String &message)
               "button{padding:10px;border:none;border-radius:4px;background:#2196F3;color:#fff;font-size:15px;cursor:pointer;width:100%;}"
               "button:hover{background:#1976D2;} .wrap{display:inline-block;min-width:260px;max-width:520px;width:100%;text-align:left;}"
               "p.notice{margin:0 0 12px 0;color:#8bc34a;} .toggle{display:flex;align-items:center;gap:10px;font-weight:normal;}"
-              ".toggle input{width:auto;}</style></head><body class='invert'><div class='wrap'><h1>OpenRadiation Settings</h1>");
+              ".toggle input{width:auto;}</style>");
+    html += kPortalHeadElement;
+    html += F("</head><body class='invert'><div class='wrap'><h1>OpenRadiation Settings</h1>");
 
     if (message.length())
     {

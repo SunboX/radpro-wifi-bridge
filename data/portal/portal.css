@@ -33,6 +33,15 @@ h1 {
     margin-top: 0;
 }
 
+.wrap > h1::before {
+    content: '';
+    display: block;
+    width: 56px;
+    height: 56px;
+    margin-bottom: 12px;
+    background: url('/portal/icon.svg') center / contain no-repeat;
+}
+
 section {
     background: #1e1e1e;
     border-radius: 8px;
