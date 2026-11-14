@@ -5,6 +5,7 @@
 #include "OpenSenseMap/OpenSenseMapPublisher.h"
 #include "OpenSenseMap/OpenSenseMapBackoff.h"
 #include "OpenSenseMap/OpenSenseMapTls.h"
+#include "OpenSenseMap/OpenSenseMapRequest.h"
 #include "OpenSenseMap/OpenSenseMapPortalLinks.h"
 #include "ConfigPortal/PortalSecurity.h"
 #include "Publishing/HttpPublishResponse.h"
@@ -53,11 +54,9 @@ namespace
 
 namespace
 {
-    constexpr const char *kHost = "api.opensensemap.org";
+    constexpr const char *kHost = OpenSenseMapRequest::kHost;
     constexpr uint16_t kPort = 443;
-    constexpr unsigned long kMinPublishGapMs = 4000;
-    constexpr unsigned long kRetryBackoffMs = 10000;
-    constexpr unsigned long kMaxRetryBackoffMs = 60000;
+    constexpr unsigned long kMinPublishGapMs = OpenSenseMapBackoff::kMinPublishGapMs;
     constexpr unsigned long kResponseWaitMs = 10000;
 
     int logTlsError(Print &log, WiFiClientSecure &client, const char *context, String *errText = nullptr)
@@ -248,18 +247,8 @@ bool OpenSenseMapPublisher::publishPending()
         if (consecutiveFailures_ < 8)
             ++consecutiveFailures_;
 
-        unsigned long backoff = kRetryBackoffMs;
-        for (uint8_t i = 1; i < consecutiveFailures_; ++i)
-        {
-            if (backoff >= kMaxRetryBackoffMs)
-                break;
-            backoff = backoff * 2;
-            if (backoff > kMaxRetryBackoffMs)
-            {
-                backoff = kMaxRetryBackoffMs;
-                break;
-            }
-        }
+        unsigned long backoff = OpenSenseMapBackoff::retryDelayMs(
+            consecutiveFailures_, health_.snapshot().lastStatusCode);
 
         backoff += static_cast<unsigned long>(random(0, 1000)); // add small jitter
         suppressUntilMs_ = millis() + backoff;
@@ -396,35 +385,19 @@ bool OpenSenseMapPublisher::sendPayload(const JsonDocument &payload)
         return false;
     }
 
-    const size_t contentLength = measureJson(payload);
-
-    // Request line and headers
-    client.print(F("POST /boxes/"));
-    client.print(config_.openSenseBoxId);
-    client.println(F("/data HTTP/1.1"));
-    client.print(F("Host: "));
-    client.println(kHost);
-    client.println(F("Connection: close"));
-    client.println(F("Content-Type: application/json"));
-    client.print(F("Content-Length: "));
-    client.println(contentLength);
-    client.print(F("Authorization: "));
-    client.println(config_.openSenseApiKey);
-    client.print(F("User-Agent: RadPro-WiFi-Bridge/"));
-    client.println(bridgeVersion_);
-    client.println();
-
-    // Body
-    serializeJson(payload, client);
-
-    if (client.getWriteError())
+    const auto sent = OpenSenseMapRequest::send(
+        client, payload, config_.openSenseBoxId.c_str(),
+        config_.openSenseApiKey.c_str(), bridgeVersion_.c_str());
+    if (sent != OpenSenseMapRequest::Result::Sent)
     {
-        log_.println("OpenSenseMap: failed to write request.");
-        health_.noteFailure(millis(), "write failed");
+        const char *error = sent == OpenSenseMapRequest::Result::TooLarge
+                                ? "request too large"
+                                : "incomplete request write";
+        log_.print("OpenSenseMap: ");
+        log_.println(error);
+        health_.noteFailure(millis(), error);
         return false;
     }
-
-    client.flush();
 
     const auto response = HttpPublishResponse::readStatus(
         client,

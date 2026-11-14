@@ -41,6 +41,15 @@ static void testMissingBackoffStaysCleared()
 
 int main()
 {
+    assert(OpenSenseMapBackoff::kMinPublishGapMs == 15000);
+    assert(OpenSenseMapBackoff::retryDelayMs(1, 0) == 10000);
+    assert(OpenSenseMapBackoff::retryDelayMs(2, 503) == 20000);
+    assert(OpenSenseMapBackoff::retryDelayMs(3, 503) == 40000);
+    assert(OpenSenseMapBackoff::retryDelayMs(8, 503) == 60000);
+    const auto rateLimitedUntil = 12000 + OpenSenseMapBackoff::retryDelayMs(1, 429);
+    assert(rateLimitedUntil == 72000);
+    assert(OpenSenseMapBackoff::preserveActiveSuppression(13000, rateLimitedUntil) == rateLimitedUntil);
+    assert(OpenSenseMapBackoff::preserveActiveSuppression(72000, rateLimitedUntil) == 0);
     testActiveBackoffIsPreservedByFreshReadings();
     testExpiredBackoffIsClearedByFreshReadings();
     testMissingBackoffStaysCleared();
