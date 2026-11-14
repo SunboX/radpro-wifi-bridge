@@ -1,0 +1,31 @@
+{
+  "name": "RadPro Log Archive",
+  "version": "0.1.0",
+  "slug": "radpro_log_capture",
+  "description": "Archives RadPro runtime and persistent panic logs on Home Assistant",
+  "arch": [
+    "amd64"
+  ],
+  "startup": "application",
+  "boot": "auto",
+  "init": false,
+  "map": [
+    {
+      "type": "share",
+      "read_only": false
+    }
+  ],
+  "ingress": true,
+  "ingress_port": 8099,
+  "panel_icon": "mdi:file-document-outline",
+  "panel_title": "RadPro logs",
+  "watchdog": "http://[HOST]:[PORT:8099]/health",
+  "options": {
+    "bridge_host": "192.168.1.40",
+    "interval_seconds": 5
+  },
+  "schema": {
+    "bridge_host": "str",
+    "interval_seconds": "int(2,60)"
+  }
+}

@@ -62,7 +62,7 @@ See [docs/board-requirements.md](docs/board-requirements.md) if you want to comp
 
 ## Web Installer (ESP Web Tools)
 
-Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.15.19)
+Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.15.20)
 
 Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required. OTA updates of the bridge firmware are also available from the web portal once a network connection is active.
 
@@ -165,6 +165,11 @@ For screenshots and the full walk-through see [docs/radmon.md](docs/radmon.md).
 Enable the Radmon toggle, enter your station username plus data-sending password, and the bridge submits CPM (and µSv/h when available) once per minute. Disable the feature if you don’t use radmon.org; no HTTP requests are made until valid credentials exist.
 
 ---
+
+## Persistent diagnostic logs
+
+See [the Home Assistant log archive](tools/home_assistant_log_archive/README.md)
+for capture without a connected laptop and reboot-persistent panic records.
 
 ## USB Recovery
 

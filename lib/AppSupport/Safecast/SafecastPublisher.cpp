@@ -95,6 +95,7 @@ void SafecastPublisher::updateConfig()
         }
     }
 
+    configureSampling();
     syncHealthState();
 }
 
@@ -112,24 +113,20 @@ void SafecastPublisher::onCommandResult(DeviceManager::CommandType type, const S
     if (!parseMeasurementValue(value, parsed))
         return;
 
-    switch (type)
-    {
-    case DeviceManager::CommandType::TubeRate:
-        addSample(cpmWindow_, parsed, millis());
-        break;
-    case DeviceManager::CommandType::TubeDoseRate:
-        addSample(doseWindow_, parsed, millis());
-        break;
-    default:
-        break;
-    }
+    if (type != DeviceManager::CommandType::TubeRate && type != DeviceManager::CommandType::TubeDoseRate)
+        return;
+    const uint32_t now = millis();
+    portENTER_CRITICAL(&sampleMux_);
+    samples_.observe(type == DeviceManager::CommandType::TubeDoseRate, parsed, now);
+    portEXIT_CRITICAL(&sampleMux_);
     syncHealthState();
 }
 
 void SafecastPublisher::clearPendingData()
 {
-    cpmWindow_ = SampleWindow{};
-    doseWindow_ = SampleWindow{};
+    portENTER_CRITICAL(&sampleMux_);
+    samples_.clear();
+    portEXIT_CRITICAL(&sampleMux_);
     suppressUntilMs_ = 0;
     syncHealthState();
 }
@@ -237,9 +234,8 @@ void SafecastPublisher::syncHealthState()
 {
     health_.setEnabled(config_.safecastEnabled);
     health_.setPaused(paused_ || (config_.safecastEnabled && lastConfigError_.length()));
-    const bool pending = config_.safecastUnit.equalsIgnoreCase("usv")
-                             ? doseWindow_.hasLatest
-                             : cpmWindow_.hasLatest;
+    const auto samples = sampleSnapshot();
+    const bool pending = samples.doseUnit ? samples.hasDose : samples.hasCpm;
     health_.setPending(config_.safecastEnabled && pending);
 }
 
@@ -262,32 +258,32 @@ bool SafecastPublisher::makeIsoTimestamp(String &out) const
     return true;
 }
 
-void SafecastPublisher::addSample(SampleWindow &window, float value, unsigned long now)
+void SafecastPublisher::configureSampling()
 {
-    RateSample sample;
-    sample.timestampMs = now;
-    sample.value = value;
-    window.samples.push_back(sample);
-    window.sum += value;
-    window.hasLatest = true;
-    window.latestValue = value;
+    const uint64_t intervalMs = static_cast<uint64_t>(config_.safecastUploadIntervalSeconds) * 1000;
+    const uint32_t windowMs = intervalMs > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(intervalMs);
+    const bool collecting = isEnabled() && !paused_;
+    String unit = config_.safecastUnit;
+    unit.trim();
+    const bool doseUnit = unit.equalsIgnoreCase("usv");
+    portENTER_CRITICAL(&sampleMux_);
+    samples_.configure(collecting, doseUnit, windowMs);
+    portEXIT_CRITICAL(&sampleMux_);
 }
 
-void SafecastPublisher::pruneSamples(SampleWindow &window, unsigned long now, unsigned long windowMs)
+void SafecastPublisher::setPaused(bool paused)
 {
-    while (!window.samples.empty())
-    {
-        const unsigned long age = now - window.samples.front().timestampMs;
-        if (age <= windowMs)
-            break;
-        window.sum -= window.samples.front().value;
-        window.samples.erase(window.samples.begin());
-    }
+    paused_ = paused;
+    configureSampling();
+    syncHealthState();
+}
 
-    if (window.samples.empty())
-        window.sum = 0.0f;
-    else if (window.sum < 0.0f)
-        window.sum = 0.0f;
+SafecastSampleBuffer::Snapshot SafecastPublisher::sampleSnapshot() const
+{
+    portENTER_CRITICAL(&sampleMux_);
+    const auto snapshot = samples_.snapshot();
+    portEXIT_CRITICAL(&sampleMux_);
+    return snapshot;
 }
 
 bool SafecastPublisher::buildMeasurementFromAverage(const SafecastConfig::ResolvedConfig &resolved,
@@ -301,10 +297,12 @@ bool SafecastPublisher::buildMeasurementFromAverage(const SafecastConfig::Resolv
         return false;
     }
 
-    SampleWindow &window = resolved.unit == "usv" ? doseWindow_ : cpmWindow_;
-    const unsigned long windowMs = resolved.uploadIntervalSeconds * 1000UL;
-    pruneSamples(window, millis(), windowMs);
-    if (window.samples.empty())
+    float average = 0;
+    const uint32_t now = millis();
+    portENTER_CRITICAL(&sampleMux_);
+    const bool available = samples_.average(now, average);
+    portEXIT_CRITICAL(&sampleMux_);
+    if (!available)
     {
         outError = "no valid measurement available for upload";
         return false;
@@ -316,7 +314,7 @@ bool SafecastPublisher::buildMeasurementFromAverage(const SafecastConfig::Resolv
     outMeasurement.hasValue = true;
     outMeasurement.latitude = resolved.latitude;
     outMeasurement.longitude = resolved.longitude;
-    outMeasurement.value = window.sum / static_cast<float>(window.samples.size());
+    outMeasurement.value = average;
     outMeasurement.unit = resolved.unit;
     outMeasurement.capturedAt = capturedAt;
     outMeasurement.locationName = resolved.locationName;
@@ -339,8 +337,11 @@ bool SafecastPublisher::buildMeasurementFromLatest(const SafecastConfig::Resolve
         return false;
     }
 
-    const SampleWindow &window = resolved.unit == "usv" ? doseWindow_ : cpmWindow_;
-    if (!window.hasLatest)
+    float latest = 0;
+    portENTER_CRITICAL(&sampleMux_);
+    const bool available = samples_.latest(resolved.unit == "usv", latest);
+    portEXIT_CRITICAL(&sampleMux_);
+    if (!available)
     {
         outError = "No current detector reading is available for the selected unit.";
         return false;
@@ -352,7 +353,7 @@ bool SafecastPublisher::buildMeasurementFromLatest(const SafecastConfig::Resolve
     outMeasurement.hasValue = true;
     outMeasurement.latitude = resolved.latitude;
     outMeasurement.longitude = resolved.longitude;
-    outMeasurement.value = window.latestValue;
+    outMeasurement.value = latest;
     outMeasurement.unit = resolved.unit;
     outMeasurement.capturedAt = capturedAt;
     outMeasurement.locationName = resolved.locationName;

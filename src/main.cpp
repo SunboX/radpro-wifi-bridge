@@ -40,6 +40,7 @@
 #include "Ota/OtaUpdateService.h"
 #include "FileSystem/BridgeFileSystem.h"
 #include "Logging/DebugLogStream.h"
+#include "Logging/BridgePanicRecorder.h"
 #include "Publishing/PublisherHealth.h"
 #include "Runtime/CooperativePump.h"
 #include "UsbRecoveryPolicy.h"
@@ -143,6 +144,7 @@ void setup()
     // Bring up both Serial endpoints to be safe
     Serial.begin(115200);
     DBG.begin(115200);
+    BridgePanicRecorder::begin(DBG);
     delay(300);
 
     // Confirm current app as valid to cancel any pending rollback.

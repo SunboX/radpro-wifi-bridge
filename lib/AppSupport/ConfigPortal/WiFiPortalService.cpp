@@ -26,6 +26,7 @@
 #include "Safecast/SafecastProtocol.h"
 #include "Safecast/SafecastPublisher.h"
 #include "Logging/LogCursorWindow.h"
+#include "Logging/BridgePanicRecorder.h"
 #include "Publishing/HttpPublishResponse.h"
 
 #include <Arduino.h>
@@ -37,6 +38,7 @@
 #include <time.h>
 #include <vector>
 #include <esp_system.h>
+#include <esp_ota_ops.h>
 #include <esp_wifi.h>
 #include <ArduinoJson.h>
 #include "AppConfig/UsbRecoverySettings.h"
@@ -834,6 +836,37 @@ void WiFiPortalService::attachParameters()
             TemplateReplacements vars;
             appendCommonTemplateVars(vars);
             sendTemplate("/portal/logs.html", vars);
+        });
+
+        manager_.server->on("/diagnostics/safecast.json", HTTP_GET, [this]() {
+            if (!safecastPublisher_) { sendJson(503, "{\"error\":\"Safecast unavailable\"}"); return; }
+            const auto samples = safecastPublisher_->sampleSnapshot();
+            JsonDocument doc;
+            doc["collecting"] = samples.collecting;
+            doc["doseUnit"] = samples.doseUnit;
+            doc["samples"] = static_cast<uint32_t>(samples.count);
+            doc["capacity"] = static_cast<uint32_t>(SafecastSampleBuffer::kCapacity);
+            doc["capacityDrops"] = samples.capacityDrops;
+            doc["hasLatestCpm"] = samples.hasCpm;
+            doc["hasLatestDose"] = samples.hasDose;
+            doc["historyUsesHeap"] = false;
+            char hash[65];
+            const auto *desc = esp_ota_get_app_description();
+            const char hex[] = "0123456789abcdef";
+            for (size_t n = 0; n < 32; ++n) {
+                hash[n * 2] = hex[desc->app_elf_sha256[n] >> 4];
+                hash[n * 2 + 1] = hex[desc->app_elf_sha256[n] & 15];
+            }
+            hash[64] = 0;
+            doc["elfSha256"] = hash;
+            String body;
+            serializeJson(doc, body);
+            sendJson(200, body);
+        });
+
+        manager_.server->on("/diagnostics/crash.json", HTTP_GET, [this]() {
+            manager_.server->sendHeader("Cache-Control", "no-store");
+            manager_.server->send(200, "application/json", BridgePanicRecorder::json());
         });
 
         manager_.server->on("/logs.json", HTTP_GET, [this]() {

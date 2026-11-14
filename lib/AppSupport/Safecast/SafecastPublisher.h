@@ -3,7 +3,8 @@
 #include <Arduino.h>
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
-#include <vector>
+#include "Safecast/SafecastSampleBuffer.h"
+#include <freertos/FreeRTOS.h>
 
 #include "AppConfig/AppConfig.h"
 #include "DeviceManager.h"
@@ -31,31 +32,17 @@ public:
     void loop();
     void onCommandResult(DeviceManager::CommandType type, const String &value);
     void clearPendingData();
-    void setPaused(bool paused) { paused_ = paused; }
+    void setPaused(bool paused);
+    SafecastSampleBuffer::Snapshot sampleSnapshot() const;
 
     UploadResult sendTestUpload(const AppConfig &configOverride);
 
 private:
-    struct RateSample
-    {
-        unsigned long timestampMs = 0;
-        float value = 0.0f;
-    };
-
-    struct SampleWindow
-    {
-        std::vector<RateSample> samples;
-        float sum = 0.0f;
-        bool hasLatest = false;
-        float latestValue = 0.0f;
-    };
-
     bool isEnabled() const;
     bool publishPending();
     void syncHealthState();
     bool makeIsoTimestamp(String &out) const;
-    void addSample(SampleWindow &window, float value, unsigned long now);
-    void pruneSamples(SampleWindow &window, unsigned long now, unsigned long windowMs);
+    void configureSampling();
     bool buildMeasurementFromAverage(const SafecastConfig::ResolvedConfig &resolved,
                                      SafecastPayload::Measurement &outMeasurement,
                                      String &outError);
@@ -77,8 +64,8 @@ private:
     String bridgeVersion_;
     PublisherHealth &health_;
     String lastConfigError_;
-    SampleWindow cpmWindow_;
-    SampleWindow doseWindow_;
+    SafecastSampleBuffer samples_;
+    mutable portMUX_TYPE sampleMux_ = portMUX_INITIALIZER_UNLOCKED;
     unsigned long lastAttemptMs_ = 0;
     unsigned long suppressUntilMs_ = 0;
     bool paused_ = false;
