@@ -9,7 +9,6 @@
 #include "OpenSenseMap/OpenSenseMapPortalLinks.h"
 #include "ConfigPortal/PortalSecurity.h"
 #include "Publishing/HttpPublishResponse.h"
-#include "Runtime/CooperativePump.h"
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include "ConfigPortal/WiFiPortalService.h"
@@ -57,7 +56,7 @@ namespace
     constexpr const char *kHost = OpenSenseMapRequest::kHost;
     constexpr uint16_t kPort = 443;
     constexpr unsigned long kMinPublishGapMs = OpenSenseMapBackoff::kMinPublishGapMs;
-    constexpr unsigned long kResponseWaitMs = 10000;
+    constexpr unsigned long kResponseWaitMs = 60000;
 
     int logTlsError(Print &log, WiFiClientSecure &client, const char *context, String *errText = nullptr)
     {
@@ -108,13 +107,33 @@ void OpenSenseMapPublisher::updateConfig()
 void OpenSenseMapPublisher::loop()
 {
     syncHealthState();
+    if (awaitingResponse_ && (paused_ || cancelResponse_ || !isEnabled()))
+    {
+        client_.stop();
+        awaitingResponse_ = false;
+        cancelResponse_ = false;
+    }
     if (paused_)
         return;
-    publishPending();
+    if (awaitingResponse_)
+        pollResponse();
+    else
+        publishPending();
+}
+
+void OpenSenseMapPublisher::setPaused(bool paused)
+{
+    paused_ = paused;
+    if (paused_)
+    {
+        client_.stop();
+        awaitingResponse_ = false;
+    }
 }
 
 void OpenSenseMapPublisher::clearPendingData()
 {
+    cancelResponse_ = true;
     pendingTubeValue_ = "";
     pendingDoseValue_ = "";
     haveTubeValue_ = false;
@@ -142,6 +161,7 @@ void OpenSenseMapPublisher::onCommandResult(DeviceManager::CommandType type, con
         // Tube values on their own are not published until we also have a dose reading.
         break;
     case DeviceManager::CommandType::TubeDoseRate:
+        ++measurementGeneration_;
         pendingDoseValue_ = value;
         haveDoseValue_ = true;
         if (haveTubeValue_)
@@ -171,6 +191,7 @@ bool OpenSenseMapPublisher::isEnabled() const
 
 bool OpenSenseMapPublisher::publishPending()
 {
+    cancelResponse_ = false;
     if (paused_)
     {
         syncHealthState();
@@ -214,6 +235,7 @@ bool OpenSenseMapPublisher::publishPending()
         return true;
     }
 
+    uploadedGeneration_ = measurementGeneration_;
     payloadDoc_.clear();
     JsonArray arr = payloadDoc_.to<JsonArray>();
     JsonObject tubeObj = arr.add<JsonObject>();
@@ -232,12 +254,26 @@ bool OpenSenseMapPublisher::publishPending()
     lastTlsErrorText_.clear();
     lastAttemptMs_ = now;
     health_.noteAttempt(now);
-    bool ok = sendPayload(payloadDoc_);
-    if (ok)
+    if (!sendPayload(payloadDoc_))
+        finishUpload(false);
+    syncHealthState();
+    return true;
+}
+
+void OpenSenseMapPublisher::finishUpload(bool success)
+{
+    client_.stop();
+    awaitingResponse_ = false;
+    if (success)
     {
-        pendingPublish_ = false;
-        haveTubeValue_ = false;
-        haveDoseValue_ = false;
+        // USB replies can update the queue while the HTTP response is pending.
+        // Keep those newer readings for the next upload.
+        if (measurementGeneration_ == uploadedGeneration_)
+        {
+            pendingPublish_ = false;
+            haveTubeValue_ = false;
+            haveDoseValue_ = false;
+        }
         lastAttemptMs_ = millis();
         consecutiveFailures_ = 0;
         suppressUntilMs_ = 0;
@@ -246,23 +282,17 @@ bool OpenSenseMapPublisher::publishPending()
     {
         if (consecutiveFailures_ < 8)
             ++consecutiveFailures_;
-
-        unsigned long backoff = OpenSenseMapBackoff::retryDelayMs(
-            consecutiveFailures_, health_.snapshot().lastStatusCode);
-
-        backoff += static_cast<unsigned long>(random(0, 1000)); // add small jitter
+        const unsigned long backoff = OpenSenseMapBackoff::retryDelayMs(
+            consecutiveFailures_, health_.snapshot().lastStatusCode) +
+            static_cast<unsigned long>(random(0, 1000));
         suppressUntilMs_ = millis() + backoff;
         log_.print(F("OpenSenseMap: will retry in "));
         log_.print(backoff / 1000);
         log_.println(F("s"));
-
         if (OpenSenseMapTls::isCtrDrbgInputTooLarge(lastTlsErrorCode_))
-        {
             log_.println(F("OpenSenseMap: TLS CTR_DRBG input-too-large; reboot or check Wi-Fi stability/time sync. This is an ESP32 mbedTLS quirk."));
-        }
     }
     syncHealthState();
-    return true;
 }
 
 void OpenSenseMapPublisher::syncHealthState()
@@ -367,7 +397,8 @@ void OpenSenseMapPublisher::SendPortalForm(WiFiPortalService &portal, const Stri
 
 bool OpenSenseMapPublisher::sendPayload(const JsonDocument &payload)
 {
-    WiFiClientSecure client;
+    auto &client = client_;
+    client.stop();
     client.setTimeout(3);
     client.setHandshakeTimeout(5);
     client.setCACert(kOpenSenseMapRootCa);
@@ -399,19 +430,25 @@ bool OpenSenseMapPublisher::sendPayload(const JsonDocument &payload)
         return false;
     }
 
-    const auto response = HttpPublishResponse::readStatus(
-        client,
-        kResponseWaitMs,
-        []() { return millis(); },
-        []() { CooperativePump::service(); });
+    responseStartedAt_ = millis();
+    responseReader_.begin(responseStartedAt_, kResponseWaitMs);
+    awaitingResponse_ = true;
+    return true;
+}
 
+void OpenSenseMapPublisher::pollResponse()
+{
+    if (!responseReader_.poll(client_, millis()))
+        return;
+    const auto &response = responseReader_.result();
+    const uint32_t elapsed = millis() - responseStartedAt_;
     if (!response.success)
     {
         switch (response.failure)
         {
         case HttpPublishResponse::FailureKind::NoResponse:
             log_.print(F("OpenSenseMap: no response before "));
-            if (client.connected())
+            if (client_.connected())
                 log_.println(F("timeout"));
             else
                 log_.println(F("disconnect"));
@@ -439,13 +476,20 @@ bool OpenSenseMapPublisher::sendPayload(const JsonDocument &payload)
         case HttpPublishResponse::FailureKind::None:
             break;
         }
-        return false;
+        log_.print(F("OpenSenseMap: response wait "));
+        log_.print(elapsed);
+        log_.println(F("ms"));
+        finishUpload(false);
+        return;
     }
 
     health_.noteSuccess(millis(), response.statusCode, response.statusLine);
 
-    // The response body is unused; do not wait indefinitely for peer closure.
-    client.stop();
-
-    return true;
+    if (elapsed >= 5000)
+    {
+        log_.print(F("OpenSenseMap: slow response accepted after "));
+        log_.print(elapsed);
+        log_.println(F("ms"));
+    }
+    finishUpload(true);
 }

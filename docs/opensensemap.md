@@ -50,6 +50,7 @@ You need four values for the RadPro bridge:
 - Tube rate and dose rate are queued until both are available, then sent together via HTTPS with at least 15 seconds between successful uploads. MQTT readings keep their usual cadence.
 - Wi-Fi/API failures trigger retries with a short back-off; nothing is sent while the feature is disabled or IDs are missing.
 - HTTP 429 responses pause uploads for at least one minute before retrying with the latest readings.
+- Replies are polled from the main loop with a 60-second deadline. Detector polling, MQTT telemetry and the web interface continue while OpenSenseMap is slow. Fragmented HTTP status lines are kept until the complete line arrives.
 
 ## 4. Verify Data Flow
 
@@ -63,6 +64,7 @@ You need four values for the RadPro bridge:
 | `OpenSenseMap: connect failed` | Wi-Fi or DNS issue; verify network connectivity. |
 | HTTP 429 | The API is rate limiting uploads. The bridge waits at least one minute before retrying; other devices using the same public IP can share the limit. |
 | `OpenSenseMap: incomplete request write` | The TLS connection ended before the full request was sent. The bridge records a failed upload and retries after back-off. |
+| `OpenSenseMap: no response before timeout` | No complete HTTP status line arrived within 60 seconds. The bridge closes the connection and retries after back-off; a timeout does not prove that the server discarded the measurement. |
 | HTTP 4xx/5xx errors | Re-check Box ID, API key, sensor IDs; ensure the Access Token hasn’t been revoked. |
 | No data in graph | Make sure both sensor IDs are set— tube and dose are uploaded together. |
 

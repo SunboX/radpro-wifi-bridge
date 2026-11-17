@@ -9,9 +9,11 @@
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
+#include <atomic>
 #include "AppConfig/AppConfig.h"
 #include "DeviceManager.h"
 #include "Publishing/PublisherHealth.h"
+#include "Publishing/HttpPublishStatusReader.h"
 
 class WebServer;
 class LedController;
@@ -27,7 +29,7 @@ public:
     void loop();
     void onCommandResult(DeviceManager::CommandType type, const String &value);
     void clearPendingData();
-    void setPaused(bool paused) { paused_ = paused; }
+    void setPaused(bool paused);
     static void SendPortalForm(WiFiPortalService &portal, const String &message = String());
     static void HandlePortalPost(WebServer &server,
                                  AppConfig &config,
@@ -40,6 +42,8 @@ private:
     bool isEnabled() const;
     bool publishPending();
     bool sendPayload(const JsonDocument &payload);
+    void pollResponse();
+    void finishUpload(bool success);
     void syncHealthState();
 
     AppConfig &config_;
@@ -57,5 +61,12 @@ private:
     int lastTlsErrorCode_ = 0;
     String lastTlsErrorText_;
     bool paused_ = false;
+    WiFiClientSecure client_;
+    HttpPublishResponse::StatusReader responseReader_;
+    bool awaitingResponse_ = false;
+    std::atomic<bool> cancelResponse_{false};
+    uint32_t responseStartedAt_ = 0;
+    std::atomic<uint32_t> measurementGeneration_{0};
+    uint32_t uploadedGeneration_ = 0;
     JsonDocument payloadDoc_;
 };
