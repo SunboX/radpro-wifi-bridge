@@ -5,6 +5,7 @@
 #include "BridgeInfoPage.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
+#include "Network/BridgeDnsResolver.h"
 
 BridgeInfoPage::BridgeInfoPage(const PublisherHealth &openSenseMapHealth,
                                const PublisherHealth &gmcMapHealth,
@@ -51,6 +52,16 @@ String BridgeInfoPage::collectJson() const
     doc["bridgeFirmware"] = BRIDGE_FIRMWARE_VERSION;
     doc["heapFree"] = ESP.getFreeHeap();
     doc["heapMax"] = ESP.getMaxAllocHeap();
+    const auto resolver = BridgeDnsResolver::snapshot();
+    JsonObject dns = doc["dns"].to<JsonObject>();
+    dns["ready"] = resolver.ready;
+    dns["pending"] = resolver.pending;
+    dns["lookups"] = resolver.lookups;
+    dns["successes"] = resolver.successes;
+    dns["failures"] = resolver.failures;
+    dns["timeouts"] = resolver.timeouts;
+    dns["busy"] = resolver.busy;
+    dns["lateCompletions"] = resolver.lateCompletions;
 
     wifi_mode_t mode;
     esp_wifi_get_mode(&mode);

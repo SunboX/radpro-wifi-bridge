@@ -43,6 +43,7 @@
 #include "Logging/BridgePanicRecorder.h"
 #include "Publishing/PublisherHealth.h"
 #include "Runtime/CooperativePump.h"
+#include "Network/BridgeDnsResolver.h"
 #include "UsbRecoveryPolicy.h"
 #include "RadProUpdate/RadProUpdateService.h"
 
@@ -215,6 +216,10 @@ void setup()
     ledController.update();
 
     diagnostics.initialize();
+    if (BridgeDnsResolver::begin())
+        DBG.println("Thread-safe DNS resolver active (15000 ms caller deadline).");
+    else
+        DBG.println("DNS resolver unavailable: worker allocation failed.");
     CooperativePump::setCallback(serviceCooperativeTasksDuringNetworkWait);
 
     // Record start time for non-blocking startup delay

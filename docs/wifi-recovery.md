@@ -24,3 +24,23 @@ a fix for the separate SYSTIMER/interrupt-watchdog stalls reported in issue #21.
 A short successful reconnect test cannot rule out a failure that previously took
 days to appear. Diagnose such a failure with a continuous serial log including
 the reset reason and panic backtrace.
+
+## DNS request safety
+
+The bundled Arduino 2.0.17 resolver called lwIP's raw DNS API from an application
+task and passed the caller's `IPAddress` to a callback. That callback could run
+after the 15-second caller deadline, when the caller's storage was no longer
+valid. The raw API also requires access from lwIP's TCP/IP thread.
+
+The bridge patches that entry point at build time. Hostname resolution now uses
+the thread-safe socket API on one persistent worker. Its fixed request buffer
+stays owned by the worker until all DNS retries finish. A caller still waits at
+most 15 seconds for its lookup; a late answer is discarded without touching the
+caller. While an abandoned lookup is still running, another hostname lookup
+fails safely as busy. Numeric IP addresses retain their direct fast path.
+
+`/bridge.json` includes a `dns` object with readiness, pending state and counters
+for lookups, successes, failures, caller timeouts, busy returns and late worker
+completions. The Home Assistant archive captures these with its regular telemetry.
+This fixes the confirmed unsafe resolver paths; it does not establish the cause
+of every DNS panic or the original SYSTIMER watchdog report.
