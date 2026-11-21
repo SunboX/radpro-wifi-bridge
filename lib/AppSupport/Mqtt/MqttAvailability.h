@@ -7,7 +7,9 @@
 
 namespace MqttAvailability
 {
-constexpr uint16_t kKeepAliveSeconds = 15;
+// Allow brief Wi-Fi interruptions and bounded network waits without dropping
+// the broker session. The separate socket timeout still bounds MQTT reads.
+constexpr uint16_t kKeepAliveSeconds = 30;
 constexpr uint16_t kSocketTimeoutSeconds = 3;
 
 // Presence belongs to the bridge, even before a detector ID is known.

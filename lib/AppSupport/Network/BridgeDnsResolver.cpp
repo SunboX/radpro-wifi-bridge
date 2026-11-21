@@ -16,6 +16,8 @@ constexpr uint32_t kWaitMs = 15000;
 BridgeDns::Request request;
 QueueHandle_t queue = nullptr;
 SemaphoreHandle_t callers = nullptr;
+TaskHandle_t serviceTask = nullptr;
+void (*serviceWhileWaiting)() = nullptr;
 std::atomic<bool> ready{false};
 std::atomic<uint32_t> lookups{0}, successes{0}, failures{0}, timeouts{0}, busy{0}, late{0};
 
@@ -43,7 +45,7 @@ void worker(void *)
 }
 }
 
-bool BridgeDnsResolver::begin()
+bool BridgeDnsResolver::begin(void (*service)())
 {
     if (ready.load())
         return true;
@@ -57,6 +59,8 @@ bool BridgeDnsResolver::begin()
         callers = nullptr;
         return false;
     }
+    serviceTask = xTaskGetCurrentTaskHandle();
+    serviceWhileWaiting = service;
     ready.store(true);
     return true;
 }
@@ -92,8 +96,13 @@ extern "C" int radpro_resolve_hostname(const char *hostname, uint32_t *address)
         return 0;
     }
     const TickType_t startedAt = xTaskGetTickCount();
+    const bool serviceMqtt = serviceWhileWaiting && xTaskGetCurrentTaskHandle() == serviceTask;
     while (!request.complete() && xTaskGetTickCount() - startedAt < pdMS_TO_TICKS(kWaitMs))
+    {
+        if (serviceMqtt)
+            serviceWhileWaiting();
         vTaskDelay(pdMS_TO_TICKS(10));
+    }
     bool ok = false;
     if (request.complete())
     {

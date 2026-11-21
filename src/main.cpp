@@ -216,7 +216,7 @@ void setup()
     ledController.update();
 
     diagnostics.initialize();
-    if (BridgeDnsResolver::begin())
+    if (BridgeDnsResolver::begin([]() { mqttPublisher.serviceConnection(); }))
         DBG.println("Thread-safe DNS resolver active (15000 ms caller deadline).");
     else
         DBG.println("DNS resolver unavailable: worker allocation failed.");

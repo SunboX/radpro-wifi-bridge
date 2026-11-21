@@ -41,8 +41,10 @@ Once connected, every RadPro response is forwarded to MQTT. The bridge publishes
 
 Every discovered entity uses this availability topic. On an unexpected power or
 Wi-Fi loss, the MQTT broker publishes the retained `offline` Last Will. The
-15-second MQTT keepalive lets the broker detect a silent connection, typically
-within about 23 seconds. Pausing publishing for an update, disabling MQTT, or
+30-second MQTT keepalive gives brief network interruptions time to recover.
+The broker can publish the Last Will after about 45 seconds without an MQTT
+packet. The bridge also services the MQTT connection while waiting for DNS.
+Pausing publishing for an update, disabling MQTT, or
 changing MQTT settings sends `offline` before disconnecting. Reconnection sends
 `online` and republishes discovery and retained readings. Existing entity unique
 IDs and telemetry topics are unchanged. Availability describes the bridge's

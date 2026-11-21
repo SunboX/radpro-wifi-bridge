@@ -17,8 +17,9 @@ struct Snapshot
     uint32_t busy;
     uint32_t lateCompletions;
 };
-// Call once during setup, before starting Wi-Fi services.
-bool begin();
+// The optional callback runs only on the setup task, while it awaits DNS.
+// It must not start another lookup or call into the web portal.
+bool begin(void (*serviceWhileWaiting)() = nullptr);
 Snapshot snapshot();
 }
 
