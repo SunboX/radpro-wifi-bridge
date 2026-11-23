@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "NetworkStatus.h"
 #include "Radmon/RadmonPublisher.h"
 
 #include <WiFi.h>
@@ -129,7 +130,7 @@ bool RadmonPublisher::publishPending()
         return true;
     }
 
-    if (WiFi.status() != WL_CONNECTED)
+    if (!NetworkStatus::connected())
     {
         syncHealthState();
         return true;
@@ -350,7 +351,7 @@ void RadmonPublisher::HandlePortalPost(WebServer &server,
 
 void RadmonPublisher::SendPortalForm(WiFiPortalService &portal, const String &message)
 {
-    if (!portal.manager_.server)
+    if (!portal.activeServer())
         return;
 
     String notice = WiFiPortalService::htmlEscape(message);

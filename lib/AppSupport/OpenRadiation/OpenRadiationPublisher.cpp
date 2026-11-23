@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "NetworkStatus.h"
 #include "OpenRadiation/OpenRadiationPublisher.h"
 #include "OpenRadiation/OpenRadiationMeasurementMetadata.h"
 #include "OpenRadiation/OpenRadiationPayload.h"
@@ -160,7 +161,7 @@ bool OpenRadiationPublisher::publishPending()
         return true;
     }
 
-    if (WiFi.status() != WL_CONNECTED)
+    if (!NetworkStatus::connected())
     {
         syncHealthState();
         return true;

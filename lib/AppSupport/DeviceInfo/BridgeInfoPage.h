@@ -7,6 +7,7 @@
 #pragma once
 
 #include <WiFiManager.h>
+#include <WebServer.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include "Publishing/PublisherHealth.h"
@@ -22,6 +23,8 @@ public:
 
     void handlePage(WiFiManager *manager);
     void handleJson(WiFiManager *manager);
+    void handlePage(WebServer *server);
+    void handleJson(WebServer *server);
 
 private:
     String collectJson() const;

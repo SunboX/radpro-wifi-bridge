@@ -20,8 +20,8 @@ void WiFiPortalService::sendUsbRecoveryForm(const char *noticeKey, bool error)
 void WiFiPortalService::handleUsbRecoveryPost()
 {
     uint32_t seconds = 0;
-    if (manager_.server->hasArg("enabled") &&
-        !UsbRecoverySettings::parseMinutes(manager_.server->arg("timeoutMinutes"), seconds))
+    if (activeServer()->hasArg("enabled") &&
+        !UsbRecoverySettings::parseMinutes(activeServer()->arg("timeoutMinutes"), seconds))
     {
         sendUsbRecoveryForm("T_USB_RECOVERY_INVALID", true);
         return;

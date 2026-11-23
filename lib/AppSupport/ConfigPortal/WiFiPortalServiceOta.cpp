@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "NetworkStatus.h"
 #include "ConfigPortal/WiFiPortalService.h"
 #include "FileSystem/BridgeFileSystem.h"
 
@@ -39,17 +40,17 @@ namespace
 
 void WiFiPortalService::sendJson(int code, const String &body)
 {
-    if (!manager_.server)
+    if (!activeServer())
         return;
-    manager_.server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    manager_.server->sendHeader("Pragma", "no-cache");
-    manager_.server->sendHeader("Expires", "0");
-    manager_.server->send(code, "application/json", body);
+    activeServer()->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    activeServer()->sendHeader("Pragma", "no-cache");
+    activeServer()->sendHeader("Expires", "0");
+    activeServer()->send(code, "application/json", body);
 }
 
 void WiFiPortalService::sendOtaPage(const String &message)
 {
-    if (!manager_.server)
+    if (!activeServer())
         return;
 
     bool isError = message.startsWith(F("ERROR:"));
@@ -163,7 +164,7 @@ void WiFiPortalService::refreshLatestRemoteVersion(bool force)
 
 void WiFiPortalService::handleOtaStatus()
 {
-    if (!manager_.server)
+    if (!activeServer())
         return;
 
     refreshLatestRemoteVersion(false);
@@ -206,7 +207,7 @@ void WiFiPortalService::handleOtaStatus()
 
 void WiFiPortalService::handleOtaFetch()
 {
-    if (!manager_.server)
+    if (!activeServer())
         return;
 
     if (otaTaskHandle_)
@@ -230,10 +231,10 @@ void WiFiPortalService::handleOtaFetch()
         return;
     }
 
-    if (WiFi.status() != WL_CONNECTED)
+    if (!NetworkStatus::connected())
     {
         JsonDocument doc;
-        doc["error"] = F("Wi-Fi is not connected.");
+        doc["error"] = F("Network is not connected.");
         String body;
         serializeJson(doc, body);
         sendJson(503, body);
@@ -271,7 +272,7 @@ void WiFiPortalService::handleOtaFetch()
 
 void WiFiPortalService::handleOtaUploadBegin()
 {
-    if (!manager_.server)
+    if (!activeServer())
         return;
 
     if (otaTaskHandle_)
@@ -284,7 +285,7 @@ void WiFiPortalService::handleOtaUploadBegin()
         return;
     }
 
-    String manifest = manager_.server->arg("plain");
+    String manifest = activeServer()->arg("plain");
     manifest.trim();
     if (!manifest.length())
     {
@@ -322,7 +323,7 @@ void WiFiPortalService::handleOtaUploadBegin()
 
 void WiFiPortalService::handleOtaUploadPartBegin()
 {
-    if (!manager_.server)
+    if (!activeServer())
         return;
 
     if (!otaService_.status().busy)
@@ -335,9 +336,9 @@ void WiFiPortalService::handleOtaUploadPartBegin()
         return;
     }
 
-    String path = manager_.server->arg("path");
-    String offsetArg = manager_.server->arg("offset");
-    String sizeArg = manager_.server->arg("size");
+    String path = activeServer()->arg("path");
+    String offsetArg = activeServer()->arg("offset");
+    String sizeArg = activeServer()->arg("size");
     path.trim();
     offsetArg.trim();
     sizeArg.trim();
@@ -378,7 +379,7 @@ void WiFiPortalService::handleOtaUploadPartBegin()
 
 void WiFiPortalService::handleOtaUploadPartChunk()
 {
-    if (!manager_.server)
+    if (!activeServer())
         return;
 
     if (!otaService_.status().busy)
@@ -391,7 +392,7 @@ void WiFiPortalService::handleOtaUploadPartChunk()
         return;
     }
 
-    String encoded = manager_.server->arg("plain");
+    String encoded = activeServer()->arg("plain");
     encoded.trim();
     String error;
     if (!decodeBase64Chunk(encoded, otaChunkBuffer_, error))
@@ -431,7 +432,7 @@ void WiFiPortalService::handleOtaUploadPartChunk()
 
 void WiFiPortalService::handleOtaUploadPartFinish()
 {
-    if (!manager_.server)
+    if (!activeServer())
         return;
 
     if (!otaService_.status().busy)
@@ -456,7 +457,7 @@ void WiFiPortalService::handleOtaUploadPartFinish()
         return;
     }
 
-    String path = manager_.server->arg("path");
+    String path = activeServer()->arg("path");
     if (path.length())
         setOtaMessage(String(F("Finished ")) + path);
 
@@ -469,7 +470,7 @@ void WiFiPortalService::handleOtaUploadPartFinish()
 
 void WiFiPortalService::handleOtaUploadFinish()
 {
-    if (!manager_.server)
+    if (!activeServer())
         return;
 
     if (!otaService_.finish())
@@ -498,7 +499,7 @@ void WiFiPortalService::handleOtaUploadFinish()
 
 void WiFiPortalService::handleOtaCancel()
 {
-    if (!manager_.server)
+    if (!activeServer())
         return;
 
     otaService_.abort(F("Cancelled by user."));
@@ -557,7 +558,7 @@ bool WiFiPortalService::parseManifestParts(const String &manifestJson, std::vect
 
 bool WiFiPortalService::fetchRemoteManifest(String &manifestJson, String &version, String &error)
 {
-    if (WiFi.status() != WL_CONNECTED)
+    if (!NetworkStatus::connected())
     {
         error = F("Wi-Fi disconnected.");
         return false;
@@ -601,7 +602,7 @@ bool WiFiPortalService::fetchRemoteManifest(String &manifestJson, String &versio
 
 bool WiFiPortalService::downloadRemotePart(const String &baseUrl, const String &path, uint32_t offset, String &error)
 {
-    if (WiFi.status() != WL_CONNECTED)
+    if (!NetworkStatus::connected())
     {
         error = F("Wi-Fi disconnected.");
         return false;

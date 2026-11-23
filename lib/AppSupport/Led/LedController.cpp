@@ -4,8 +4,14 @@
 
 #include "Led/LedController.h"
 
-#ifndef RGB_BUILTIN
-#define RGB_BUILTIN 48
+#ifndef RADPRO_RGB_LED_PIN
+#ifdef RADPRO_WAVESHARE_ESP32_S3_ETH
+#define RADPRO_RGB_LED_PIN 21
+#elif defined(RGB_BUILTIN)
+#define RADPRO_RGB_LED_PIN RGB_BUILTIN
+#else
+#define RADPRO_RGB_LED_PIN 48
+#endif
 #endif
 
 namespace
@@ -114,7 +120,7 @@ void LedController::applyColor(const Color &color)
 {
     if (color.r == lastColor_.r && color.g == lastColor_.g && color.b == lastColor_.b)
         return;
-    neopixelWrite(RGB_BUILTIN, color.r, color.g, color.b);
+    neopixelWrite(RADPRO_RGB_LED_PIN, color.r, color.g, color.b);
     lastColor_ = color;
 }
 

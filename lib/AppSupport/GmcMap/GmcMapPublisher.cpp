@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "NetworkStatus.h"
 #include "GmcMap/GmcMapPublisher.h"
 
 #include <WiFi.h>
@@ -136,7 +137,7 @@ bool GmcMapPublisher::publishPending()
         return true;
     }
 
-    if (WiFi.status() != WL_CONNECTED)
+    if (!NetworkStatus::connected())
     {
         syncHealthState();
         return true;
@@ -288,7 +289,7 @@ void GmcMapPublisher::HandlePortalPost(WebServer &server,
 
 void GmcMapPublisher::SendPortalForm(WiFiPortalService &portal, const String &message)
 {
-    if (!portal.manager_.server)
+    if (!portal.activeServer())
         return;
 
     String notice = WiFiPortalService::htmlEscape(message);
