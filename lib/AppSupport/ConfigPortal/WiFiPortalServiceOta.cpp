@@ -560,7 +560,7 @@ bool WiFiPortalService::fetchRemoteManifest(String &manifestJson, String &versio
 {
     if (!NetworkStatus::connected())
     {
-        error = F("Wi-Fi disconnected.");
+        error = F("Network disconnected.");
         return false;
     }
 
@@ -604,7 +604,7 @@ bool WiFiPortalService::downloadRemotePart(const String &baseUrl, const String &
 {
     if (!NetworkStatus::connected())
     {
-        error = F("Wi-Fi disconnected.");
+        error = F("Network disconnected.");
         return false;
     }
 

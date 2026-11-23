@@ -208,7 +208,7 @@ SafecastPublisher::UploadResult SafecastPublisher::sendTestUpload(const AppConfi
     UploadResult result;
     if (!NetworkStatus::connected())
     {
-        result.errorMessage = "Wi-Fi is not connected.";
+        result.errorMessage = "Network is not connected.";
         return result;
     }
 

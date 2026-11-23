@@ -48,13 +48,6 @@
 
 namespace
 {
-constexpr int kEthSclkPin = 13;
-constexpr int kEthMisoPin = 12;
-constexpr int kEthMosiPin = 11;
-constexpr int kEthCsPin = 14;
-constexpr int kEthResetPin = 9;
-constexpr int kEthInterruptPin = 10;
-constexpr int kEthPhyAddress = 1;
 constexpr unsigned long kEthernetNoLinkGraceMs = 3000;
 constexpr unsigned long kEthernetDhcpWaitMs = 12000;
 
