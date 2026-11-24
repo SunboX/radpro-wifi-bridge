@@ -4,19 +4,31 @@
 
 #pragma once
 #include <cstdint>
+#include <mutex>
+#include "UsbAttachDelayPolicy.h"
 
 // Tracks real detector responses, independently of USB attach/host restart events.
 class UsbRecoveryWatchdog
 {
 public:
-    void recordResponse(uint32_t now)
+    enum class Action { None, WaitForTelemetry, Restart };
+
+    bool recordResponse(uint32_t now)
     {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const bool firstResponse = !armed_;
         armed_ = true;
         lastResponseMs_ = now;
+        waitingForTelemetry_ = false;
+        return firstResponse;
     }
 
-    void reset() { armed_ = false; }
-    bool armed() const { return armed_; }
+    void reset()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        armed_ = false;
+        waitingForTelemetry_ = false;
+    }
 
     static uint32_t effectiveTimeoutMs(uint32_t timeoutSeconds, uint32_t readIntervalMs)
     {
@@ -30,17 +42,35 @@ public:
         return pollGraceMs > configuredMs ? static_cast<uint32_t>(pollGraceMs) : configuredMs;
     }
 
-    bool shouldRestart(uint32_t now, uint32_t timeoutMs, bool updateInProgress)
+    Action check(uint32_t now, uint32_t timeoutMs, bool updateInProgress, uint32_t observationReadyAt)
     {
+        // USB records replies on the CDC task while the main task checks the timeout.
+        std::lock_guard<std::mutex> lock(mutex_);
         if (!timeoutMs || updateInProgress)
         {
-            reset();
-            return false;
+            armed_ = false;
+            waitingForTelemetry_ = false;
+            return Action::None;
         }
-        return armed_ && static_cast<uint32_t>(now - lastResponseMs_) >= timeoutMs;
+        // A reply can arrive just after the main task sampled 'now'.
+        if (!armed_ || static_cast<int32_t>(now - lastResponseMs_) < static_cast<int32_t>(timeoutMs))
+            return Action::None;
+
+        if (!waitingForTelemetry_ && UsbAttachDelayPolicy::inOpeningGrace(now, observationReadyAt))
+        {
+            waitingForTelemetry_ = true;
+            graceStartedMs_ = now;
+            return Action::WaitForTelemetry;
+        }
+        if (waitingForTelemetry_ && now - graceStartedMs_ < UsbAttachDelayPolicy::kOpeningGraceMs)
+            return Action::None;
+        return Action::Restart;
     }
 
 private:
+    std::mutex mutex_;
     bool armed_ = false;
+    bool waitingForTelemetry_ = false;
     uint32_t lastResponseMs_ = 0;
+    uint32_t graceStartedMs_ = 0;
 };

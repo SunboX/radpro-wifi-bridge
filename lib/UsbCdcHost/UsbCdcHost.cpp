@@ -47,6 +47,7 @@ namespace
 namespace
 {
     constexpr uint32_t kConnectionTimeoutMs = 150;
+    constexpr TickType_t kTxSettleTicks = pdMS_TO_TICKS(40);
     constexpr size_t kOutBufferSize = 512;
     constexpr size_t kInBufferSize = 512;
     constexpr uint8_t kDefaultInterfaceIndex = 0;
@@ -98,7 +99,7 @@ bool UsbCdcHost::begin()
     if (running_)
         return true;
     if (host_installed_) {
-        stop();
+        stopHost();
         if (host_installed_) return false;
     }
     connected_ = false;
@@ -120,7 +121,7 @@ bool UsbCdcHost::begin()
     if (!tx_q_ || !tx_mutex_ || !firmware_rx_)
     {
         ESP_LOGE(TAG, "Failed to create TX queue/mutex");
-        stop();
+        stopHost();
         return false;
     }
 
@@ -140,7 +141,7 @@ bool UsbCdcHost::begin()
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "usb_host_install failed: %s", esp_err_to_name(err));
-        stop();
+        stopHost();
         return false;
     }
 
@@ -157,7 +158,7 @@ bool UsbCdcHost::begin()
     };
     if (!startTask(UsbLibTaskThunk, "usb_lib", 4096, 20, &lib_task_, lib_stopped_)) {
         last_err_ = ESP_ERR_NO_MEM;
-        stop();
+        stopHost();
         return false;
     }
     usb_host_client_config_t cfg = {
@@ -167,13 +168,13 @@ bool UsbCdcHost::begin()
     if (usb_host_client_register(&cfg, &dbg_client_) == ESP_OK &&
         !startTask(DbgClientTaskThunk, "usb_dbg", 4096, 19, &dbg_task_, dbg_stopped_)) {
         last_err_ = ESP_ERR_NO_MEM;
-        stop();
+        stopHost();
         return false;
     }
     if (!startTask(CdcTaskThunk, "cdc", 6144, 21, &cdc_task_, cdc_stopped_) ||
         !startTask(TxTaskThunk, "cdc_tx", 4096, 22, &tx_task_, tx_stopped_)) {
         last_err_ = ESP_ERR_NO_MEM;
-        stop();
+        stopHost();
         return false;
     }
 
@@ -218,6 +219,14 @@ bool UsbCdcHost::closeDeviceHandles()
 }
 
 void UsbCdcHost::stop()
+{
+    // An OTA stop can arrive while a background USB recovery is finishing.
+    while (restart_requested_)
+        vTaskDelay(1);
+    stopHost();
+}
+
+void UsbCdcHost::stopHost()
 {
     if (!running_ && !host_installed_ && !tx_q_ && !firmware_rx_) return;
     running_ = false;
@@ -299,16 +308,18 @@ bool UsbCdcHost::enqueueRaw(const uint8_t *data, size_t len, uint32_t timeout_ms
     item->timeout_ms = timeout_ms;
 
     bool ok = false;
-    if (xSemaphoreTake(tx_mutex_, pdMS_TO_TICKS(200)) == pdTRUE)
+    // A CDC reply callback can enqueue the next command before the same event
+    // task delivers the previous OUT completion. Let it return immediately.
+    if (xSemaphoreTake(tx_mutex_, 0) == pdTRUE)
     {
-        ok = running_ && tx_q_ && !firmware_mode_ && (xQueueSend(tx_q_, &item, pdMS_TO_TICKS(50)) == pdTRUE);
+        ok = running_ && tx_q_ && !firmware_mode_ && (xQueueSend(tx_q_, &item, 0) == pdTRUE);
         xSemaphoreGive(tx_mutex_);
     }
     if (!ok)
     {
         free(item->data);
         delete item;
-        ESP_LOGW(TAG, "enqueueRaw: queue full/busy; dropping");
+        ESP_LOGD(TAG, "enqueueRaw: queue unavailable");
     }
     return ok;
 }
@@ -355,22 +366,12 @@ uint16_t UsbCdcHost::resolvedPid(uint16_t requestedPid) const
     return connected_pid_;
 }
 
-bool UsbCdcHost::restart()
-{
-    ESP_LOGW(TAG, "Restarting USB host by request.");
-    stop();
-    if (host_installed_) return false;
-    vTaskDelay(pdMS_TO_TICKS(50));
-    return begin();
-}
-
 bool UsbCdcHost::requestRestart()
 {
     if (restart_requested_.exchange(true))
         return true;
-    if (xTaskCreatePinnedToCore(RestartTaskThunk, "usb_restart", 4096, this, 18, &restart_task_, host_core_) != pdPASS)
+    if (xTaskCreatePinnedToCore(RestartTaskThunk, "usb_restart", 4096, this, 18, nullptr, host_core_) != pdPASS)
     {
-        restart_task_ = nullptr;
         restart_requested_ = false;
         ESP_LOGE(TAG, "Failed to create USB restart task");
         return false;
@@ -385,8 +386,15 @@ void UsbCdcHost::RestartTaskThunk(void *arg)
 
 void UsbCdcHost::restartTask()
 {
-    (void)restart();
-    restart_task_ = nullptr;
+    ESP_LOGW(TAG, "Restarting USB host by request.");
+    stopHost();
+    if (!host_installed_)
+    {
+        vTaskDelay(pdMS_TO_TICKS(50));
+        (void)begin();
+    }
+    if (!running_)
+        emitDebugLine(String("USB host restart failed: ") + esp_err_to_name(last_err_));
     restart_requested_ = false;
     vTaskDelete(nullptr);
 }
@@ -578,10 +586,11 @@ void UsbCdcHost::cdcTask()
         // If we aren’t open yet, try to find & open a CDC-ACM interface
         if (!dev_ && !vcp_dev_)
         {
-            const unsigned long nowMs = millis();
-            if (!UsbAttachDelayPolicy::isReady(nowMs, observed_device_ready_ms_))
+            const unsigned long readyAtMs = observed_device_ready_ms_.load();
+            const uint32_t waitMs = UsbAttachDelayPolicy::remainingDelay(
+                millis(), readyAtMs, UsbAttachDelayPolicy::kSettleDelayMs);
+            if (waitMs)
             {
-                const unsigned long waitMs = observed_device_ready_ms_ - nowMs;
                 vTaskDelay(pdMS_TO_TICKS(waitMs));
                 continue;
             }
@@ -628,7 +637,7 @@ void UsbCdcHost::cdcTask()
                             lc.bParityType = 0;
                             lc.bDataBits = 8;
                             (void)vcp_dev_->line_coding_set(&lc);
-                    ready_after_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(40);
+                            ready_after_tick_ = xTaskGetTickCount() + kTxSettleTicks;
                             ++connection_generation_;
                             connected_ = true;
                             if (on_connected_)
@@ -661,7 +670,7 @@ void UsbCdcHost::cdcTask()
                             ESP_LOGW(TAG, "set_control_line_state: %s", esp_err_to_name(lerr));
                         }
                         (void)configureLineCoding(target_baud_);
-                    ready_after_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(40);
+                        ready_after_tick_ = xTaskGetTickCount() + kTxSettleTicks;
                         ++connection_generation_;
                         connected_ = true;
                         if (on_connected_)
@@ -749,10 +758,12 @@ void UsbCdcHost::txTask()
         }
 
         // Honor settle delay after (re)connect
+        const TickType_t readyAt = ready_after_tick_.load();
         TickType_t now = xTaskGetTickCount();
-        if (ready_after_tick_ && now < ready_after_tick_)
+        const TickType_t waitTicks = UsbAttachDelayPolicy::remainingDelay(now, readyAt, kTxSettleTicks);
+        if (waitTicks)
         {
-            vTaskDelay(ready_after_tick_ - now);
+            vTaskDelay(waitTicks);
         }
 
         // Idle flush of unterminated lines after ~100ms of inactivity
@@ -785,27 +796,12 @@ void UsbCdcHost::txTask()
         if (err != ESP_OK)
         {
             ESP_LOGW(TAG, "TX failed: %s", esp_err_to_name(err));
-            // Requeue to front once; if full, drop
-            if (running_)
-            {
-                TxItem *retry = it;
-                if (xQueueSendToFront(tx_q_, &retry, pdMS_TO_TICKS(10)) != pdTRUE)
-                {
-                    free(it->data);
-                    delete it;
-                }
-            }
-            else
-            {
-                free(it->data);
-                delete it;
-            }
+            emitDebugLine(String("USB TX failed: ") + esp_err_to_name(err));
+            // A failed transfer may already have reached the detector. The command
+            // manager owns timeout and identity synchronization before the next query.
         }
-        else
-        {
-            free(it->data);
-            delete it;
-        }
+        free(it->data);
+        delete it;
     }
     ESP_LOGI(TAG, "TX task exit");
     tx_stopped_ = true;

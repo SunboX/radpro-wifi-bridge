@@ -199,6 +199,8 @@ void setup()
 #endif
 
     esp_reset_reason_t resetReason = esp_reset_reason();
+    DBG.print("ESP reset reason: ");
+    DBG.println(static_cast<int>(resetReason));
     if (resetReason == ESP_RST_SW && usbRecoveryResetMarker == kUsbRecoveryResetMarker)
         DBG.println("Previous restart: USB recovery watchdog (detector stopped responding).");
     usbRecoveryResetMarker = 0;
@@ -270,9 +272,7 @@ void setup()
         if (telemetryResponse && appConfig.usbRecoveryTimeoutSeconds &&
             !updateInProgress && !radProUpdater.ownsUsb())
         {
-            const bool wasArmed = usbRecoveryWatchdog.armed();
-            usbRecoveryWatchdog.recordResponse(millis());
-            if (!wasArmed)
+            if (usbRecoveryWatchdog.recordResponse(millis()))
                 DBG.println("USB recovery watchdog armed after detector telemetry response.");
         }
         commandError = false;
@@ -506,8 +506,12 @@ void loop()
 
     const uint32_t recoveryTimeoutMs = UsbRecoveryWatchdog::effectiveTimeoutMs(
         appConfig.usbRecoveryTimeoutSeconds, appConfig.readIntervalMs);
-    if (usbRecoveryWatchdog.shouldRestart(millis(), recoveryTimeoutMs,
-                                           updateInProgress || detectorUpdating))
+    const uint32_t observationReadyAt = usb.observationReadyAtMs();
+    const auto recovery = usbRecoveryWatchdog.check(millis(), recoveryTimeoutMs,
+                                                    updateInProgress || detectorUpdating, observationReadyAt);
+    if (recovery == UsbRecoveryWatchdog::Action::WaitForTelemetry)
+        DBG.println("USB recovery watchdog: detector just enumerated, waiting for a telemetry reply.");
+    if (recovery == UsbRecoveryWatchdog::Action::Restart)
     {
         DBG.print("USB recovery watchdog: no detector response for ");
         DBG.print(recoveryTimeoutMs / 1000);

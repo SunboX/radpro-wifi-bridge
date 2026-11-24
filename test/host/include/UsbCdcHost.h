@@ -44,6 +44,11 @@ public:
 
     bool sendCommand(const String &cmd, bool append_crlf = true, uint32_t = 1000)
     {
+        if (rejectNextSend_)
+        {
+            rejectNextSend_ = false;
+            return false;
+        }
         std::string text = cmd.c_str();
         if (append_crlf)
             text += "\r\n";
@@ -71,16 +76,13 @@ public:
         return connected_pid_;
     }
 
-    bool restart()
-    {
-        restarted_ = true;
-        return true;
-    }
-
     bool requestRestart()
     {
-        return restart();
+        ++restartRequests_;
+        return acceptRestart_;
     }
+    void rejectRestart() { acceptRestart_ = false; }
+    void rejectNextSend() { rejectNextSend_ = true; }
 
     bool restartRunsInBackground() const
     {
@@ -115,9 +117,9 @@ public:
         return sent_commands_;
     }
 
-    bool restarted() const
+    unsigned restartRequests() const
     {
-        return restarted_;
+        return restartRequests_;
     }
 
 private:
@@ -129,7 +131,9 @@ private:
     std::vector<std::string> sent_commands_;
     bool connected_ = false;
     bool observed_device_observed_ = false;
-    bool restarted_ = false;
+    bool acceptRestart_ = true;
+    bool rejectNextSend_ = false;
+    unsigned restartRequests_ = 0;
     uint16_t connected_vid_ = 0;
     uint16_t connected_pid_ = 0;
 };

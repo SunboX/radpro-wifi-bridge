@@ -72,7 +72,27 @@ void testRateTimeoutDoesNotConsumeAnOldRateAsBatteryVoltage() {
     f.values.clear(); advanceMillis(12001); f.manager.loop(); advanceMillis(250); f.manager.loop();
     f.expectCommand("GET deviceId\r\n"); f.host.simulateLine("OK 19.227");
     for (const auto &v : f.values) assert(!v.success);
-    advanceMillis(12001); f.manager.loop(); assert(f.host.restarted());
+    advanceMillis(12001); f.manager.loop();
+    assert(f.host.restartRequests() == 1);
+    f.manager.loop();
+    assert(f.host.restartRequests() == 1);
+    f.host.simulateDisconnect(); f.host.simulateConnect();
+    advanceMillis(100); f.manager.loop();
+    f.expectCommand("GET deviceId\r\n");
+    f.host.simulateLine(identity);
+    f.expectCommand("GET devicePower\r\n");
+}
+void testIdentityRetryWhenRestartCannotBeScheduled() {
+    Fixture f;
+    f.host.rejectRestart();
+    advanceMillis(12001); f.manager.loop();
+    assert(f.host.restartRequests() == 1);
+    const auto sent = f.host.sentCommands().size();
+    advanceMillis(250); f.manager.loop();
+    assert(f.host.sentCommands().size() == sent + 1);
+    f.expectCommand("GET deviceId\r\n");
+    f.host.simulateLine(identity);
+    f.expectCommand("GET devicePower\r\n");
 }
 void testGenuineHighRateIsPreserved() {
     Fixture f; f.initialize(); f.manager.requestStats();
@@ -82,11 +102,32 @@ void testGenuineHighRateIsPreserved() {
         if (v.type == Type::TubeDoseRate) { assert(v.value.toFloat() > 310.0f); high=true; }
     assert(high);
 }
+void testUnsentCommandRetriesInOrderWithoutWaitingForAReply() {
+    Fixture f;
+    f.initialize();
+    f.manager.requestStats();
+    f.expectCommand("GET devicePower\r\n");
+    f.host.rejectNextSend();
+    f.host.simulateLine("OK 1"); // The callback cannot enqueue the next query yet.
+    const auto sent = f.host.sentCommands().size();
+    const auto accepted = f.values.size();
+    f.host.simulateLine("OK 42");
+    f.manager.requestStats();
+    assert(f.values.size() == accepted && f.host.sentCommands().size() == sent);
+    advanceMillis(50); f.manager.loop();
+    f.expectCommand("GET tubePulseCount\r\n");
+    assert(f.host.sentCommands().size() == sent + 1);
+    f.host.simulateLine("OK 123");
+    f.expectCommand("GET tubeRate\r\n");
+    assert(f.host.restartRequests() == 0);
+}
 }
 int main() {
     testInitialIdentityRejectsNumericAndEmptyReplies();
     testDelayedRepliesCannotShiftTheTelemetryFields();
     testRateTimeoutDoesNotConsumeAnOldRateAsBatteryVoltage();
+    testIdentityRetryWhenRestartCannotBeScheduled();
     testGenuineHighRateIsPreserved();
+    testUnsentCommandRetriesInOrderWithoutWaitingForAReply();
     std::cout << "USB reply synchronization tests passed\n";
 }

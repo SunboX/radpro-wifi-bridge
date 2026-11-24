@@ -5,6 +5,7 @@
  */
 
 #pragma once
+#include "UsbAttachDelayPolicy.h"
 
 namespace UsbRecoveryPolicy
 {
@@ -27,8 +28,7 @@ inline bool shouldRestart(unsigned long now,
         return false;
 
     // A detector plugged in long after boot still needs time to finish opening.
-    if (observationReadyAtMs != 0 &&
-        static_cast<long>(now - observationReadyAtMs) < static_cast<long>(kDisconnectGraceMs))
+    if (UsbAttachDelayPolicy::inOpeningGrace(now, observationReadyAtMs))
         return false;
 
     if (static_cast<long>(now - disconnectedSinceMs) < static_cast<long>(kDisconnectGraceMs))

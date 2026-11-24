@@ -14,24 +14,24 @@ void testReadyAtAddsSettleDelay()
     assert(UsbAttachDelayPolicy::readyAt(1000) == 1250);
 }
 
-void testIsReadyTreatsZeroAsReady()
+void testSettleWaitUsesOnlyTimeLeftInThisWindow()
 {
-    assert(UsbAttachDelayPolicy::isReady(0, 0));
-}
-
-void testIsReadyWaitsUntilDeadline()
-{
-    assert(!UsbAttachDelayPolicy::isReady(1249, 1250));
-    assert(UsbAttachDelayPolicy::isReady(1250, 1250));
-    assert(UsbAttachDelayPolicy::isReady(1300, 1250));
+    using UsbAttachDelayPolicy::remainingDelay;
+    assert(remainingDelay(1000, 1250, 250) == 250);
+    assert(remainingDelay(1249, 1250, 250) == 1);
+    assert(remainingDelay(1250, 1250, 250) == 0);
+    assert(remainingDelay(1300, 1250, 250) == 0);
+    assert(remainingDelay(1000, 0, 250) == 0);
+    assert(remainingDelay(UINT32_MAX - 19, 20, 40) == 40);
+    assert(remainingDelay(UINT32_MAX - 19, 0, 40) == 0);
+    assert(remainingDelay(0x90000000, 1250, 250) == 0);
 }
 } // namespace
 
 int main()
 {
     testReadyAtAddsSettleDelay();
-    testIsReadyTreatsZeroAsReady();
-    testIsReadyWaitsUntilDeadline();
+    testSettleWaitUsesOnlyTimeLeftInThisWindow();
     std::cout << "usb attach delay policy tests passed\n";
     return 0;
 }

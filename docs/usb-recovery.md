@@ -6,9 +6,11 @@ Settings are saved immediately and included in configuration backups.
 
 The watchdog starts only after a successful detector telemetry response. If replies stop,
 the bridge keeps trying normal USB host recovery and restarts itself when the
-response timeout expires. USB reconnects and host restarts do not extend that
-deadline; a new detector response does. Detectors plugged in after boot get
-their own opening grace period before USB host recovery can interrupt them.
+response timeout expires. If USB has just detected a device at that point,
+the bridge allows up to 15 more seconds to open it and receive telemetry.
+Repeated USB attachments share that single window. A successful telemetry
+reply starts a fresh timeout. Detectors plugged in after boot also get time
+to open before USB host recovery can interrupt them.
 
 A missing detector at startup does not cause repeated reboots. A detector that
 continues replying while switched off also does not trigger this watchdog.

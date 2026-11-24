@@ -79,12 +79,13 @@ using TaskHandle_t=void *;
 static int created=0, createResult=1;
 constexpr int pdPASS=1;
 int xTaskCreatePinnedToCore(void (*)(void *), const char *, int, void *, int, void **handle, int core) {
-    assert(core==0); ++created; *handle=reinterpret_cast<void *>(1); return createResult;
+    assert(core==0); ++created;
+    if (handle && createResult == pdPASS) *handle=reinterpret_cast<void *>(1);
+    return createResult;
 }
 class UsbCdcHost {
 public:
     std::atomic<bool> restart_requested_{false};
-    TaskHandle_t restart_task_=nullptr;
     int host_core_=0;
     static void RestartTaskThunk(void *) {}
     bool requestRestart();
@@ -115,7 +116,7 @@ int main() {
     assert(host.requestRestart() && created==1);
     assert(host.requestRestart() && created==1); // Coalesce requests while owner-core work is pending.
     host.restart_requested_=false; createResult=0;
-    assert(!host.requestRestart() && !host.restart_requested_ && !host.restart_task_);
+    assert(!host.requestRestart() && !host.restart_requested_);
     createResult=1; assert(host.requestRestart() && created==3);
 }
 '''

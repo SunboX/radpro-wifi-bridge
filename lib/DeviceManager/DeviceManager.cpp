@@ -10,6 +10,7 @@ namespace
 {
     constexpr uint32_t DEVICE_ID_INITIAL_DELAY_MS = 100;
     constexpr uint32_t DEVICE_ID_RETRY_DELAY_MS = 250;
+    constexpr uint32_t COMMAND_ENQUEUE_RETRY_MS = 50;
     constexpr uint32_t DEVICE_ID_RESPONSE_TIMEOUT_MS = 12000;
     constexpr uint8_t DEVICE_ID_MAX_RETRY = 4;
     constexpr const char *DEVICE_KEEPALIVE_LINE = "Main loop is running.";
@@ -283,12 +284,17 @@ void DeviceManager::loop()
                     line_handler_(synchronizing_replies_
                         ? String("USB reply synchronization timed out; restarting USB host once.")
                         : String("DeviceId timed out immediately after attach; restarting USB host once."));
-                awaiting_response_ = false;
-                has_current_command_ = false;
-                command_queue_.clear();
-                current_command_ = PendingCommand{};
-                host_.restart();
-                return;
+                // Teardown waits for CDC callbacks that also take state_mutex_.
+                if (host_.requestRestart())
+                {
+                    awaiting_response_ = false;
+                    has_current_command_ = false;
+                    command_queue_.clear();
+                    current_command_ = PendingCommand{};
+                    return;
+                }
+                if (line_handler_)
+                    line_handler_(String("Could not schedule USB host restart; retrying detector identity."));
             }
             if (current_command_.type == CommandType::DeviceId)
                 handleError();
@@ -708,13 +714,19 @@ bool DeviceManager::isCommandPending(const String &cmd) const
 
 void DeviceManager::processQueue()
 {
-    if (awaiting_response_ || has_current_command_)
+    if (awaiting_response_)
         return;
 
+    const unsigned long now = millis();
+    if (has_current_command_)
+    {
+        if (static_cast<long>(now - current_command_.ready_ms) >= 0)
+            issueCurrentCommand();
+        return;
+    }
     if (command_queue_.empty())
         return;
 
-    unsigned long now = millis();
     for (auto it = command_queue_.begin(); it != command_queue_.end(); ++it)
     {
         if (synchronizing_replies_ && it->type != CommandType::DeviceId)
@@ -740,7 +752,12 @@ void DeviceManager::issueCurrentCommand()
 
     // One request per transaction, including identity probes. Sending multiple
     // terminator variants at once leaves extra replies in the following batch.
-    host_.sendCommand(current_command_.command, true);
+    if (!host_.sendCommand(current_command_.command, true))
+    {
+        // Nothing reached the wire. Keep this command in order and retry from loop().
+        current_command_.ready_ms = millis() + COMMAND_ENQUEUE_RETRY_MS;
+        return;
+    }
 
     awaiting_response_ = true;
     last_request_ms_ = millis();

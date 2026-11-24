@@ -56,7 +56,6 @@ public:
     bool setFirmwareLineCoding(uint32_t baud, bool evenParity);
     bool setFirmwareSignals(bool dtr, bool rts);
     uint32_t connectionGeneration() const { return connection_generation_.load(); }
-    bool restart();
     bool requestRestart();
     bool restartRunsInBackground() const { return true; }
 
@@ -91,6 +90,7 @@ private:
     void cdcTask();
     void txTask();
     void restartTask();
+    void stopHost();
     bool closeDeviceHandles();
 
     // CDC callbacks
@@ -113,7 +113,6 @@ private:
     TaskHandle_t lib_task_ = nullptr;
     TaskHandle_t cdc_task_ = nullptr;
     TaskHandle_t tx_task_ = nullptr;
-    TaskHandle_t restart_task_ = nullptr;
 
     cdc_acm_dev_hdl_t dev_ = nullptr;
 
@@ -165,7 +164,7 @@ private:
     esp_err_t last_err_ = ESP_OK;
 
     // Post-connect settle time for first TX
-    volatile TickType_t ready_after_tick_ = 0;
+    std::atomic<TickType_t> ready_after_tick_{0};
 
     // VCP wrapper state (when using the VCP service for CH34x/CP210x/FTDI)
     bool use_vcp_ = false;
@@ -178,7 +177,7 @@ private:
     volatile uint16_t last_observed_vid_ = 0;
     volatile uint16_t last_observed_pid_ = 0;
     volatile uint8_t last_observed_class_ = 0;
-    volatile unsigned long observed_device_ready_ms_ = 0;
+    std::atomic<unsigned long> observed_device_ready_ms_{0};
     volatile uint32_t observed_device_seq_ = 0;
     volatile uint32_t reported_open_failure_seq_ = 0;
     static void DbgClientTaskThunk(void *arg);
