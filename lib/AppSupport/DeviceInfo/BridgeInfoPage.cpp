@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "BridgeInfoPage.h"
+#include "NetworkStatus.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include "Network/BridgeDnsResolver.h"
@@ -63,39 +64,52 @@ String BridgeInfoPage::collectJson() const
     dns["busy"] = resolver.busy;
     dns["lateCompletions"] = resolver.lateCompletions;
 
-    wifi_mode_t mode;
-    esp_wifi_get_mode(&mode);
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    const esp_err_t wifiModeResult = esp_wifi_get_mode(&mode);
     String modeStr;
-    switch (mode)
+    if (wifiModeResult != ESP_OK)
     {
-    case WIFI_MODE_STA:
-        modeStr = "Station";
-        break;
-    case WIFI_MODE_AP:
-        modeStr = "AP";
-        break;
-    case WIFI_MODE_APSTA:
-        modeStr = "AP + Station";
-        break;
-    default:
-        modeStr = "Unknown";
-        break;
+        modeStr = "Off";
+    }
+    else
+    {
+        switch (mode)
+        {
+        case WIFI_MODE_NULL:
+            modeStr = "Off";
+            break;
+        case WIFI_MODE_STA:
+            modeStr = "Station";
+            break;
+        case WIFI_MODE_AP:
+            modeStr = "AP";
+            break;
+        case WIFI_MODE_APSTA:
+            modeStr = "AP + Station";
+            break;
+        default:
+            modeStr = "Unknown";
+            break;
+        }
     }
     doc["wifiMode"] = modeStr;
 
-    IPAddress ip = WiFi.localIP();
+    const bool ethernetConnected = NetworkStatus::ethernetConnected();
+    IPAddress ip = NetworkStatus::localIP();
     if (ip != IPAddress(0, 0, 0, 0))
         doc["ipAddress"] = ip.toString();
     else
         doc["ipAddress"] = nullptr;
 
-    bool wifiConnected = WiFi.status() == WL_CONNECTED;
+    doc["networkType"] = ethernetConnected ? "Ethernet" : (WiFi.status() == WL_CONNECTED ? "Wi-Fi" : "Offline");
+
+    const bool wifiConnected = !ethernetConnected && NetworkStatus::wifiConnected();
     if (wifiConnected)
         doc["wifiRSSI"] = WiFi.RSSI();
     else
         doc["wifiRSSI"] = nullptr;
 
-    doc["macAddress"] = WiFi.macAddress();
+    doc["macAddress"] = NetworkStatus::macAddress();
 
     JsonObject publishers = doc["publishers"].to<JsonObject>();
     auto appendHealth = [&publishers](const char *key, const PublisherHealthSnapshot &snapshot) {
@@ -138,4 +152,28 @@ String BridgeInfoPage::collectJson() const
     String json;
     serializeJson(doc, json);
     return json;
+}
+
+void BridgeInfoPage::handlePage(WebServer *server)
+{
+    if (!server)
+        return;
+
+    File file = LittleFS.open("/portal/bridge-info.html", "r");
+    if (!file)
+    {
+        server->send(500, "text/plain", "Bridge info page missing.");
+        return;
+    }
+
+    String html = file.readString();
+    file.close();
+    server->send(200, "text/html", html);
+}
+
+void BridgeInfoPage::handleJson(WebServer *server)
+{
+    if (!server)
+        return;
+    server->send(200, "application/json", collectJson());
 }

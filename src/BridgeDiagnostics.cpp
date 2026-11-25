@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "NetworkStatus.h"
 #include "BridgeDiagnostics.h"
 #include <WiFi.h>
 
@@ -109,7 +110,7 @@ void BridgeDiagnostics::updateLedStatus(bool running, bool deviceError, bool mqt
         return;
     }
 
-    if (WiFi.status() != WL_CONNECTED)
+    if (!NetworkStatus::connected())
     {
         led_.setMode(LedMode::WifiConnecting);
         return;

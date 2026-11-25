@@ -79,6 +79,10 @@ Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no loc
     - Native USB-OTG port → leave free for the RadPro sensor.
 4. Flash with `platformio run --target upload` (or `--target upload --target monitor` to auto-open the serial monitor).
 
+### Optional Waveshare ESP32-S3-ETH target
+
+The Waveshare ESP32-S3-ETH with onboard W5500 is supported as an optional PlatformIO target without changing the default DevKitC build. Select `waveshare-esp32-s3-eth` to use Ethernet-first networking with the existing Wi-Fi flow as fallback. See [docs/waveshare-esp32-s3-eth.md](docs/waveshare-esp32-s3-eth.md) for pin mapping and network behavior.
+
 The pinned Arduino-ESP32 2.0.17 core needs a small socket compatibility fix.
 `cmake/arduino_wifi_client.cmake` generates a corrected `WiFiClient.cpp` inside the
 build directory. Both ESP-IDF and PlatformIO's WiFi library use that copy, without

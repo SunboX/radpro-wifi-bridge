@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "NetworkStatus.h"
 #include "OpenSenseMap/OpenSenseMapPublisher.h"
 #include "OpenSenseMap/OpenSenseMapBackoff.h"
 #include "OpenSenseMap/OpenSenseMapTls.h"
@@ -209,7 +210,7 @@ bool OpenSenseMapPublisher::publishPending()
         return true; // treat as handled to avoid spinning
     }
 
-    if (WiFi.status() != WL_CONNECTED)
+    if (!NetworkStatus::connected())
     {
         syncHealthState();
         return true;
@@ -364,7 +365,7 @@ void OpenSenseMapPublisher::HandlePortalPost(WebServer &server,
 
 void OpenSenseMapPublisher::SendPortalForm(WiFiPortalService &portal, const String &message)
 {
-    if (!portal.manager_.server)
+    if (!portal.activeServer())
         return;
 
     String notice = WiFiPortalService::htmlEscape(message);

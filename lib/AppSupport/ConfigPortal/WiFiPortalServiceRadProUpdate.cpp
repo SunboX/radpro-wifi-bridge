@@ -6,18 +6,18 @@
 
 void WiFiPortalService::registerRadProUpdateRoutes()
 {
-    manager_.server->on("/radpro-update", HTTP_GET, [this]() {
+    activeServer()->on("/radpro-update", HTTP_GET, [this]() {
         TemplateReplacements variables;
         appendCommonTemplateVars(variables);
         variables.emplace_back("{{LOCALE}}", resolvePortalLocale());
         if (!sendTemplate("/portal/radpro-update.html", variables))
             sendTemplateError("/portal/radpro-update.html");
     });
-    manager_.server->on("/portal/js/radpro-update.js", HTTP_GET, [this]() {
+    activeServer()->on("/portal/js/radpro-update.js", HTTP_GET, [this]() {
         if (!sendStaticFile("/portal/js/radpro-update.js", "application/javascript"))
             sendTemplateError("/portal/js/radpro-update.js");
     });
-    manager_.server->on("/radpro-update/status", HTTP_GET, [this]() {
+    activeServer()->on("/radpro-update/status", HTTP_GET, [this]() {
         if (!radProUpdater_) { sendJson(503, "{\"error\":\"Updater unavailable.\"}"); return; }
         sendJson(200, radProUpdater_->statusJson());
     });
@@ -27,7 +27,7 @@ void WiFiPortalService::registerRadProUpdateRoutes()
         if (!requirePortalPost(route.c_str(), {}, true)) return;
         if (!radProUpdater_ || otaTaskHandle_ || otaService_.status().busy || restartScheduled_)
         { sendJson(409, "{\"error\":\"Bridge update or restart in progress.\"}"); return; }
-        auto &server = *manager_.server;
+        auto &server = *activeServer();
         String error;
         bool ok = false;
         if (!strcmp(action, "begin"))
@@ -61,6 +61,6 @@ void WiFiPortalService::registerRadProUpdateRoutes()
     for (const char *action : {"begin", "chunk", "start", "cancel"})
     {
         const String route = String("/radpro-update/") + action;
-        manager_.server->on(route.c_str(), HTTP_POST, [handle, action]() { handle(action); });
+        activeServer()->on(route.c_str(), HTTP_POST, [handle, action]() { handle(action); });
     }
 }

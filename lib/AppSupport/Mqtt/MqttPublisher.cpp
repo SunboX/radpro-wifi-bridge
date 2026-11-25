@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "NetworkStatus.h"
 #include "MqttPublisher.h"
 #include <ArduinoJson.h>
 #include "ConfigPortal/PortalSecurity.h"
@@ -294,7 +295,7 @@ bool MqttPublisher::ensureConnected()
         return true;
     }
 
-    if (WiFi.status() != WL_CONNECTED)
+    if (!NetworkStatus::connected())
         return false;
 
     unsigned long now = millis();
@@ -532,7 +533,7 @@ bool MqttPublisher::publish(const String &leaf, const String &payload, bool reta
     if (topicDirty_)
         refreshTopics();
 
-    if (WiFi.status() != WL_CONNECTED)
+    if (!NetworkStatus::connected())
     {
         unsigned long now = millis();
         if (now - lastPublishWarning_ > 5000)
@@ -888,7 +889,7 @@ bool MqttPublisher::HandlePortalPost(WebServer &server,
 
 void MqttPublisher::SendPortalForm(WiFiPortalService &portal, const String &message)
 {
-    if (!portal.manager_.server)
+    if (!portal.activeServer())
         return;
 
     String notice = WiFiPortalService::htmlEscape(message);

@@ -7,6 +7,7 @@
 #pragma once
 
 #include <WiFi.h>
+#include <WebServer.h>
 #include <WiFiManager.h>
 #include <esp_wifi_types.h>
 #include <ping/ping_sock.h>
@@ -46,6 +47,9 @@ public:
 
     void begin();
     bool connect(bool forcePortal);
+    bool networkConnected() const;
+    bool usingEthernet() const;
+    IPAddress networkIP() const;
     void maintain();
     void process();
     void syncIfRequested();
@@ -57,6 +61,16 @@ public:
 
 private:
     void prepareConfigPortalAp(const String &ssid);
+    void initializeWiFiManager();
+    void initializeEthernet();
+    bool waitForPreferredEthernet();
+    void maintainEthernet();
+    void startEthernetPortal();
+    void stopEthernetPortal();
+    WebServer *activeServer();
+    WebServer *activeServer() const;
+    void registerPortalRoutes();
+    void sendEthernetMainMenu();
     friend class MqttPublisher;
     friend class OpenSenseMapPublisher;
     friend class RadmonPublisher;
@@ -156,6 +170,12 @@ private:
     DeviceInfoPage deviceInfoPage_;
     BridgeInfoPage bridgeInfoPage_;
     WiFiManager manager_;
+    WebServer ethernetServer_;
+    bool wifiManagerInitialized_ = false;
+    bool ethernetStarted_ = false;
+    bool ethernetPortalActive_ = false;
+    bool ethernetServerStarted_ = false;
+    bool ethernetRoutesRegistered_ = false;
     DebugLogStream &log_;
     LedController &led_;
     const PublisherHealth &openRadiationHealth_;
