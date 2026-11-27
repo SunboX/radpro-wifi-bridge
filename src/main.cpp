@@ -43,6 +43,7 @@
 #include "Logging/BridgePanicRecorder.h"
 #include "Publishing/PublisherHealth.h"
 #include "Runtime/CooperativePump.h"
+#include "Runtime/StallRecorder.h"
 #include "Network/BridgeDnsResolver.h"
 #include "UsbRecoveryPolicy.h"
 #include "RadProUpdate/RadProUpdateService.h"
@@ -81,8 +82,9 @@ static unsigned long startupStartTime = 0;
 // Forward declarations
 static void handleStartupLogic();
 static void runMainLogic();
+static void serviceDetector();
+static void serviceDuringDnsWait();
 static void serviceCooperativeTasksDuringNetworkWait();
-static const char *commandTypeName(DeviceManager::CommandType type);
 static const char *ledModeName(LedMode mode);
 static const char *deviceActivityFaultName(DeviceActivityFault fault);
 static void updateDeviceErrorState();
@@ -134,6 +136,7 @@ static PeripheralStarter peripheralStarter(device_manager, usb, mqttPublisher, o
 static LedMode lastLoggedMode = LedMode::Booting;
 static DeviceActivityMonitor deviceActivityMonitor;
 static UsbRecoveryWatchdog usbRecoveryWatchdog;
+using StallStage = StallRecorder::Stage;
 static constexpr uint32_t kUsbRecoveryResetMarker = 0x55534257;
 RTC_NOINIT_ATTR static uint32_t usbRecoveryResetMarker;
 
@@ -218,7 +221,7 @@ void setup()
     ledController.update();
 
     diagnostics.initialize();
-    if (BridgeDnsResolver::begin([]() { mqttPublisher.serviceConnection(); }))
+    if (BridgeDnsResolver::begin(serviceDuringDnsWait))
         DBG.println("Thread-safe DNS resolver active (15000 ms caller deadline).");
     else
         DBG.println("DNS resolver unavailable: worker allocation failed.");
@@ -245,7 +248,7 @@ void setup()
             if (!transient)
             {
                 DBG.print("Device command failed: ");
-                DBG.print(commandTypeName(type));
+                DBG.print(DeviceManager::commandTypeName(type));
                 DBG.print(" (");
                 DBG.print(static_cast<int>(type));
                 DBG.println(")");
@@ -269,10 +272,10 @@ void setup()
                                        type == DeviceManager::CommandType::DeviceBatteryVoltage ||
                                        type == DeviceManager::CommandType::TubePulseCount ||
                                        type == DeviceManager::CommandType::TubeRate;
-        if (telemetryResponse && appConfig.usbRecoveryTimeoutSeconds &&
-            !updateInProgress && !radProUpdater.ownsUsb())
+        if (telemetryResponse && !updateInProgress && !radProUpdater.ownsUsb())
         {
-            if (usbRecoveryWatchdog.recordResponse(millis()))
+            StallRecorder::receivedTelemetry();
+            if (appConfig.usbRecoveryTimeoutSeconds && usbRecoveryWatchdog.recordResponse(millis()))
                 DBG.println("USB recovery watchdog armed after detector telemetry response.");
         }
         commandError = false;
@@ -342,7 +345,11 @@ void setup()
     openRadiationPublisher.begin();
     safecastPublisher.begin();
     portalService.setOtaStartCallback([&]()
-                                      { OtaUpdateService::EnterUpdateMode(device_manager, usb, mqttPublisher, openSenseMapPublisher, gmcMapPublisher, radmonPublisher, safecastPublisher, updateInProgress); });
+    {
+        StallRecorder::setPolling(false, appConfig.readIntervalMs, WiFi.status() == WL_CONNECTED);
+        OtaUpdateService::EnterUpdateMode(device_manager, usb, mqttPublisher, openSenseMapPublisher,
+                                        gmcMapPublisher, radmonPublisher, safecastPublisher, updateInProgress);
+    });
     timeSync.loop(WiFi.status() == WL_CONNECTED);
     peripheralStarter.startIfNeeded(WiFi.status() == WL_CONNECTED, timeSync.synced(), kSupportedUsbVidPid);
     mqttPublisher.setPublishCallback([&](bool success)
@@ -383,16 +390,23 @@ void setup()
         lastLoggedMode = currentMode;
     }
     ledController.update();
+    if (!StallRecorder::begin(usb, device_manager, BridgePanicRecorder::currentBootId()))
+        DBG.println("Stall capture task could not start.");
 }
 
 void loop()
 {
+    StallRecorder::enter(StallStage::Update);
     radProUpdater.poll();
     bool detectorUpdating = radProUpdater.ownsUsb();
     const bool wifiConnected = WiFi.status() == WL_CONNECTED;
+    StallRecorder::setPolling(isRunning && !updateInProgress && !detectorUpdating,
+                              appConfig.readIntervalMs, wifiConnected);
     if (updateInProgress || detectorUpdating)
         usbRecoveryWatchdog.reset();
+    StallRecorder::enter(StallStage::TimeSync);
     timeSync.loop(wifiConnected);
+    StallRecorder::enter(StallStage::UsbStart);
     peripheralStarter.startIfNeeded(wifiConnected, timeSync.synced(), kSupportedUsbVidPid);
 
     static bool wasDetectorUpdating = false;
@@ -410,35 +424,37 @@ void loop()
     {
         handleStartupLogic();
     }
-    else if (!detectorUpdating)
-    {
-        runMainLogic();
-    }
-
-    if (!updateInProgress && !detectorUpdating && peripheralStarter.started())
-    {
-        device_manager.loop();
-    }
+    serviceDetector();
+    StallRecorder::enter(StallStage::Settings);
     portalService.syncIfRequested();
+    StallRecorder::enter(StallStage::Wifi);
     portalService.maintain();
+    StallRecorder::enter(StallStage::Http);
     portalService.process();
     detectorUpdating = radProUpdater.ownsUsb();
     if (!updateInProgress && !detectorUpdating && peripheralStarter.started())
     {
+        StallRecorder::enter(StallStage::Mqtt);
         mqttPublisher.updateConfig();
         mqttPublisher.loop();
+        StallRecorder::enter(StallStage::OpenSenseMap);
         openSenseMapPublisher.updateConfig();
         openSenseMapPublisher.loop();
+        StallRecorder::enter(StallStage::GmcMap);
         gmcMapPublisher.updateConfig();
         gmcMapPublisher.loop();
+        StallRecorder::enter(StallStage::Radmon);
         radmonPublisher.updateConfig();
         radmonPublisher.loop();
+        StallRecorder::enter(StallStage::OpenRadiation);
         openRadiationPublisher.updateConfig();
         openRadiationPublisher.loop();
+        StallRecorder::enter(StallStage::Safecast);
         safecastPublisher.updateConfig();
         safecastPublisher.loop();
     }
 
+    StallRecorder::enter(StallStage::Recovery);
     const bool usbConnected = usb.isConnected();
     if (!usbConnected)
     {
@@ -508,11 +524,19 @@ void loop()
         appConfig.usbRecoveryTimeoutSeconds, appConfig.readIntervalMs);
     const uint32_t observationReadyAt = usb.observationReadyAtMs();
     const auto recovery = usbRecoveryWatchdog.check(millis(), recoveryTimeoutMs,
-                                                    updateInProgress || detectorUpdating, observationReadyAt);
+                                                    updateInProgress || detectorUpdating, observationReadyAt, usbConnected);
     if (recovery == UsbRecoveryWatchdog::Action::WaitForTelemetry)
         DBG.println("USB recovery watchdog: detector just enumerated, waiting for a telemetry reply.");
+    if (recovery == UsbRecoveryWatchdog::Action::RetryPoll)
+    {
+        DBG.println("USB recovery watchdog: polling was stalled, retrying the detector before restarting.");
+        StallRecorder::requestedPoll();
+        device_manager.requestStats();
+        device_manager.loop();
+    }
     if (recovery == UsbRecoveryWatchdog::Action::Restart)
     {
+        StallRecorder::beforeWatchdogRestart();
         DBG.print("USB recovery watchdog: no detector response for ");
         DBG.print(recoveryTimeoutMs / 1000);
         DBG.println(" seconds; restarting bridge.");
@@ -523,6 +547,7 @@ void loop()
     }
 
     // Keep loop snappy; USB host runs in its own tasks
+    StallRecorder::enter(StallStage::Idle);
     delay(5);
 }
 
@@ -639,15 +664,45 @@ static void runMainLogic()
     if (now - lastStatsRequest >= interval)
     {
         lastStatsRequest = now;
+        StallRecorder::requestedPoll();
         device_manager.requestStats();
     }
 }
 
+static void serviceDetector()
+{
+    if (updateInProgress || radProUpdater.ownsUsb() || !peripheralStarter.started())
+        return;
+    usb.serviceReceiveRecovery(deviceReady);
+    if (isRunning)
+    {
+        usbRecoveryWatchdog.recordPollService(millis());
+        StallRecorder::ScopedStage stage(StallStage::Poll);
+        runMainLogic();
+    }
+    StallRecorder::ScopedStage stage(StallStage::UsbCommands);
+    device_manager.loop();
+}
+
+static void serviceDuringDnsWait()
+{
+    // This callback runs on the application task. Neither operation starts a lookup.
+    serviceDetector();
+    StallRecorder::ScopedStage stage(StallStage::Mqtt);
+    mqttPublisher.serviceConnection();
+}
+
 static void serviceCooperativeTasksDuringNetworkWait()
 {
-    portalService.maintain();
-    portalService.process();
-    mqttPublisher.serviceConnection();
+    {
+        StallRecorder::ScopedStage stage(StallStage::Wifi);
+        portalService.maintain();
+    }
+    {
+        StallRecorder::ScopedStage stage(StallStage::Http);
+        portalService.process();
+    }
+    serviceDuringDnsWait();
     diagnostics.updateLedStatus(isRunning, deviceError, mqttError, deviceReady);
     ledController.update();
     delay(10);
@@ -682,56 +737,6 @@ static void handleDeviceActivityTransition(DeviceActivityFault previousFault, De
     DBG.println(deviceActivityFaultName(currentFault));
     deviceInfoStore.clearMeasurements();
     clearPendingMeasurementPublishers();
-}
-
-static const char *commandTypeName(DeviceManager::CommandType type)
-{
-    switch (type)
-    {
-    case DeviceManager::CommandType::DeviceId:
-        return "DeviceId";
-    case DeviceManager::CommandType::DeviceModel:
-        return "DeviceModel";
-    case DeviceManager::CommandType::DeviceFirmware:
-        return "DeviceFirmware";
-    case DeviceManager::CommandType::DeviceLocale:
-        return "DeviceLocale";
-    case DeviceManager::CommandType::DevicePower:
-        return "DevicePower";
-    case DeviceManager::CommandType::DeviceBatteryVoltage:
-        return "DeviceBatteryVoltage";
-    case DeviceManager::CommandType::DeviceBatteryPercent:
-        return "DeviceBatteryPercent";
-    case DeviceManager::CommandType::DeviceTime:
-        return "DeviceTime";
-    case DeviceManager::CommandType::DeviceTimeZone:
-        return "DeviceTimeZone";
-    case DeviceManager::CommandType::DeviceSensitivity:
-        return "DeviceSensitivity";
-    case DeviceManager::CommandType::TubeTime:
-        return "TubeTime";
-    case DeviceManager::CommandType::TubePulseCount:
-        return "TubePulseCount";
-    case DeviceManager::CommandType::TubeRate:
-        return "TubeRate";
-    case DeviceManager::CommandType::TubeDoseRate:
-        return "TubeDoseRate";
-    case DeviceManager::CommandType::TubeDeadTime:
-        return "TubeDeadTime";
-    case DeviceManager::CommandType::TubeDeadTimeCompensation:
-        return "TubeDeadTimeCompensation";
-    case DeviceManager::CommandType::TubeHVFrequency:
-        return "TubeHVFrequency";
-    case DeviceManager::CommandType::TubeHVDutyCycle:
-        return "TubeHVDutyCycle";
-    case DeviceManager::CommandType::RandomData:
-        return "RandomData";
-    case DeviceManager::CommandType::DataLog:
-        return "DataLog";
-    case DeviceManager::CommandType::Generic:
-        return "Generic";
-    }
-    return "Unknown";
 }
 
 static const char *deviceActivityFaultName(DeviceActivityFault fault)

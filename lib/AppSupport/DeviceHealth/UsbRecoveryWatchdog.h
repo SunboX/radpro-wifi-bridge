@@ -11,7 +11,16 @@
 class UsbRecoveryWatchdog
 {
 public:
-    enum class Action { None, WaitForTelemetry, Restart };
+    enum class Action { None, WaitForTelemetry, RetryPoll, Restart };
+
+    void recordPollService(uint32_t now)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (havePollService_ && now - lastPollServiceMs_ > longestPollGapMs_)
+            longestPollGapMs_ = now - lastPollServiceMs_;
+        lastPollServiceMs_ = now;
+        havePollService_ = true;
+    }
 
     bool recordResponse(uint32_t now)
     {
@@ -28,6 +37,8 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         armed_ = false;
         waitingForTelemetry_ = false;
+        havePollService_ = false;
+        longestPollGapMs_ = 0;
     }
 
     static uint32_t effectiveTimeoutMs(uint32_t timeoutSeconds, uint32_t readIntervalMs)
@@ -42,25 +53,33 @@ public:
         return pollGraceMs > configuredMs ? static_cast<uint32_t>(pollGraceMs) : configuredMs;
     }
 
-    Action check(uint32_t now, uint32_t timeoutMs, bool updateInProgress, uint32_t observationReadyAt)
+    Action check(uint32_t now, uint32_t timeoutMs, bool updateInProgress, uint32_t observationReadyAt,
+                 bool usbConnected = false)
     {
         // USB records replies on the CDC task while the main task checks the timeout.
         std::lock_guard<std::mutex> lock(mutex_);
+        const bool missedPolls = havePollService_ &&
+            (now - lastPollServiceMs_ >= timeoutMs || longestPollGapMs_ >= timeoutMs);
+        longestPollGapMs_ = 0;
         if (!timeoutMs || updateInProgress)
         {
             armed_ = false;
             waitingForTelemetry_ = false;
+            havePollService_ = false;
             return Action::None;
         }
         // A reply can arrive just after the main task sampled 'now'.
         if (!armed_ || static_cast<int32_t>(now - lastResponseMs_) < static_cast<int32_t>(timeoutMs))
             return Action::None;
 
-        if (!waitingForTelemetry_ && UsbAttachDelayPolicy::inOpeningGrace(now, observationReadyAt))
+        const bool justAttached = UsbAttachDelayPolicy::inOpeningGrace(now, observationReadyAt);
+        if (!waitingForTelemetry_ && (justAttached || (usbConnected && missedPolls)))
         {
             waitingForTelemetry_ = true;
             graceStartedMs_ = now;
-            return Action::WaitForTelemetry;
+            // A blocked application can miss the entire polling window. Give a
+            // connected detector one real request before deciding it is silent.
+            return justAttached ? Action::WaitForTelemetry : Action::RetryPoll;
         }
         if (waitingForTelemetry_ && now - graceStartedMs_ < UsbAttachDelayPolicy::kOpeningGraceMs)
             return Action::None;
@@ -73,4 +92,7 @@ private:
     bool waitingForTelemetry_ = false;
     uint32_t lastResponseMs_ = 0;
     uint32_t graceStartedMs_ = 0;
+    bool havePollService_ = false;
+    uint32_t lastPollServiceMs_ = 0;
+    uint32_t longestPollGapMs_ = 0;
 };

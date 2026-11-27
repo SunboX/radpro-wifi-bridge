@@ -20,6 +20,31 @@ Runtime logs from `/logs.json` are application messages, **not raw UART output**
 Wi-Fi outages can overrun the bridge's 400-entry RAM log; any detected gap is
 reported. No polling service can recover messages that were never transmitted.
 
+### Detector and application stalls
+
+The collector also archives `bridge.stallDiagnostics` from `/bridge.json` with
+each telemetry sample. On the bridge, a separate task checks progress once a
+second after the detector has delivered telemetry. It saves the last three
+incidents in NVS when replies stop for at least 30 seconds and three polling
+intervals, or when the same application operation holds up a due poll for
+at least 30 seconds. Flash writes occur at incident transitions. A captured
+record survives a software restart or power loss after the write completes.
+
+Match the record's `bootId` to the archive's boot events. In `first`,
+`stage` and `stageAgeMs` identify the operation at capture. Compare
+`lastPollAgeMs`, the last queued command, USB transfer completions/errors,
+`lastRxAgeMs`, and `lastTelemetryAgeMs` to see how far communication got.
+The snapshot includes the last Wi-Fi disconnect reason, DNS activity, the last
+MQTT client state (0 means connected) and how long MQTT went without service.
+The live `usbReceive` counters show completed receive callbacks, failed bulk
+input transfers or resubmissions, and USB host restarts prompted by those errors.
+When telemetry returns the incident includes `atRecovery`. If the USB watchdog
+restarts the bridge it includes `atRestart`. For wall-clock timing, use a Home
+Assistant `received_utc` sample from the same boot. Subtract the difference
+between its `current.uptimeMs` and the incident's `first.uptimeMs`.
+`deviceEpoch` uses the bridge's own clock, which may differ from Home Assistant.
+A full CPU halt or power cut before the sampler runs can still leave no record.
+
 The accompanying local firmware's panic recorder mirrors IDF's actual panic
 printer into a fixed 3,071-byte RTC buffer without allocating memory, writing
 flash or reading SYSTIMER in the failing context. After a successful reboot, it

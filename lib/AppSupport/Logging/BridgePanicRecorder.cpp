@@ -60,6 +60,9 @@ void BridgePanicRecorder::begin(Print &log) {
     seedCurrentImage();
     log.println("Panic recorder active; /diagnostics/crash.json retains the latest panic.");
 }
+uint32_t BridgePanicRecorder::currentBootId() {
+    return bootId;
+}
 String BridgePanicRecorder::json() {
     JsonDocument doc;
     doc["bootId"] = bootId;

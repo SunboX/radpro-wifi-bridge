@@ -7,6 +7,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <atomic>
 #include <functional>
 #include <utility>
 #include <vector>
@@ -50,6 +51,8 @@ public:
     };
 
     using CommandResultHandler = std::function<void(CommandType, const String &, bool)>;
+    static const char *commandTypeName(CommandType type);
+    CommandType lastQueuedType() const { return last_queued_type_.load(); }
 
     void setLineHandler(LineHandler handler) { line_handler_ = std::move(handler); }
     void setRawHandler(RawHandler handler) { raw_handler_ = std::move(handler); }
@@ -104,6 +107,7 @@ private:
     void emitResult(CommandType type, const String &value, bool success);
 
     UsbCdcHost &host_;
+    std::atomic<CommandType> last_queued_type_{CommandType::Generic};
 
     LineHandler line_handler_ = nullptr;
     RawHandler raw_handler_ = nullptr;

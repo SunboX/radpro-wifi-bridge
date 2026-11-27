@@ -64,7 +64,7 @@ See [docs/board-requirements.md](docs/board-requirements.md) if you want to comp
 
 ## Web Installer (ESP Web Tools)
 
-Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.15.26)
+Flash the bridge firmware straight from your browser: https://SunboX.github.io/radpro-wifi-bridge/web-install/ (v1.15.27)
 
 Connect the ESP32-S3 via USB, click **Install**, and follow the prompts—no local toolchain required. OTA updates of the bridge firmware are also available from the web portal once a network connection is active.
 
@@ -171,7 +171,8 @@ Enable the Radmon toggle, enter your station username plus data-sending password
 ## Persistent diagnostic logs
 
 See [the Home Assistant log archive](tools/home_assistant_log_archive/README.md)
-for capture without a connected laptop and reboot-persistent panic records.
+for capture without a connected laptop, reboot-persistent panic records, and
+on-device snapshots of stalled polling and USB traffic in `/bridge.json`.
 
 ## USB Recovery
 
@@ -180,6 +181,9 @@ replying for five minutes and USB host recovery does not restore communication.
 Use **USB Recovery** in the web interface to disable this watchdog or change the
 timeout. It stays inactive until the first detector response and during firmware
 updates. See [docs/usb-recovery.md](docs/usb-recovery.md) for details.
+If the application itself missed the entire polling window while USB stayed
+connected, the watchdog gives the detector one fresh poll and up to 15 seconds
+to reply.
 
 USB host restarts stop workers cooperatively, drain canceled transfers before
 releasing interfaces, and uninstall the host on the core that installed it.

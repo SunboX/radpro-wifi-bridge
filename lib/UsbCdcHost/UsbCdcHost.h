@@ -57,6 +57,7 @@ public:
     bool setFirmwareSignals(bool dtr, bool rts);
     uint32_t connectionGeneration() const { return connection_generation_.load(); }
     bool requestRestart();
+    void serviceReceiveRecovery(bool detectorReady);
     bool restartRunsInBackground() const { return true; }
 
     // App callbacks
@@ -78,6 +79,20 @@ public:
     uint16_t connectedVid() const { return connected_vid_; }
     uint16_t connectedPid() const { return connected_pid_; }
     esp_err_t lastError() const { return last_err_; }
+    struct TransferProgress
+    {
+        uint32_t txAttempts, txCompleted, txErrors, rxPackets;
+        uint32_t lastTxStartMs, lastTxEndMs, lastRxMs;
+        int32_t lastTxError;
+    };
+    TransferProgress transferProgress() const;
+    struct ReceiveStatus
+    {
+        uint32_t failures, recoveries, callbacksReturned, lastFailureMs;
+        int error;
+        bool resubmitFailed;
+    };
+    ReceiveStatus receiveStatus() const;
 
 private:
     // Tasks
@@ -151,6 +166,12 @@ private:
     std::atomic<bool> firmware_mode_{false};
     std::atomic<bool> firmware_rx_overflow_{false};
     std::atomic<uint32_t> connection_generation_{0};
+    std::atomic<uint32_t> tx_attempts_{0}, tx_completed_{0}, tx_errors_{0}, rx_packets_{0};
+    std::atomic<uint32_t> last_tx_start_ms_{0}, last_tx_end_ms_{0}, last_rx_ms_{0};
+    std::atomic<int32_t> last_tx_error_{ESP_OK};
+    std::atomic<uint32_t> rx_failures_{0}, rx_recoveries_{0}, rx_callbacks_returned_{0}, last_rx_failure_ms_{0};
+    std::atomic<int> last_rx_error_{0};
+    std::atomic<bool> rx_recovery_pending_{false}, rx_resubmit_failed_{false};
 
     struct VidPid
     {

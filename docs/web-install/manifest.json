@@ -1,6 +1,6 @@
 {
     "name": "RadPro WiFi Bridge",
-    "version": "1.15.26",
+    "version": "1.15.27",
     "builds": [
         {
             "chipFamily": "ESP32-S3",

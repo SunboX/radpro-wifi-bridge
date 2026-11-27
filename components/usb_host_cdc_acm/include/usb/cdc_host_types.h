@@ -22,6 +22,12 @@ typedef enum {
     CDC_ACM_HOST_DEVICE_DISCONNECTED
 } cdc_acm_host_dev_event_t;
 
+typedef enum {
+    CDC_ACM_ERROR_OTHER = 0,
+    CDC_ACM_ERROR_BULK_IN_TRANSFER,
+    CDC_ACM_ERROR_BULK_IN_RESUBMIT
+} cdc_acm_host_error_source_t;
+
 /**
  * @brief CDC-ACM Device Event data structure
  */
@@ -33,6 +39,7 @@ typedef struct {
         bool network_connected;            //!< Network connection event
         cdc_acm_dev_hdl_t cdc_hdl;         //!< Disconnection event
     } data;
+    cdc_acm_host_error_source_t error_source; //!< Valid for CDC_ACM_HOST_ERROR
 } cdc_acm_host_dev_event_data_t;
 
 /**

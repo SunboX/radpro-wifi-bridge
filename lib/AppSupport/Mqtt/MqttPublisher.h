@@ -14,6 +14,7 @@
 #include "AppConfig/AppConfig.h"
 #include "DeviceManager.h"
 #include "Mqtt/MqttCommandQueue.h"
+#include "Mqtt/MqttTransport.h"
 #include "Led/LedController.h"
 
 class WebServer;
@@ -81,7 +82,7 @@ private:
 
     AppConfig &config_;
     Print &log_;
-    WiFiClient wifi_client_;
+    MqttTransport wifi_client_;
     PubSubClient mqtt_client_;
 
     String currentHost_;
@@ -93,11 +94,11 @@ private:
     String fullTopicTemplate_;
     bool configValid_ = false;
     bool topicDirty_ = true;
-    unsigned long lastReconnectAttempt_ = 0;
+    uint32_t lastReconnectAttempt_ = 0;
     unsigned long lastPublishWarning_ = 0;
     String deviceId_;
     String deviceSlug_;
-    String fallbackId_;
+    String bridgeId_;
     String connectedAvailabilityTopic_;
     String topicBase_;
     String fullTopicPattern_;

@@ -4,11 +4,16 @@ Open **USB Recovery** in the bridge web interface to enable or disable automatic
 bridge restarts and choose a timeout from 1 to 60 minutes. The default is **5 minutes**.
 Settings are saved immediately and included in configuration backups.
 
+If the USB driver reports that its bulk input transfer stopped on a working
+detector, the bridge logs the error and restarts the USB host to resume reads.
+
 The watchdog starts only after a successful detector telemetry response. If replies stop,
 the bridge keeps trying normal USB host recovery and restarts itself when the
 response timeout expires. If USB has just detected a device at that point,
 the bridge allows up to 15 more seconds to open it and receive telemetry.
-Repeated USB attachments share that single window. A successful telemetry
+If the application missed a whole polling window while USB stayed connected,
+it immediately retries the detector and allows the same 15 seconds for a reply.
+Repeated attachments or scheduling delays share that single window. A successful telemetry
 reply starts a fresh timeout. Detectors plugged in after boot also get time
 to open before USB host recovery can interrupt them.
 

@@ -12,6 +12,19 @@ namespace MqttAvailability
 constexpr uint16_t kKeepAliveSeconds = 30;
 constexpr uint16_t kSocketTimeoutSeconds = 3;
 
+// Every connection publishing this bridge's Last Will must use the same client ID.
+inline String clientId(String base, const String &bridgeId)
+{
+    if (!base.length())
+        base = "radpro-bridge";
+    if (!base.endsWith(bridgeId))
+    {
+        base += '-';
+        base += bridgeId;
+    }
+    return base;
+}
+
 // Presence belongs to the bridge, even before a detector ID is known.
 inline String topic(String base, String pattern, const String &bridgeId)
 {

@@ -106,6 +106,11 @@ public:
                value_.compare(value_.size() - tail.size(), tail.size(), tail) == 0;
     }
 
+    bool endsWith(const String &suffix) const
+    {
+        return endsWith(suffix.c_str());
+    }
+
     void remove(size_t index)
     {
         if (index < value_.size())

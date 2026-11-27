@@ -8,6 +8,10 @@
 int main()
 {
     const String bridgeId = "esp32s3-aabbccddeeff";
+    assert(MqttAvailability::clientId("", bridgeId) == "radpro-bridge-esp32s3-aabbccddeeff");
+    assert(MqttAvailability::clientId("lab", bridgeId) == "lab-esp32s3-aabbccddeeff");
+    assert(MqttAvailability::clientId("lab-esp32s3-aabbccddeeff", bridgeId) == "lab-esp32s3-aabbccddeeff");
+    assert(MqttAvailability::clientId("lab", "esp32s3-001122334455") == "lab-esp32s3-001122334455");
     const String defaultTopic = MqttAvailability::topic("", "", bridgeId);
     assert(defaultTopic == "stat/radpro/esp32s3-aabbccddeeff/availability");
     assert(MqttAvailability::topic(" radpro/%deviceid%/// ", "%prefix%/%topic%/", bridgeId) == defaultTopic);

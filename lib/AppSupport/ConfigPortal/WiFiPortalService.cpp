@@ -27,6 +27,7 @@
 #include "Safecast/SafecastPublisher.h"
 #include "Logging/LogCursorWindow.h"
 #include "Logging/BridgePanicRecorder.h"
+#include "Runtime/StallRecorder.h"
 #include "Publishing/HttpPublishResponse.h"
 
 #include <Arduino.h>
@@ -1085,6 +1086,7 @@ void WiFiPortalService::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info)
         break;
     }
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+        StallRecorder::wifiDisconnected(info.wifi_sta_disconnected.reason);
         if (lastStatus_ != WL_DISCONNECTED)
         {
             log_.print("Wi-Fi disconnected (reason ");

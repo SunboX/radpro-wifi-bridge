@@ -742,6 +742,19 @@ void cdc_acm_host_desc_print(cdc_acm_dev_hdl_t cdc_hdl)
     usb_print_config_descriptor(config_desc, cdc_print_desc);
 }
 
+static void report_transfer_error(usb_transfer_t *transfer, int error, cdc_acm_host_error_source_t source)
+{
+    cdc_dev_t *cdc_dev = (cdc_dev_t *)transfer->context;
+    if (cdc_dev->notif.cb) {
+        const cdc_acm_host_dev_event_data_t event = {
+            .type = CDC_ACM_HOST_ERROR,
+            .data.error = error,
+            .error_source = source
+        };
+        cdc_dev->notif.cb(&event, cdc_dev->cb_arg);
+    }
+}
+
 /**
  * @brief Check finished transfer status
  *
@@ -771,13 +784,8 @@ static bool cdc_acm_is_transfer_completed(usb_transfer_t *transfer)
     case USB_TRANSFER_STATUS_SKIPPED:
     default:
         // Transfer was not completed or cancelled by user. Inform user about this
-        if (cdc_dev->notif.cb) {
-            const cdc_acm_host_dev_event_data_t error_event = {
-                .type = CDC_ACM_HOST_ERROR,
-                .data.error = (int) transfer->status
-            };
-            cdc_dev->notif.cb(&error_event, cdc_dev->cb_arg);
-        }
+        report_transfer_error(transfer, (int)transfer->status, transfer == cdc_dev->data.in_xfer
+                              ? CDC_ACM_ERROR_BULK_IN_TRANSFER : CDC_ACM_ERROR_OTHER);
     }
     return completed;
 }
@@ -840,7 +848,10 @@ static void in_xfer_cb(usb_transfer_t *transfer)
     }
 
     ESP_LOGD(TAG, "Submitting poll for BULK IN transfer");
-    usb_host_transfer_submit(cdc_dev->data.in_xfer);
+    esp_err_t err = usb_host_transfer_submit(cdc_dev->data.in_xfer);
+    if (err != ESP_OK) {
+        report_transfer_error(transfer, err, CDC_ACM_ERROR_BULK_IN_RESUBMIT);
+    }
 }
 
 static void notif_xfer_cb(usb_transfer_t *transfer)

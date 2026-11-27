@@ -759,6 +759,7 @@ void DeviceManager::issueCurrentCommand()
         return;
     }
 
+    last_queued_type_ = current_command_.type;
     awaiting_response_ = true;
     last_request_ms_ = millis();
 }
@@ -861,4 +862,54 @@ void DeviceManager::emitResult(CommandType type, const String &value, bool succe
     {
         command_result_handler_(type, value, success);
     }
+}
+
+const char *DeviceManager::commandTypeName(CommandType type)
+{
+    switch (type)
+    {
+    case CommandType::DeviceId:
+        return "DeviceId";
+    case CommandType::DeviceModel:
+        return "DeviceModel";
+    case CommandType::DeviceFirmware:
+        return "DeviceFirmware";
+    case CommandType::DeviceLocale:
+        return "DeviceLocale";
+    case CommandType::DevicePower:
+        return "DevicePower";
+    case CommandType::DeviceBatteryVoltage:
+        return "DeviceBatteryVoltage";
+    case CommandType::DeviceBatteryPercent:
+        return "DeviceBatteryPercent";
+    case CommandType::DeviceTime:
+        return "DeviceTime";
+    case CommandType::DeviceTimeZone:
+        return "DeviceTimeZone";
+    case CommandType::DeviceSensitivity:
+        return "DeviceSensitivity";
+    case CommandType::TubeTime:
+        return "TubeTime";
+    case CommandType::TubePulseCount:
+        return "TubePulseCount";
+    case CommandType::TubeRate:
+        return "TubeRate";
+    case CommandType::TubeDoseRate:
+        return "TubeDoseRate";
+    case CommandType::TubeDeadTime:
+        return "TubeDeadTime";
+    case CommandType::TubeDeadTimeCompensation:
+        return "TubeDeadTimeCompensation";
+    case CommandType::TubeHVFrequency:
+        return "TubeHVFrequency";
+    case CommandType::TubeHVDutyCycle:
+        return "TubeHVDutyCycle";
+    case CommandType::RandomData:
+        return "RandomData";
+    case CommandType::DataLog:
+        return "DataLog";
+    case CommandType::Generic:
+        return "Generic";
+    }
+    return "Unknown";
 }

@@ -3,5 +3,6 @@
 #include <Arduino.h>
 namespace BridgePanicRecorder {
 void begin(Print &log);
+uint32_t currentBootId();
 String json();
 }

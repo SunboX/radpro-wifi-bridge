@@ -88,6 +88,42 @@ void testSlowPollingGetsAtLeastThreeIntervals()
     assert(UsbRecoveryWatchdog::effectiveTimeoutMs(0, 30000) == 0);
     assert(UsbRecoveryWatchdog::effectiveTimeoutMs(300, UINT32_MAX) == 0);
 }
+void testBlockedPollingGetsOneRealRetry()
+{
+    UsbRecoveryWatchdog watchdog;
+    const uint32_t start = UINT32_MAX - 500;
+    watchdog.recordResponse(start);
+    watchdog.recordPollService(start);
+    const uint32_t resumed = start + fiveMinutes + 1000;
+    // A long network operation can finish on either side of the detector service in loop().
+    assert(watchdog.check(resumed, fiveMinutes, false, 0, true) == Action::RetryPoll);
+    watchdog.recordPollService(resumed);
+    assert(watchdog.check(resumed + 5, fiveMinutes, false, 0, true) == Action::None);
+    assert(watchdog.check(resumed + UsbAttachDelayPolicy::kOpeningGraceMs, fiveMinutes, false, 0, true) == Action::Restart);
+
+    watchdog.reset();
+    watchdog.recordResponse(start);
+    watchdog.recordPollService(start);
+    watchdog.recordPollService(resumed);
+    assert(watchdog.check(resumed, fiveMinutes, false, 0, true) == Action::RetryPoll);
+    watchdog.recordResponse(resumed + 25);
+    assert(watchdog.check(resumed + 30, fiveMinutes, false, 0, true) == Action::None);
+}
+void testSilentAndDisconnectedDetectorsStillRestart()
+{
+    UsbRecoveryWatchdog watchdog;
+    watchdog.recordResponse(0);
+    for (uint32_t t = 0; t < fiveMinutes; t += 1000)
+    {
+        watchdog.recordPollService(t);
+        assert(watchdog.check(t, fiveMinutes, false, 0, true) == Action::None);
+    }
+    assert(watchdog.check(fiveMinutes, fiveMinutes, false, 0, true) == Action::Restart);
+    watchdog.reset();
+    watchdog.recordResponse(0);
+    watchdog.recordPollService(0);
+    assert(watchdog.check(fiveMinutes, fiveMinutes, false, 0, false) == Action::Restart);
+}
 }
 int main()
 {
@@ -99,5 +135,7 @@ int main()
     testRepeatedAttachmentsCannotKeepASilentDetectorAlive();
     testTimerRollover();
     testSlowPollingGetsAtLeastThreeIntervals();
+    testBlockedPollingGetsOneRealRetry();
+    testSilentAndDisconnectedDetectorsStillRestart();
     std::cout << "USB recovery watchdog tests passed\n";
 }

@@ -18,7 +18,7 @@ This guide walks through configuring the RadPro WiFi Bridge to publish RadPro te
 1. Power the bridge and connect via Wi-Fi/Captive portal.
 2. Open **Configure MQTT**:
    - Toggle **Enable MQTT publishing**.
-   - Fill in host, port, client ID suffix, username/password.
+   - Fill in the broker host, port and credentials. The optional `mqttClient` setting is the first part of the client ID.
    - Adjust the base topic (`mqttTopic`) and full topic template (`mqttFullTopic`) if you want to customise the namespace. Defaults yield `stat/radpro/<deviceid>/<leaf>`.
    - Set the RadPro polling interval (`readIntervalMs`, minimum 500 ms).
 3. Save to write the settings to NVS; the bridge will reconnect with the new details.
@@ -39,7 +39,10 @@ Once connected, every RadPro response is forwarded to MQTT. The bridge publishes
   the same topic templates. With default settings it is
   `stat/radpro/esp32s3-<MAC>/availability`.
 
-Every discovered entity uses this availability topic. On an unexpected power or
+Every discovered entity uses this availability topic. The MQTT client ID defaults
+to `radpro-bridge-esp32s3-<MAC>` and stays the same when a detector connects or
+Wi-Fi reconnects. This lets the broker replace the previous session before the
+bridge announces `online` again. On an unexpected power or
 Wi-Fi loss, the MQTT broker publishes the retained `offline` Last Will. The
 30-second MQTT keepalive gives brief network interruptions time to recover.
 The broker can publish the Last Will after about 45 seconds without an MQTT
@@ -49,6 +52,13 @@ changing MQTT settings sends `offline` before disconnecting. Reconnection sends
 `online` and republishes discovery and retained readings. Existing entity unique
 IDs and telemetry topics are unchanged. Availability describes the bridge's
 MQTT connection; it does not indicate whether the detector itself is connected.
+
+If the TCP send buffer stays full for 250 ms, the bridge closes the MQTT
+connection and retries after five seconds. Detector polling continues, and the
+bridge republishes the latest retained readings when it reconnects.
+`/bridge.json` records the longest connect, socket status check, keepalive/read,
+write and close since boot under `stallDiagnostics.mqttTransport.maxCallMs`.
+A failed write also records its duration and socket error in the runtime log.
 
 Topic templating variables:
 

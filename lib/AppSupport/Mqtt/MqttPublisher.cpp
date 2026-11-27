@@ -8,6 +8,7 @@
 #include "ConfigPortal/WiFiPortalService.h"
 #include "Mqtt/MqttFaultPolicy.h"
 #include "Mqtt/MqttAvailability.h"
+#include "Runtime/StallRecorder.h"
 #include <WebServer.h>
 
 namespace
@@ -47,7 +48,7 @@ MqttPublisher::MqttPublisher(AppConfig &config, Print &log, LedController &led)
     uint64_t mac = ESP.getEfuseMac();
     char buf[17];
     snprintf(buf, sizeof(buf), "%012llx", static_cast<unsigned long long>(mac));
-    fallbackId_ = String("esp32s3-") + buf;
+    bridgeId_ = String("esp32s3-") + buf;
 
     for (size_t i = 0; i < retainedStates_.size(); ++i)
     {
@@ -181,18 +182,29 @@ void MqttPublisher::loop()
 
     if (mqtt_client_.connected())
     {
-        mqtt_client_.loop();
+        {
+            StallRecorder::ScopedStage stage(StallRecorder::Stage::MqttLoop);
+            mqtt_client_.loop();
+        }
         publishDiscovery();
         republishRetained();
     }
+    StallRecorder::mqttServiceFinished(mqtt_client_.state());
 }
 
 void MqttPublisher::serviceConnection()
 {
     // Network publishers may wait for responses. Keep MQTT alive without
     // reconnecting or recursively publishing another batch from that wait.
-    if (!paused_ && config_.mqttEnabled && mqtt_client_.connected())
-        mqtt_client_.loop();
+    if (!paused_ && config_.mqttEnabled)
+    {
+        if (mqtt_client_.connected())
+        {
+            StallRecorder::ScopedStage stage(StallRecorder::Stage::MqttLoop);
+            mqtt_client_.loop();
+        }
+        StallRecorder::mqttServiceFinished(mqtt_client_.state());
+    }
 }
 
 void MqttPublisher::onCommandResult(DeviceManager::CommandType type, const String &value)
@@ -286,6 +298,14 @@ bool MqttPublisher::ensureConnected()
     if (!configValid_ || currentHost_.isEmpty())
         return false;
 
+    MqttTransport::WriteFailure failure;
+    if (wifi_client_.takeWriteFailure(failure))
+    {
+        lastReconnectAttempt_ = failure.at;
+        log_.printf("MQTT socket write failed after %u ms (errno %d). Retrying in 5 s.\n",
+                    unsigned(failure.elapsedMs), failure.error);
+    }
+
     if (mqtt_client_.connected())
     {
         led_.clearFault(FaultCode::MqttUnreachable);
@@ -303,27 +323,16 @@ bool MqttPublisher::ensureConnected()
 
     lastReconnectAttempt_ = now;
 
-    String clientId = clientIdBase_.length() ? clientIdBase_ : String("radpro-bridge");
-    String slug = sanitizedDeviceId();
-    if (slug.length())
-    {
-        if (!clientId.endsWith(slug))
-        {
-            clientId += "-";
-            clientId += slug;
-        }
-    }
-
+    const String clientId = MqttAvailability::clientId(clientIdBase_, bridgeId_);
     bool connected = false;
-    const String availabilityTopic = MqttAvailability::topic(topicTemplate_, fullTopicTemplate_, fallbackId_);
-    if (currentUser_.length())
+    const String availabilityTopic = MqttAvailability::topic(topicTemplate_, fullTopicTemplate_, bridgeId_);
     {
-        connected = mqtt_client_.connect(clientId.c_str(), currentUser_.c_str(), currentPassword_.c_str(),
-                                         availabilityTopic.c_str(), 1, true, "offline");
-    }
-    else
-    {
-        connected = mqtt_client_.connect(clientId.c_str(), availabilityTopic.c_str(), 1, true, "offline");
+        StallRecorder::ScopedStage stage(StallRecorder::Stage::MqttConnect);
+        if (currentUser_.length())
+            connected = mqtt_client_.connect(clientId.c_str(), currentUser_.c_str(), currentPassword_.c_str(),
+                                             availabilityTopic.c_str(), 1, true, "offline");
+        else
+            connected = mqtt_client_.connect(clientId.c_str(), availabilityTopic.c_str(), 1, true, "offline");
     }
 
     int state = mqtt_client_.state();
@@ -495,7 +504,7 @@ String MqttPublisher::makeSlug(const String &raw) const
     while (slug.endsWith("-"))
         slug.remove(slug.length() - 1);
     if (!slug.length())
-        slug = fallbackId_;
+        slug = bridgeId_;
     return slug;
 }
 
@@ -503,7 +512,7 @@ String MqttPublisher::sanitizedDeviceId() const
 {
     if (deviceSlug_.length())
         return deviceSlug_;
-    return fallbackId_;
+    return bridgeId_;
 }
 
 bool MqttPublisher::publish(const String &leaf, const String &payload, bool retain)
@@ -677,7 +686,7 @@ bool MqttPublisher::publishDiscoveryEntity(DeviceManager::CommandType type,
     doc["name"] = fullName;
     doc["state_topic"] = stateTopic;
     doc["unique_id"] = objectUid;
-    MqttAvailability::appendDiscovery(doc, MqttAvailability::topic(topicTemplate_, fullTopicTemplate_, fallbackId_));
+    MqttAvailability::appendDiscovery(doc, MqttAvailability::topic(topicTemplate_, fullTopicTemplate_, bridgeId_));
     String deviceNameSlug = makeSlug(deviceName);
     String objectIdField;
     if (deviceNameSlug.length())

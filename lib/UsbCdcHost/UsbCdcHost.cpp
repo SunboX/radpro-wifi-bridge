@@ -104,6 +104,7 @@ bool UsbCdcHost::begin()
     }
     connected_ = false;
     disconnect_pending_ = false;
+    rx_recovery_pending_ = false;
     last_err_ = ESP_OK;
 
 #if __has_include("usb/vcp.hpp")
@@ -210,6 +211,7 @@ bool UsbCdcHost::closeDeviceHandles()
         ready_after_tick_ = 0;
         line_buf_.clear();
         disconnect_pending_ = false;
+        rx_recovery_pending_ = false;
     } else {
         last_err_ = result;
         ESP_LOGW(TAG, "USB close pending: %s", esp_err_to_name(result));
@@ -377,6 +379,27 @@ bool UsbCdcHost::requestRestart()
         return false;
     }
     return true;
+}
+
+UsbCdcHost::ReceiveStatus UsbCdcHost::receiveStatus() const
+{
+    return {rx_failures_.load(), rx_recoveries_.load(), rx_callbacks_returned_.load(),
+            last_rx_failure_ms_.load(), last_rx_error_.load(), rx_resubmit_failed_.load()};
+}
+
+void UsbCdcHost::serviceReceiveRecovery(bool detectorReady)
+{
+    if (!rx_recovery_pending_.exchange(false)) return;
+    const auto failure = receiveStatus();
+    emitDebugLine(String("USB bulk IN stopped: ") + (failure.resubmitFailed ? "resubmit error " : "transfer status ") + failure.error);
+    // A new or not-yet-identified device already has bounded identity recovery.
+    // Never interrupt an update or tear the host down from its own event callback.
+    if (!detectorReady || !isConnected() || firmware_mode_ || restart_requested_) return;
+    if (requestRestart())
+    {
+        ++rx_recoveries_;
+        emitDebugLine("USB bulk IN recovery: restarting USB host.");
+    }
 }
 
 void UsbCdcHost::RestartTaskThunk(void *arg)
@@ -738,6 +761,12 @@ void UsbCdcHost::cdcTask()
     vTaskDelete(nullptr);
 }
 
+UsbCdcHost::TransferProgress UsbCdcHost::transferProgress() const
+{
+    return {tx_attempts_.load(), tx_completed_.load(), tx_errors_.load(), rx_packets_.load(),
+            last_tx_start_ms_.load(), last_tx_end_ms_.load(), last_rx_ms_.load(), last_tx_error_.load()};
+}
+
 void UsbCdcHost::txTask()
 {
     ESP_LOGI(TAG, "TX task started");
@@ -783,6 +812,8 @@ void UsbCdcHost::txTask()
             continue;
         }
         ESP_LOGI(TAG, "TX %u bytes (intf=%u)", (unsigned)it->len, (unsigned)opened_intf_idx_);
+        last_tx_start_ms_ = millis();
+        ++tx_attempts_;
         esp_err_t err = ESP_FAIL;
         if (use_vcp_ && vcp_dev_)
         {
@@ -792,9 +823,13 @@ void UsbCdcHost::txTask()
         {
             err = cdc_acm_host_data_tx_blocking(dev_, reinterpret_cast<const uint8_t *>(it->data), it->len, it->timeout_ms);
         }
+        last_tx_end_ms_ = millis();
+        ++tx_completed_;
         xSemaphoreGive(tx_mutex_);
         if (err != ESP_OK)
         {
+            last_tx_error_ = err;
+            ++tx_errors_;
             ESP_LOGW(TAG, "TX failed: %s", esp_err_to_name(err));
             emitDebugLine(String("USB TX failed: ") + esp_err_to_name(err));
             // A failed transfer may already have reached the detector. The command
@@ -823,11 +858,14 @@ void UsbCdcHost::DevEventCb(const cdc_acm_host_dev_event_data_t *event, void *us
 
 bool UsbCdcHost::onRx(const uint8_t *data, size_t len)
 {
+    last_rx_ms_ = millis();
+    ++rx_packets_;
     if (firmware_mode_)
     {
         for (size_t i = 0; i < len; ++i)
             if (xQueueSend(firmware_rx_, data + i, 0) != pdTRUE)
                 firmware_rx_overflow_ = true;
+        ++rx_callbacks_returned_;
         return true;
     }
     if (on_raw_)
@@ -857,6 +895,7 @@ bool UsbCdcHost::onRx(const uint8_t *data, size_t len)
             }
         }
     }
+    ++rx_callbacks_returned_;
     return true;
 }
 
@@ -879,6 +918,15 @@ void UsbCdcHost::onDevEvent(const cdc_acm_host_dev_event_data_t *event)
         break;
     case CDC_ACM_HOST_ERROR:
         ESP_LOGE(TAG, "CDC-ACM driver error: %d", event->data.error);
+        if (event->error_source == CDC_ACM_ERROR_BULK_IN_TRANSFER ||
+            event->error_source == CDC_ACM_ERROR_BULK_IN_RESUBMIT)
+        {
+            last_rx_error_ = event->data.error;
+            rx_resubmit_failed_ = event->error_source == CDC_ACM_ERROR_BULK_IN_RESUBMIT;
+            last_rx_failure_ms_ = millis();
+            ++rx_failures_;
+            rx_recovery_pending_ = true;
+        }
         break;
     case CDC_ACM_HOST_SERIAL_STATE:
         ESP_LOGI(TAG, "Serial state: 0x%04X", event->data.serial_state.val);
